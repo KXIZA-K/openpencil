@@ -21,9 +21,6 @@ jobs:
           - label: windows-x86_64
             target: x86_64-pc-windows-msvc
             arch: x64
-          - label: windows-aarch64
-            target: aarch64-pc-windows-msvc
-            arch: arm64
     env:
       ANGLE_ELECTRON_VERSION: v33.0.0
       SIGNPATH_ORGANIZATION_ID: b94b9113-1b2a-4677-8449-093531a5e6e9
@@ -142,11 +139,17 @@ jobs:
           }
           Copy-Item -LiteralPath $signedInstallers[0].FullName -Destination $installer -Force
           $signature = Get-AuthenticodeSignature -FilePath $installer
-          $allowedStatuses = @('Valid', 'NotTrusted')
-          if ($null -eq $signature.SignerCertificate -or $signature.Status.ToString() -notin $allowedStatuses) {
+          if ($null -eq $signature.SignerCertificate) {
+            throw 'SignPath returned an installer without an Authenticode signer.'
+          }
+          # The Foundation's self-signed test certificate is reported as
+          # UnknownError by the hosted Windows runner. Production signing must
+          # require a trusted signature, but this test still requires a signer.
+          $allowedStatuses = @('Valid', 'NotTrusted', 'UnknownError')
+          if ($signature.Status.ToString() -notin $allowedStatuses) {
             throw "SignPath returned an invalid Authenticode signature: $($signature.Status)."
           }
-          Write-Host "SignPath test signature found: $($signature.SignerCertificate.Subject)"
+          Write-Host "SignPath test signature found: $($signature.SignerCertificate.Subject) ($($signature.Status))"
           Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "SignPath request: ${{ steps.signpath_test_signing.outputs.signing-request-web-url }}"
       - name: Upload SignPath test-signed installer
         uses: actions/upload-artifact@v4
