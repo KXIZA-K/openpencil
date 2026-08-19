@@ -796,7 +796,5 @@ impl WidgetHostNative {
     }
 }
 
-/// How long after the last pan/zoom tick the canvas keeps painting in
-/// interactive-degrade mode. Long enough to cover trackpad event gaps,
-/// short enough that full quality returns imperceptibly after release.
+/// Grace period after pan/zoom before full-quality painting resumes.
 const INTERACTION_HOT_MS: u64 = 150;

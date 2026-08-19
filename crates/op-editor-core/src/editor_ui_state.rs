@@ -1,39 +1,18 @@
 //! Editor-UI overlay + panel state for `EditorState`.
 //!
-//! This module ports the ~30 widget-layer UI fields that
-//! `openpencil-shell-core::document::UiState` carries beyond the
-//! editor-state subset already modelled by [`crate::ui_draft`]:
+//! This module owns the widget-layer state beyond [`crate::ui_draft`]:
+//! menus, modals, panels, preferences, hover targets, and pending host
+//! actions. Painting and hit-testing stay in the UI layer. Its plain-data
+//! types keep `op-editor-core` wasm32-clean.
 //!
-//!   - menu / dropdown open flags + their hover targets
-//!     (file menu, locale picker, shape picker, fill-type picker, …)
-//!   - modal open flags (export dialog, figma import, agent settings)
-//!   - the agent-settings modal struct (see [`crate::agent_settings`])
-//!   - panel widths, theme mode, locale
-//!   - layer / page hover + right-click context menu + page-rename
-//!   - the property-panel tab + flex-layout + size toggles
-//!   - export scale + format, recent files, pending file action
+//! # Module layout
 //!
-//! This module owns data/state enums only. Widget painting and hit-testing
-//! stay in the UI layer.
+//! This public spine contains [`EditorUiState`] and shared re-exports;
+//! implementations live in sibling modules without changing import paths:
 //!
-//! All types here are plain data (enums + structs of primitives /
-//! strings / ids), so `op-editor-core` stays wasm32-clean.
-//!
-//! ### Module layout
-//!
-//! This file is the public spine: the [`EditorUiState`] struct itself
-//! plus the shared re-exports. Everything else lives in sibling
-//! submodules (per the 800-line-per-file ceiling) and is re-exported
-//! here, so every existing `editor_ui_state::*` import path still
-//! resolves:
-//!
-//! - [`chrome`] — chrome actions, preferences, status, and host embedding
-//! - [`pickers`] — picker purposes, overlay geometry, and focus state
-//! - [`git_panel`] — the whole in-app Git panel data model
-//! - [`groups`] — grouped panel and preview sub-states
-//! - `defaults` — `impl Default for EditorUiState`
-//! - `methods` — `impl EditorUiState`
-//! - [`slides_panel_state`] / `tests` — slide-panel navigation + regression tests
+//! Public submodules group chrome, picker, Git, panel, and slide-navigation
+//! data. Private `defaults`, `methods`, and `tests` modules hold the struct's
+//! implementations and regression coverage.
 
 pub mod chrome;
 mod defaults;
