@@ -79,7 +79,7 @@ pub(super) fn paint_builtin_agent_form(
             .stroke_round_rect(rect, 10.0, danger.with_alpha(0.55), 1.0);
         let label = t_settings(ui, "settings.agents.deleteProvider");
         let font = if touch { 15.0 } else { 12.0 };
-        let text_w = cx.backend.measure_text(label, font);
+        let text_w = crate::widgets::text_metrics::measure_chrome(cx.backend, label, font);
         draw_text(
             cx,
             label,
