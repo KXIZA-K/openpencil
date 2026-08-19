@@ -77,8 +77,10 @@ jobs:
             libfreetype-dev libfontconfig1-dev fonts-noto-cjk
           )
           for attempt in 1 2 3 4; do
-            if sudo apt-get "${apt_options[@]}" update && \
-              sudo apt-get "${apt_options[@]}" install --yes "${packages[@]}"; then
+            if sudo env DEBIAN_FRONTEND=noninteractive \
+              timeout 180s apt-get "${apt_options[@]}" update && \
+              sudo env DEBIAN_FRONTEND=noninteractive \
+              timeout 300s apt-get "${apt_options[@]}" install --yes "${packages[@]}"; then
               break
             fi
             if [[ "$attempt" == 4 ]]; then
