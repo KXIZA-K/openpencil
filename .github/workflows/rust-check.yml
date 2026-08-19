@@ -17,6 +17,7 @@ on:
       - 'tools/check-web-server-headless.sh'
       - 'tools/check-widget-boundary.sh'
       - 'tools/check-text-measure.sh'
+      - '.github/workflows/rust-release.yml'
       - '.github/workflows/rust-check.yml'
   push:
     branches: ['**']
@@ -32,6 +33,7 @@ on:
       - 'tools/check-web-server-headless.sh'
       - 'tools/check-widget-boundary.sh'
       - 'tools/check-text-measure.sh'
+      - '.github/workflows/rust-release.yml'
       - '.github/workflows/rust-check.yml'
 
 jobs:
