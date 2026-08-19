@@ -8,6 +8,16 @@ name: Rust release artifacts
 # Desktop installers, Android APK/AAB, web/SDK/VSIX assets, and package-manager
 # updates are attached to the GitHub release. The protected iOS job uploads to
 # App Store Connect / TestFlight and intentionally produces no GitHub asset.
+# Desktop artifact map:
+#   macOS   OpenPencil-<v>-<arch>-mac.dmg        signed/notarized app bundle
+#           op-cli-<label>.tar.gz                standalone CLI
+#   Windows OpenPencil-<v>-<arch>-win-setup.exe  NSIS installer
+#           openpencil-desktop-<label>.zip       portable desktop
+#           op-cli-<label>.zip                   standalone CLI
+#   Linux   OpenPencil-<v>-<arch>-linux.AppImage portable app image
+#           OpenPencil-<v>-<arch>-linux.deb      Debian package
+#           openpencil-desktop-<label>.tar.gz    raw desktop binary
+#           op-cli-<label>.tar.gz                standalone CLI
 #
 # Platform installer and notarization paths still require a real tag run;
 # repository-owned scripts and workflow contract checks cover local validation.
