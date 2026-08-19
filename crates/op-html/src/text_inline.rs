@@ -5,7 +5,7 @@ use crate::length::{parse_length, LengthCtx};
 use crate::mapper::pseudo::InlinePseudo;
 use crate::mapper::MapCtx;
 
-use super::{is_inline_tag, segment_style, InlineTextContext, RawSegment};
+use super::{is_inline_tag, segment_style, InlineTextScope, RawSegment};
 
 pub(super) fn append_inline_pseudo(
     context: &MapCtx<'_>,
@@ -13,25 +13,25 @@ pub(super) fn append_inline_pseudo(
     parent_style: &ComputedStyle,
     pseudo: PseudoElement,
     href: Option<String>,
-    inherited_context: InlineTextContext,
+    scope: InlineTextScope<'_>,
     segments: &mut Vec<RawSegment>,
 ) {
     if let Some(pseudo) = crate::mapper::pseudo::inline_pseudo(context, path, parent_style, pseudo)
     {
-        push_inline_pseudo(&pseudo, href, inherited_context, segments);
+        push_inline_pseudo(&pseudo, href, scope, segments);
     }
 }
 
 pub(super) fn push_inline_pseudo(
     pseudo: &InlinePseudo,
     href: Option<String>,
-    inherited_context: InlineTextContext,
+    scope: InlineTextScope<'_>,
     segments: &mut Vec<RawSegment>,
 ) {
     segments.push(RawSegment {
         text: pseudo.content.clone(),
-        style: segment_style(&pseudo.style, href),
-        context: inherited_context.child(&pseudo.style),
+        style: segment_style(&pseudo.style, href, scope.fill_override),
+        context: scope.context.child(&pseudo.style),
         forced_break: false,
     });
 }

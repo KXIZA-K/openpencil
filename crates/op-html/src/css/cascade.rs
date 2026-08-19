@@ -1,3 +1,4 @@
+use crate::css::cascade_display::canonical_display_serialization;
 use crate::css::cascade_shared::{is_ident, matching, top_level_delimiter};
 use crate::css::declarations::{parse_declarations, resolve_deferred_shorthand, Declaration};
 use crate::css::selectors::{matches, matches_for_pseudo, specificity, PseudoElement, Selector};
@@ -16,7 +17,7 @@ pub use super::cascade_parser::{
 };
 
 pub const UA_STYLESHEET: &str = concat!(
-    "body{font-size:16px;color:#111111}[hidden]{display:none}h1{font-size:32px;font-weight:700;margin:21px 0}",
+    "[hidden]{display:none}h1{font-size:32px;font-weight:700;margin:21px 0}",
     "h2{font-size:24px;font-weight:700;margin:20px 0}h3{font-size:19px;font-weight:700;margin:18px 0}",
     "h4{font-size:16px;font-weight:700;margin:21px 0}h5{font-size:13px;font-weight:700;margin:22px 0}",
     "h6{font-size:11px;font-weight:700;margin:24px 0}p{margin:16px 0}ul,ol{margin:16px 0;padding:0 0 0 40px}",
@@ -475,7 +476,13 @@ fn apply_property(
         "unset" | "revert" | "revert-layer" => initial_value(name).map(str::to_string),
         _ => Some(value.trim().to_string()),
     };
-    if let Some(value) = selected {
+    if let Some(mut value) = selected {
+        if name == "display" {
+            value = canonical_display_serialization(&value)
+                .or_else(|| initial_value("display"))
+                .unwrap_or("inline")
+                .to_string();
+        }
         props.insert(name.to_string(), value);
     } else {
         props.remove(name);
@@ -698,6 +705,7 @@ const INHERITED_PROPERTIES: &[&str] = &[
     "tab-size",
     "text-align",
     "text-align-last",
+    "text-fill-color",
     "text-indent",
     "text-justify",
     "text-orientation",

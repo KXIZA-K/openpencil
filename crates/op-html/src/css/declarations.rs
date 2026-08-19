@@ -1,3 +1,4 @@
+use super::cascade_display::valid_specified_display;
 use super::declaration_syntax::{
     extract_function, find_top_level, is_background_position, is_background_repeat,
     is_border_style, is_border_width, is_css_wide, is_font_size_token, is_font_weight,
@@ -41,6 +42,9 @@ pub fn parse_declarations(block: &str) -> Vec<Declaration> {
         };
         let (value, important) = strip_important(raw_value);
         if value.is_empty() {
+            continue;
+        }
+        if name == "display" && !valid_specified_display(value) {
             continue;
         }
         if name.starts_with("--") {
@@ -133,6 +137,7 @@ fn normalize_property_name(name: &str) -> String {
                     | "line-clamp"
                     | "mask"
                     | "mask-image"
+                    | "text-fill-color"
                     | "text-size-adjust"
                     | "transform"
                     | "transform-origin"

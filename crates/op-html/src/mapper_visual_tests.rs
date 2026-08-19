@@ -61,7 +61,7 @@ fn layered_background_keeps_css_order_color_and_variable_stops() {
         ("background-color", "#123456"),
     ]);
     let (fills, warnings) =
-        run(|context| map_fill(&style, context, (400.0, 300.0), (true, true)).unwrap());
+        run(|context| map_fill(&style, context, (400.0, 300.0), (true, true), false).unwrap());
     let PenFill::LinearGradient(gradient) = &fills[0] else {
         panic!("top CSS layer must remain the first fill")
     };
@@ -161,7 +161,8 @@ fn border_style_uses_medium_width_and_initial_current_color() {
 #[test]
 fn transparent_fill_is_skipped_and_unsupported_visuals_warn_once() {
     let transparent = computed(&[("background-color", "rgb(1 2 3 / 0)")]);
-    let (fill, _) = run(|context| map_fill(&transparent, context, (400.0, 300.0), (true, true)));
+    let (fill, _) =
+        run(|context| map_fill(&transparent, context, (400.0, 300.0), (true, true), false));
     assert!(fill.is_none());
 
     let unsupported = computed(&[
@@ -170,7 +171,7 @@ fn transparent_fill_is_skipped_and_unsupported_visuals_warn_once() {
         ("filter", "brightness(2) brightness(3)"),
     ]);
     let (_, warnings) = run(|context| {
-        map_fill(&unsupported, context, (400.0, 300.0), (true, true));
+        map_fill(&unsupported, context, (400.0, 300.0), (true, true), false);
         map_effects(&unsupported, context);
     });
     assert_eq!(

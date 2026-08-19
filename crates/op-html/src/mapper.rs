@@ -1,11 +1,11 @@
 use crate::import_warning::ImportWarning;
 use jian_ops_schema::node::base::{NumberOrExpression, PenNodeBase};
 use jian_ops_schema::node::container::{AlignItems, ContainerProps, JustifyContent, LayoutMode};
-use jian_ops_schema::node::{FrameNode, PenNode};
+use jian_ops_schema::node::PenNode;
 use jian_ops_schema::sizing::{SizeLimits, SizingBehavior, SizingKeyword};
 
 use crate::css::cascade::{compute_style_for_viewport, ComputedStyle, StyleRule};
-use crate::dom::{DomElement, DomNode};
+use crate::dom::DomElement;
 use crate::length::{parse_length, CssLength, LengthCtx};
 use crate::HtmlImportOptions;
 
@@ -20,6 +20,16 @@ mod visual;
 pub(crate) use visual::map_blend_mode;
 pub(crate) use visual::map_text_shadow;
 pub(crate) use visual::warn_segment_text_shadow;
+pub(crate) use visual::{fill_glyph_color, text_paint_color};
+
+#[path = "mapper_frame.rs"]
+mod mapper_frame;
+use mapper_frame::frame;
+
+#[path = "mapper_text_scope.rs"]
+pub(crate) mod text_scope;
+pub(crate) use text_scope::map_container_children;
+pub use text_scope::{container_props_from, map_element};
 
 #[path = "mapper_grid.rs"]
 mod grid;
@@ -115,10 +125,11 @@ impl MapCtx<'_> {
     }
 }
 
-pub fn map_element(
+pub(crate) fn map_element_scoped(
     context: &mut MapCtx<'_>,
     path: &[&DomElement],
     parent_style: Option<&ComputedStyle>,
+    text_fill_override: Option<&str>,
 ) -> Option<PenNode> {
     if context.node_count >= crate::MAX_OUTPUT_NODES {
         context.warn_once(ImportWarning::NodeLimitMapping);
@@ -174,7 +185,11 @@ pub fn map_element(
     // Reserve this frame before generated content and descendants consume the
     // remaining budget, so no successfully mapped child becomes orphaned.
     context.node_count += 1;
-    let mut container = container_props_from(&style, context);
+    let can_transfer_text_clip =
+        text_scope::subtree_allows_text_clip_transfer(context, path, &style, &element.children);
+    let (mut container, local_text_fill) =
+        text_scope::container_props_with_text_scope(&style, context, can_transfer_text_clip);
+    let text_fill_override = local_text_fill.as_deref().or(text_fill_override);
     let mut children_centered_by_auto_margins = false;
     if container.align_items.is_none() {
         container.align_items = infer_child_alignment(context, path, &style, &element.children);
@@ -237,7 +252,8 @@ pub fn map_element(
     }
     let previous_auto_margin = context.auto_margin_handled_by_parent;
     context.auto_margin_handled_by_parent = children_centered_by_auto_margins;
-    let children = map_container_children(context, path, &style, &element.children);
+    let children =
+        map_container_children(context, path, &style, &element.children, text_fill_override);
     let children = wrap::apply_flex_wrap(context, &style, &mut container, children);
     // Runs before the containing block is restored: the column widths are
     // measured against the table's own used width. That width is only real
@@ -369,28 +385,15 @@ fn parent_align_covers(
     }
 }
 
-pub(crate) fn map_container_children(
-    context: &mut MapCtx<'_>,
-    path: &[&DomElement],
-    style: &ComputedStyle,
-    dom_children: &[DomNode],
-) -> Vec<PenNode> {
-    let mut children = crate::text::map_children(context, path, style, dom_children);
-    if matches!(
-        style.get("flex-direction"),
-        Some("row-reverse" | "column-reverse")
-    ) {
-        children.reverse();
-    }
-    children = stack::layer_absolute_children(children);
-    grid::wrap_grid_rows(context, style, children)
-}
-
 pub(crate) fn layer_positioned_children(children: Vec<PenNode>) -> Vec<PenNode> {
     stack::layer_absolute_children(children)
 }
 
-pub fn container_props_from(style: &ComputedStyle, context: &mut MapCtx<'_>) -> ContainerProps {
+fn container_props_from_impl(
+    style: &ComputedStyle,
+    context: &mut MapCtx<'_>,
+    text_clip_will_transfer: bool,
+) -> ContainerProps {
     let layout = layout_heuristics::layout_for(style);
     let gap_property = if layout == LayoutMode::Horizontal {
         "column-gap"
@@ -505,7 +508,13 @@ pub fn container_props_from(style: &ComputedStyle, context: &mut MapCtx<'_>) -> 
     // The visual pass runs after sizing on purpose: `background-size` and
     // `background-position` are resolved against the element's used box, which
     // only exists once width / height / limits have been settled.
-    let fill = visual::map_fill(style, context, (own_width, own_height), box_definite);
+    let fill = visual::map_fill(
+        style,
+        context,
+        (own_width, own_height),
+        box_definite,
+        text_clip_will_transfer,
+    );
     let stroke = visual::map_stroke(style, context);
     let effects = visual::map_effects(style, context);
     let padding = box_model::map_padding(
@@ -537,27 +546,6 @@ pub fn container_props_from(style: &ComputedStyle, context: &mut MapCtx<'_>) -> 
         context.containing_height,
     );
     container
-}
-
-fn frame(base: PenNodeBase, container: ContainerProps, children: Vec<PenNode>) -> PenNode {
-    PenNode::Frame(FrameNode {
-        base,
-        container,
-        children: Some(children),
-        image_search_query: None,
-        reusable: None,
-        slot: None,
-        state: None,
-        bindings: None,
-        events: None,
-        lifecycle: None,
-        semantics: None,
-        gestures: None,
-        route: None,
-        screen: None,
-        // HTML import never authors a responsive breakpoint variant.
-        breakpoint: None,
-    })
 }
 
 /// Base-style pass for callers that have no `ContainerProps` to hand (replaced

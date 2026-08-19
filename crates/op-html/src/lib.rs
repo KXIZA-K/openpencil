@@ -28,6 +28,7 @@ pub mod resources;
 pub mod snapshot;
 pub mod special;
 pub(crate) mod srcset;
+mod stylesheets;
 pub mod text;
 pub mod transform;
 mod zip_encoding;
@@ -67,6 +68,9 @@ mod e2e_tailwind_tests;
 
 #[cfg(test)]
 mod e2e_content_tests;
+
+#[cfg(test)]
+mod gradient_text_tests;
 
 #[cfg(test)]
 mod stylesheet_resource_tests;
@@ -221,47 +225,17 @@ pub fn import_html_with_resources(
     let mut budget = resources::ResourceBudget;
     let mut author_parser =
         css::cascade::StylesheetParser::new(css::cascade::StyleOrigin::Author, 500);
-    for stylesheet_source in std::mem::take(&mut parsed.stylesheet_sources) {
-        let stylesheet = match stylesheet_source {
-            dom::StylesheetSource::Inline(stylesheet) => resources::expand_stylesheet_imports(
-                &stylesheet,
-                resource_base.as_deref(),
-                None,
-                fetcher,
-                &mut budget,
-                &mut warnings,
-            ),
-            dom::StylesheetSource::Link(href) => {
-                let resolved = resources::resolve_resource_url(resource_base.as_deref(), &href);
-                let display_url = resolved.as_deref().unwrap_or(&href);
-                if !budget.take(&mut warnings) {
-                    continue;
-                }
-                let Some(bytes) = resolved
-                    .as_deref()
-                    .and_then(|url| fetcher.and_then(|fetch| fetch(url)))
-                else {
-                    warnings.push(ImportWarning::ExternalStylesheetSkipped {
-                        url: display_url.to_string(),
-                    });
-                    continue;
-                };
-                let decoded = css_encoding::decode_css_bytes(&bytes);
-                resources::expand_stylesheet_imports(
-                    &decoded,
-                    Some(display_url),
-                    Some(display_url),
-                    fetcher,
-                    &mut budget,
-                    &mut warnings,
-                )
-            }
-        };
-        let (author_rules, stylesheet_warnings) =
-            author_parser.parse_for_viewport(&stylesheet, opts.viewport_width, viewport_height);
-        rules.extend(author_rules);
-        warnings.extend(stylesheet_warnings);
-    }
+    stylesheets::extend_author_rules(
+        std::mem::take(&mut parsed.stylesheet_sources),
+        &mut author_parser,
+        &mut rules,
+        opts,
+        viewport_height,
+        resource_base.as_deref(),
+        fetcher,
+        &mut budget,
+        &mut warnings,
+    );
     // Kept before the parser is dropped; reported once the mapped nodes reveal
     // which of the declared families text actually asks for.
     let web_fonts = author_parser.web_fonts().to_vec();
@@ -296,6 +270,7 @@ pub fn import_html_with_resources(
         opts.viewport_width,
         viewport_height,
     );
+    let document_display_none = document_style.get("display") == Some("none");
     let root_font_size = document_style.font_size;
     let body_path = [&document_element, body];
     let body_style = css::cascade::compute_style_for_viewport(
@@ -329,7 +304,17 @@ pub fn import_html_with_resources(
         pending_base_outcome: Default::default(),
     };
     let root_id = context.generate_id();
-    let mut container = mapper::container_props_from(&body_style, &mut context);
+    let can_transfer_text_clip = mapper::text_scope::subtree_allows_text_clip_transfer(
+        &context,
+        &body_path,
+        &body_style,
+        &body.children,
+    );
+    let (mut container, text_fill_override) = mapper::text_scope::container_props_with_text_scope(
+        &body_style,
+        &mut context,
+        can_transfer_text_clip,
+    );
     container.width = Some(SizingBehavior::Number(opts.viewport_width));
     container.height = container
         .height
@@ -364,7 +349,7 @@ pub fn import_html_with_resources(
     {
         base.explain = None;
     }
-    let body_display_none = body_style.get("display") == Some("none");
+    let body_display_none = document_display_none || body_style.get("display") == Some("none");
     if body_display_none {
         base.visible = Some(false);
     }
@@ -385,8 +370,13 @@ pub fn import_html_with_resources(
     let children = if body_display_none {
         Vec::new()
     } else {
-        let children =
-            mapper::map_container_children(&mut context, &body_path, &body_style, &body.children);
+        let children = mapper::map_container_children(
+            &mut context,
+            &body_path,
+            &body_style,
+            &body.children,
+            text_fill_override.as_deref(),
+        );
         mapper::apply_flex_wrap(&mut context, &body_style, &mut container, children)
     };
     let root = PenNode::Frame(FrameNode {
@@ -696,7 +686,7 @@ mod tests {
     fn body_layout_base_styles_and_generated_content_reach_the_root() {
         let result = import_html(
             "<style>body::before{content:'before'}</style>\
-             <body style='display:flex;flex-direction:row;opacity:.4;visibility:hidden;\
+             <body style='display:block flex;flex-direction:row;opacity:.4;visibility:hidden;\
                           background:#123456'><p>copy</p></body>",
             &HtmlImportOptions::default(),
         );

@@ -130,3 +130,12 @@ fn background_collects_gradient_and_defers_variable_until_computed_value_time() 
             && declaration.deferred_shorthand.as_deref() == Some("background")
     }));
 }
+
+#[test]
+fn webkit_gradient_text_properties_normalize_to_internal_longhands() {
+    let declarations =
+        parse_declarations("-webkit-background-clip:text;-webkit-text-fill-color:transparent");
+    assert_eq!(get(&declarations, "background-clip"), Some("text"));
+    assert_eq!(get(&declarations, "text-fill-color"), Some("transparent"));
+    assert!(get(&declarations, "-webkit-text-fill-color").is_none());
+}

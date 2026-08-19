@@ -286,6 +286,35 @@ fn nova_store(viewport_width: f64) -> crate::HtmlImportResult {
 }
 
 #[test]
+fn html_font_and_color_inherit_through_unstyled_body_and_text() {
+    let result = import_html(
+        "<html style='font-size:20px;color:#123456'><body><p>Inherited</p></body></html>",
+        &HtmlImportOptions::default(),
+    );
+    let text = descendant_text_with_exact_content(feature_root(&result), "Inherited")
+        .expect("inherited text");
+    assert_eq!(text.font_size, Some(20.0));
+    assert!(matches!(
+        text.fill.as_deref(),
+        Some([PenFill::Solid(fill)]) if fill.color == "#123456"
+    ));
+}
+
+#[test]
+fn hidden_document_element_suppresses_the_imported_body() {
+    let result = import_html(
+        "<html style='display:none'><body><p>hidden</p></body></html>",
+        &HtmlImportOptions::default(),
+    );
+    let root = feature_root(&result);
+    assert_eq!(root.base.visible, Some(false));
+    assert!(root
+        .children
+        .as_deref()
+        .is_some_and(|children| children.is_empty()));
+}
+
+#[test]
 fn landing_page_imports_as_editable_tree() {
     let result = import_html(LANDING, &HtmlImportOptions::default());
     assert_eq!(result.nodes.len(), 1);
