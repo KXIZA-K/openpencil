@@ -718,6 +718,28 @@ pub fn enumerate_system_font_families() -> Vec<String> {
     })
 }
 
+/// Return authored family names the system manager can resolve, even when
+/// they are absent from [`enumerate_system_font_families`].
+///
+/// Skia explicitly allows `match_family` to expose hidden or auto-activated
+/// families that `count_families` cannot enumerate. Missing-font detection
+/// must therefore use this resolver boundary instead of guessing aliases from
+/// similar names or shared font files.
+pub fn resolvable_system_font_families(candidates: &[String]) -> Vec<String> {
+    jian_skia::with_font_lock(|| {
+        let mgr = skia_safe::FontMgr::new();
+        candidates
+            .iter()
+            .filter(|family| !family.contains('\0'))
+            .filter(|family| {
+                let mut styles = mgr.match_family(family);
+                styles.count() > 0
+            })
+            .cloned()
+            .collect()
+    })
+}
+
 #[cfg(test)]
 #[path = "skia/tests.rs"]
 mod tests;

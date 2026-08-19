@@ -221,9 +221,7 @@ pub fn note_font_supplied(state: &mut EditorState, row: usize, actual_family: Op
         .and_then(|prompt| prompt.entries.get_mut(row))
     {
         entry.mismatch_note = actual_family
-            .filter(|actual| {
-                !op_editor_core::font_catalog::is_same_font_family(actual, &entry.family)
-            })
+            .filter(|actual| !actual.eq_ignore_ascii_case(&entry.family))
             .map(|actual| {
                 mismatch_template
                     .replace("{actual}", actual)
@@ -236,93 +234,37 @@ pub fn note_font_supplied(state: &mut EditorState, row: usize, actual_family: Op
 #[cfg(test)]
 mod tests {
     use super::*;
-    use op_editor_core::missing_fonts::{MissingFontEntry, MissingFontsPrompt};
 
-    fn state_with_missing_row(family: &str) -> EditorState {
-        let doc: jian_ops_schema::PenDocument = serde_json::from_value(serde_json::json!({
-            "version": "0.8.0",
+    #[test]
+    fn distinct_yahei_ui_import_stays_unresolved_and_reports_mismatch() {
+        let doc = serde_json::from_value(serde_json::json!({
+            "version": "1.0.0",
             "children": [{
                 "type": "text",
-                "id": "t1",
-                "name": "t",
-                "x": 0,
-                "y": 0,
-                "width": 10,
-                "height": 10,
-                "content": "hi",
-                "fontFamily": family
+                "id": "yahei",
+                "content": "字",
+                "fontFamily": "Microsoft YaHei"
             }]
         }))
         .expect("document");
         let mut state = EditorState::from_document(doc);
         state.editor_ui.system_fonts_loaded = true;
-        state.editor_ui.missing_fonts_prompt = Some(MissingFontsPrompt {
-            entries: vec![MissingFontEntry {
-                family: family.to_string(),
-                run_count: 1,
-                mismatch_note: None,
-                resolved: false,
-            }],
-        });
-        state
-    }
-
-    #[test]
-    fn supplied_ui_alias_family_records_no_mismatch_note() {
-        // Issue #211: a `Microsoft YaHei` row supplied with a file whose
-        // declared family is the documented `YaHei UI` alias of the same
-        // file. Other `… UI` faces still warn (see the Segoe case below).
-        let mut state = state_with_missing_row("Microsoft YaHei");
+        state.editor_ui.imported_font_families =
+            std::sync::Arc::new(vec!["Microsoft YaHei UI".into()]);
+        replace_data(&mut state, true);
 
         note_font_supplied(&mut state, 0, Some("Microsoft YaHei UI"));
 
-        let note = state
+        let entry = &state
             .editor_ui
             .missing_fonts_prompt
             .as_ref()
-            .unwrap()
-            .entries[0]
-            .mismatch_note
-            .as_deref();
-        assert_eq!(note, None);
-    }
-
-    #[test]
-    fn supplied_distinct_ui_face_still_records_a_mismatch_note() {
-        // Supplying Segoe UI for a missing Segoe row is a real mismatch.
-        let mut state = state_with_missing_row("Segoe");
-
-        note_font_supplied(&mut state, 0, Some("Segoe UI"));
-
-        let note = state
-            .editor_ui
-            .missing_fonts_prompt
-            .as_ref()
-            .unwrap()
-            .entries[0]
-            .mismatch_note
-            .as_deref()
-            .expect("mismatch note");
-        assert!(note.contains("Segoe UI"));
-        assert!(note.contains("Segoe"));
-    }
-
-    #[test]
-    fn supplied_genuinely_different_family_still_records_a_mismatch_note() {
-        let mut state = state_with_missing_row("Microsoft YaHei");
-
-        note_font_supplied(&mut state, 0, Some("Instrument Serif"));
-
-        let note = state
-            .editor_ui
-            .missing_fonts_prompt
-            .as_ref()
-            .unwrap()
-            .entries[0]
-            .mismatch_note
-            .as_deref()
-            .expect("mismatch note");
-        assert!(note.contains("Instrument Serif"));
+            .expect("plain YaHei remains unresolved")
+            .entries[0];
+        let note = entry.mismatch_note.as_deref().expect("mismatch note");
+        assert_eq!(entry.family, "Microsoft YaHei");
+        assert!(!entry.resolved);
+        assert!(note.contains("Microsoft YaHei UI"));
         assert!(note.contains("Microsoft YaHei"));
     }
 }

@@ -16,6 +16,10 @@ use crate::widgets::PaintCx;
 use crate::{Point2D, Rect, TextLayout};
 use jian_widgets::components::select::SelectState;
 
+pub(super) fn is_active_font_family(active: &str, entry: &str) -> bool {
+    active.trim().eq_ignore_ascii_case(entry.trim())
+}
+
 /// Paint the dropdown (call as a late overlay, after the sections).
 #[allow(clippy::too_many_arguments)]
 pub fn paint_font_picker(
@@ -326,8 +330,7 @@ fn paint_font_picker_layout(
                 let Some(entry) = entries.get(*i) else {
                     continue;
                 };
-                let is_active =
-                    op_editor_core::font_catalog::is_same_font_family(active, &entry.family);
+                let is_active = is_active_font_family(active, &entry.family);
                 let row_rect = Rect {
                     origin: Point2D::new(rect.origin.x + 2.0, rect.origin.y),
                     size: Point2D::new(rect.size.x - 4.0, rect.size.y),

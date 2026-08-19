@@ -91,43 +91,6 @@ pub fn is_generic_or_system_font_alias(family: &str) -> bool {
     )
 }
 
-/// Windows pairs where one font FILE ships two family NAMES.
-///
-/// Deliberately not a general `Name UI ≡ Name` fold: for most Windows
-/// families the UI variant is a distinct face with different vertical
-/// metrics (`Yu Gothic UI`, `Meiryo UI`, `Leelawadee UI`, `Segoe UI`).
-/// Only `msyh.ttc` is known to register both `Microsoft YaHei` and
-/// `Microsoft YaHei UI`.
-pub const WINDOWS_UI_FAMILY_ALIASES: &[(&str, &str)] = &[("microsoft yahei", "microsoft yahei ui")];
-
-/// Whether `left` and `right` are a documented same-file Windows alias pair.
-pub fn is_windows_family_alias(left: &str, right: &str) -> bool {
-    let left = left.trim();
-    let right = right.trim();
-    if left.is_empty() || right.is_empty() {
-        return false;
-    }
-    WINDOWS_UI_FAMILY_ALIASES.iter().any(|(a, b)| {
-        (left.eq_ignore_ascii_case(a) && right.eq_ignore_ascii_case(b))
-            || (left.eq_ignore_ascii_case(b) && right.eq_ignore_ascii_case(a))
-    })
-}
-
-/// Whether two concrete family names should be treated as the same installed
-/// face for availability, picker highlight, and import mismatch notes.
-///
-/// Matching is ASCII-case-insensitive equality, plus the documented
-/// same-file aliases in [`WINDOWS_UI_FAMILY_ALIASES`]. It is not a general
-/// `Name UI ≡ Name` rule, and it allocates nothing.
-pub fn is_same_font_family(authored: &str, available: &str) -> bool {
-    let authored = authored.trim();
-    let available = available.trim();
-    !authored.is_empty()
-        && !available.is_empty()
-        && (authored.eq_ignore_ascii_case(available)
-            || is_windows_family_alias(authored, available))
-}
-
 /// First concrete authored family in a CSS stack. Generic fallbacks are
 /// skipped because they cannot be supplied by a font file.
 pub fn primary_concrete_font_family(stack: &str) -> Option<String> {
@@ -170,57 +133,5 @@ mod tests {
             primary_concrete_font_family("system-ui, 'PingFang SC', sans-serif").as_deref(),
             Some("PingFang SC")
         );
-    }
-
-    #[test]
-    fn same_family_matches_across_case_and_windows_ui_split() {
-        // Issue #211: Windows surfaces `Microsoft YaHei UI` for msyh.ttc while
-        // documents are authored with `Microsoft YaHei` (and vice versa).
-        assert!(is_same_font_family("Microsoft YaHei", "Microsoft YaHei UI"));
-        assert!(is_same_font_family("Microsoft YaHei UI", "Microsoft YaHei"));
-        assert!(is_same_font_family("microsoft yahei", "Microsoft YaHei UI"));
-        assert!(is_same_font_family("Segoe UI", "Segoe UI"));
-        assert!(is_same_font_family(
-            " Microsoft YaHei UI ",
-            "microsoft yahei"
-        ));
-        assert!(is_windows_family_alias(
-            "Microsoft YaHei",
-            "Microsoft YaHei UI"
-        ));
-        assert!(!is_windows_family_alias("Yu Gothic", "Yu Gothic UI"));
-    }
-
-    #[test]
-    fn same_family_keeps_distinct_families_distinct() {
-        assert!(!is_same_font_family(
-            "Microsoft YaHei",
-            "Microsoft JhengHei"
-        ));
-        assert!(!is_same_font_family("Segoe UI", "Noto Sans UI"));
-        // Trimming must not leave an empty match-all.
-        assert!(!is_same_font_family("UI", ""));
-        assert!(!is_same_font_family("", "ui"));
-        assert!(!is_same_font_family("Microsoft YaHei", ""));
-    }
-
-    #[test]
-    fn windows_ui_variant_is_not_a_universal_alias() {
-        // The UI face is a distinct family for these Windows pairs.
-        for (plain, ui) in [
-            ("Yu Gothic", "Yu Gothic UI"),
-            ("Segoe", "Segoe UI"),
-            ("Meiryo", "Meiryo UI"),
-            ("Leelawadee", "Leelawadee UI"),
-        ] {
-            assert!(
-                !is_same_font_family(plain, ui),
-                "{plain} must not equal {ui}"
-            );
-            assert!(
-                !is_same_font_family(ui, plain),
-                "{ui} must not equal {plain}"
-            );
-        }
     }
 }

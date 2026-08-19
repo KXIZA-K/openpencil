@@ -7,6 +7,38 @@ use super::WidgetHostNative;
 use op_editor_ui::widgets::PropertyPanel;
 use op_editor_ui::{Point2D, Rect};
 
+fn with_resolvable_document_system_families(
+    state: &op_editor_core::EditorState,
+    mut families: Vec<String>,
+    resolve: impl FnOnce(&[String]) -> Vec<String>,
+) -> Vec<String> {
+    let candidates = op_editor_core::missing_fonts::document_concrete_font_families(state)
+        .into_iter()
+        .filter(|candidate| {
+            !families
+                .iter()
+                .any(|family| family.eq_ignore_ascii_case(candidate))
+                && !state
+                    .editor_ui
+                    .bundled_font_families
+                    .iter()
+                    .any(|family| family.eq_ignore_ascii_case(candidate))
+        })
+        .collect::<Vec<_>>();
+    if candidates.is_empty() {
+        return families;
+    }
+    let resolved = resolve(&candidates);
+    families.extend(resolved.into_iter().filter(|family| {
+        candidates
+            .iter()
+            .any(|candidate| candidate.eq_ignore_ascii_case(family))
+    }));
+    families.sort_by_key(|family| family.to_lowercase());
+    families.dedup_by(|left, right| left.eq_ignore_ascii_case(right));
+    families
+}
+
 impl WidgetHostNative {
     fn property_keyboard_owner_active(&self) -> bool {
         let ui = &self.editor_state.editor_ui;
@@ -179,25 +211,38 @@ impl WidgetHostNative {
         true
     }
 
-    /// Enumerate installed font families once per process and cache
-    /// them on the editor state (sorted, deduped against the bundled
-    /// list — mirrors TS `use-system-fonts.ts` post-processing).
+    /// Enumerate installed font families once, then supplement the snapshot
+    /// with authored names the renderer's system `FontMgr` can resolve even
+    /// when they are hidden from raw enumeration.
     pub(in crate::widget_host) fn ensure_system_fonts_loaded(&mut self) {
-        if self.editor_state.editor_ui.system_fonts_loaded {
-            return;
+        if !self.editor_state.editor_ui.system_fonts_loaded {
+            let bundled_families = jian_skia::list_bundled_families();
+            let bundled: std::collections::HashSet<String> = bundled_families
+                .iter()
+                .map(|family| family.to_lowercase())
+                .collect();
+            let mut families = crate::backend::enumerate_system_font_families();
+            families.retain(|f| !bundled.contains(&f.to_lowercase()));
+            families.sort_by_key(|a| a.to_lowercase());
+            families.dedup_by(|left, right| left.eq_ignore_ascii_case(right));
+            self.editor_state.editor_ui.system_font_families = std::sync::Arc::new(families);
+            self.editor_state.editor_ui.bundled_font_families =
+                std::sync::Arc::new(bundled_families);
+            self.editor_state.editor_ui.system_fonts_loaded = true;
         }
-        let bundled_families = jian_skia::list_bundled_families();
-        let bundled: std::collections::HashSet<String> = bundled_families
-            .iter()
-            .map(|family| family.to_lowercase())
-            .collect();
-        let mut families = crate::backend::enumerate_system_font_families();
-        families.retain(|f| !bundled.contains(&f.to_lowercase()));
-        families.sort_by_key(|a| a.to_lowercase());
-        families.dedup_by(|left, right| left.eq_ignore_ascii_case(right));
+
+        let current = self
+            .editor_state
+            .editor_ui
+            .system_font_families
+            .as_ref()
+            .clone();
+        let families = with_resolvable_document_system_families(
+            &self.editor_state,
+            current,
+            crate::backend::resolvable_system_font_families,
+        );
         self.editor_state.editor_ui.system_font_families = std::sync::Arc::new(families);
-        self.editor_state.editor_ui.bundled_font_families = std::sync::Arc::new(bundled_families);
-        self.editor_state.editor_ui.system_fonts_loaded = true;
     }
 
     /// Rebuild the imported-font snapshot from the live `jian-skia`
@@ -474,6 +519,42 @@ mod tests {
             .system_font_families
             .iter()
             .any(|f| f.eq_ignore_ascii_case("Inter")));
+    }
+
+    #[test]
+    fn authored_family_resolvable_but_hidden_from_enumeration_is_added_exactly() {
+        let doc = serde_json::from_value(serde_json::json!({
+            "version": "1.0.0",
+            "children": [{
+                "type": "text",
+                "id": "yahei",
+                "content": "字",
+                "fontFamily": "Microsoft YaHei"
+            }]
+        }))
+        .expect("document");
+        let mut state = EditorState::from_document(doc);
+        let enumerated = vec!["Microsoft YaHei UI".to_string()];
+        let families =
+            super::with_resolvable_document_system_families(&state, enumerated, |candidates| {
+                assert_eq!(candidates, ["Microsoft YaHei"]);
+                candidates.to_vec()
+            });
+
+        assert_eq!(families, vec!["Microsoft YaHei", "Microsoft YaHei UI"]);
+        state.editor_ui.system_fonts_loaded = true;
+        state.editor_ui.system_font_families = std::sync::Arc::new(families);
+        assert!(op_editor_core::missing_fonts::detect_missing_fonts(&state).is_none());
+
+        state.editor_ui.system_font_families =
+            std::sync::Arc::new(super::with_resolvable_document_system_families(
+                &state,
+                vec!["Microsoft YaHei UI".to_string()],
+                |_| Vec::new(),
+            ));
+        let prompt = op_editor_core::missing_fonts::detect_missing_fonts(&state)
+            .expect("an authored name the renderer cannot resolve stays missing");
+        assert_eq!(prompt.entries[0].family, "Microsoft YaHei");
     }
 
     #[test]
