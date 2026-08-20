@@ -171,6 +171,14 @@ impl WidgetHost {
         } else {
             None
         };
+
+        // Frame slideshow board before borrowing ui immutably. This must
+        // happen BEFORE the canvas painting so the camera is ready.
+        #[cfg(feature = "canvaskit")]
+        if self.preview_slideshow_active() {
+            self.frame_slideshow_board((viewport_width, viewport_height));
+        }
+
         let ui = &self.editor_state.editor_ui;
 
         let top_bar = self.top_bar();
@@ -245,7 +253,15 @@ impl WidgetHost {
                 // necessarily covers the whole canvas rect, and the previous
                 // frame's design content must not show through around it.
                 backend.fill_rect(canvas_rect, self.theme.canvas_surface);
-                if self.device_mode_active() {
+
+                // Slideshow presentation paints the board letterboxed in the full viewport.
+                if self.preview_slideshow_active() {
+                    let viewport_rect = Rect {
+                        origin: Point2D::new(0.0, 0.0),
+                        size: Point2D::new(viewport_width, viewport_height),
+                    };
+                    self.paint_slideshow(backend, viewport_rect);
+                } else if self.device_mode_active() {
                     // Phone / Desktop — present inside the device silhouette,
                     // with the screen's bottom nav and top status bar pinned
                     // out of the scroll flow.
@@ -842,7 +858,8 @@ impl WidgetHost {
         // paint loop until it completes.
         #[cfg(feature = "canvaskit")]
         {
-            if self.preview_mode_transition
+            if self
+                .preview_mode_transition
                 .as_ref()
                 .is_some_and(|t| t.is_active(self.now_ms))
             {

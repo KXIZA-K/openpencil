@@ -140,6 +140,17 @@ pub(super) async fn mount_ck(canvas_id: String) -> Result<(), JsValue> {
         let inner_for_paint = inner.clone();
         crate::repaint_coalescer::install(Rc::new(move || {
             if let Ok(mut b) = inner_for_paint.try_borrow_mut() {
+                // Advance the clock on the FRAME, not only on DOM events.
+                // Animations are driven by `now_ms`, and a self-sustaining
+                // animation repaints without any input: leaving the clock
+                // frozen here makes `is_active(now_ms)` answer `true`
+                // forever, so the frame loop spins at the refresh rate and
+                // the animation never actually progresses. The desktop host
+                // sets the clock once per frame for the same reason.
+                b.host.set_clocks(
+                    crate::listener::now_ms_perf(),
+                    crate::listener::now_unix_secs(),
+                );
                 b.repaint();
                 drop(b);
                 crate::web_fonts::drain_font_requests(&inner_for_paint);
@@ -618,6 +629,21 @@ pub(super) async fn mount_ck(canvas_id: String) -> Result<(), JsValue> {
                 "Tab" if !is_mod && preview_active => {
                     // Tab / Shift+Tab for preview focus traversal
                     consumed = b.host.apply_preview_focus(shift);
+                    if consumed {
+                        evt.prevent_default();
+                    }
+                }
+                // Preview owns the navigation keys BEFORE the editor's own
+                // arrow arms below (canvas nudge / panel scroll): during a
+                // deck presentation they step the slides, and in an app
+                // preview they belong to the runtime, not the editor. The
+                // late fallthrough arm can't do this — the nudge arms match
+                // first — so this mirror of the native key order is load-
+                // bearing, not a duplicate.
+                "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight" | "Home" | "End"
+                    if !is_mod && preview_active =>
+                {
+                    consumed = b.host.apply_preview_key(key.as_str(), shift);
                     if consumed {
                         evt.prevent_default();
                     }

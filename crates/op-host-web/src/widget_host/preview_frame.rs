@@ -23,14 +23,21 @@ use op_preview_core::device_frame::{
 use op_preview_core::PinnedPaint;
 
 impl super::WidgetHost {
-    /// Canvas region preview presents into. Slideshow is not ported, so
-    /// this is always the plain canvas region (native additionally takes
-    /// the full stage while presenting a deck).
+    /// Canvas region preview presents into. While presenting a deck slideshow,
+    /// returns the full viewport. Otherwise returns the device-frame canvas rect.
     pub(in crate::widget_host) fn preview_canvas_rect(
         &self,
         viewport_w: f32,
         viewport_h: f32,
     ) -> Rect {
+        // A slideshow presentation takes the full stage (both on native and web)
+        // rather than being constrained to the canvas region.
+        if self.preview_slideshow_active() {
+            return Rect {
+                origin: Point2D::new(0.0, 0.0),
+                size: Point2D::new(viewport_w, viewport_h),
+            };
+        }
         let (canvas_x, canvas_y, canvas_w, canvas_h) = self.canvas_region(viewport_w, viewport_h);
         Rect {
             origin: Point2D::new(canvas_x, canvas_y),
@@ -384,8 +391,7 @@ impl super::WidgetHost {
         let (device_frame, chrome_blend): (&op_preview_core::device_frame::DeviceFrame, f32) =
             match active_mode_transition {
                 Some(transition) => {
-                    let is_phone =
-                        steady_frame.kind == op_editor_core::PreviewDeviceKind::Phone;
+                    let is_phone = steady_frame.kind == op_editor_core::PreviewDeviceKind::Phone;
                     let nav = session.pinned_nav_candidate(is_phone);
                     let status = session.pinned_status_bar_candidate(is_phone);
                     let root_rect = session
@@ -402,7 +408,8 @@ impl super::WidgetHost {
                     if let (Some(pinned), Some((node_id, _))) = (frame.pinned.as_mut(), nav) {
                         pinned.node_id = node_id;
                     }
-                    if let (Some(pinned_top), Some((node_id, _))) = (frame.pinned_top.as_mut(), status)
+                    if let (Some(pinned_top), Some((node_id, _))) =
+                        (frame.pinned_top.as_mut(), status)
                     {
                         pinned_top.node_id = node_id;
                     }
@@ -708,6 +715,34 @@ impl super::WidgetHost {
     /// Shift+Tab focus traversal. Returns `true` when the runtime emitted
     /// any semantic event.
     pub(in crate::widget_host) fn preview_dispatch_key(&mut self, key: &str, shift: bool) -> bool {
+        // Presenting a deck: the arrow keys move through the slides. They
+        // are checked before the runtime sees them because during a
+        // presentation that IS what they mean — a slide's widgets are being
+        // shown, not filled in.
+        if self.preview_slideshow_active() {
+            match key {
+                // Keynote's conventions: either axis steps the deck, so a
+                // presenter's muscle memory works whichever key they reach
+                // for.
+                "ArrowRight" | "ArrowDown" => {
+                    self.preview_slideshow_step(1);
+                    return true;
+                }
+                "ArrowLeft" | "ArrowUp" => {
+                    self.preview_slideshow_step(-1);
+                    return true;
+                }
+                "Home" => {
+                    self.preview_slideshow_to_end(false);
+                    return true;
+                }
+                "End" => {
+                    self.preview_slideshow_to_end(true);
+                    return true;
+                }
+                _ => {}
+            }
+        }
         use jian_core::gesture::pointer::Modifiers;
         let mods = if shift {
             Modifiers::SHIFT

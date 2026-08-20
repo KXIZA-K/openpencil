@@ -62,11 +62,7 @@ pub(crate) struct ScreenTransition {
 }
 
 impl ScreenTransition {
-    pub(crate) fn start(
-        kind: TransitionKind,
-        outgoing: ScenePage,
-        now_ms: u64,
-    ) -> Self {
+    pub(crate) fn start(kind: TransitionKind, outgoing: ScenePage, now_ms: u64) -> Self {
         let duration_ms = match kind {
             TransitionKind::Replace => REPLACE_DURATION_MS,
             TransitionKind::Push | TransitionKind::Pop => PUSH_POP_DURATION_MS,

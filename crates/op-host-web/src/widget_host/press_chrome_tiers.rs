@@ -210,7 +210,13 @@ impl WidgetHost {
                                     &self.editor_state.ui.variables.active_theme,
                                     self.editor_state.ui.active_page_index,
                                     op_ck,
-                                    false, // not presenting in web preview
+                                    // A deck is presented, not routed — same
+                                    // computation the native host makes at its
+                                    // `PreviewSession::enter` call site.
+                                    op_editor_core::preview_slideshow::slideshow_for_document(
+                                        &self.editor_state,
+                                    )
+                                    .is_some(),
                                 ) {
                                     Ok(mut session) => {
                                         // Capture source rect from the session
@@ -243,21 +249,25 @@ impl WidgetHost {
                                                 viewport_height,
                                             );
                                         }
+                                        // Start the slideshow if this is a deck. This must happen
+                                        // after initialize_device_preview so the device kind is set.
+                                        self.begin_slideshow_if_deck(canvas_size);
                                         // Only a FRAMED entry (Phone/Desktop) has a device
                                         // silhouette to merge into; plain Canvas-mode preview
                                         // paints the same scene painter at the canvas's own
                                         // pan/zoom, so there is nothing to animate toward.
-                                        if let Some(settled) = self.preview_device_frame.as_ref().map(|f| f.frame) {
+                                        if let Some(settled) =
+                                            self.preview_device_frame.as_ref().map(|f| f.frame)
+                                        {
                                             #[cfg(feature = "canvaskit")]
                                             {
-                                                self.preview_mode_transition = Some(
-                                                    op_preview_core::ModeTransition::start(
+                                                self.preview_mode_transition =
+                                                    Some(op_preview_core::ModeTransition::start(
                                                         op_preview_core::ModeTransitionKind::Enter,
                                                         source_rect,
                                                         settled,
                                                         self.now_ms,
-                                                    ),
-                                                );
+                                                    ));
                                             }
                                         }
                                     }

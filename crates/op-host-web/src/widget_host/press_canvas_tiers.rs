@@ -42,7 +42,9 @@ impl WidgetHost {
             // pinned nav when it crosses into that band.
             self.capture_device_preview_surface(x, y);
             let consumed = self.preview_dispatch_press(x, y, viewport_width, viewport_height);
-            return Some(consumed || rename_committed || text_edit_committed || property_focus_committed);
+            return Some(
+                consumed || rename_committed || text_edit_committed || property_focus_committed,
+            );
         }
 
         if matches!(self.editor_state.tool, op_editor_core::Tool::Hand) || self.space_pan {

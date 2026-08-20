@@ -68,9 +68,16 @@ fn dark_input_doc(opacity: f32) -> jian_ops_schema::PenDocument {
 
 fn paint_caret(opacity: f32) -> Color {
     let doc = dark_input_doc(opacity);
-    let mut session =
-        PreviewSession::enter(&doc, (400.0, 200.0), &Default::default(), 0, false, false, test_measure())
-            .expect("enter preview");
+    let mut session = PreviewSession::enter(
+        &doc,
+        (400.0, 200.0),
+        &Default::default(),
+        0,
+        false,
+        false,
+        test_measure(),
+    )
+    .expect("enter preview");
     session.set_now_ms(0);
     session.focus_next();
     let scene = session.preview_scene_for_test();

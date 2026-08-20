@@ -78,6 +78,8 @@ impl WidgetHost {
             op_ck: None,
             #[cfg(feature = "canvaskit")]
             preview_mode_transition: None,
+            slideshow_cursor: None,
+            slideshow_press_screen: None,
         }
     }
 

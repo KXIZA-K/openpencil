@@ -239,15 +239,23 @@ impl WidgetHost {
     ) -> bool {
         use jian_core::gesture::pointer::PointerPhase;
 
-        let doc_point = match self.preview_screen_to_scene_point(
-            screen_x,
-            screen_y,
-            viewport_w,
-            viewport_h,
-        ) {
-            Some(p) => p,
-            None => return false,
-        };
+        // Slideshow presentation: check toolbar and board presses first,
+        // before converting to scene space (slideshow operates in screen space).
+        if self.preview_slideshow_active() {
+            // Toolbar has priority — it must stay clickable above the board.
+            if self.slideshow_toolbar_press(screen_x, screen_y, viewport_w, viewport_h) {
+                return true;
+            }
+            // Board press records the position for swipe detection on release.
+            self.slideshow_board_press(screen_x, screen_y);
+            return true;
+        }
+
+        let doc_point =
+            match self.preview_screen_to_scene_point(screen_x, screen_y, viewport_w, viewport_h) {
+                Some(p) => p,
+                None => return false,
+            };
 
         let Some(session) = self.preview.as_mut() else {
             return false;
@@ -276,15 +284,19 @@ impl WidgetHost {
     ) -> bool {
         use jian_core::gesture::pointer::PointerPhase;
 
+        // Slideshow presentation: update toolbar hover and cursor tracking
+        // before the runtime sees the move.
+        if self.preview_slideshow_active() {
+            self.slideshow_toolbar_hover(screen_x, screen_y, viewport_w, viewport_h);
+            return true;
+        }
+
         let Some(_session) = self.preview.as_mut() else {
             return false;
         };
-        let Some(doc_point) = self.preview_screen_to_scene_point(
-            screen_x,
-            screen_y,
-            viewport_w,
-            viewport_h,
-        ) else {
+        let Some(doc_point) =
+            self.preview_screen_to_scene_point(screen_x, screen_y, viewport_w, viewport_h)
+        else {
             return false;
         };
         // Check edge-swipe BEFORE updating preview_last_doc, so cancel
@@ -321,6 +333,25 @@ impl WidgetHost {
     #[cfg(feature = "canvaskit")]
     pub(in crate::widget_host) fn preview_dispatch_release(&mut self) -> bool {
         use jian_core::gesture::pointer::PointerPhase;
+
+        // Slideshow presentation: resolve the release through slideshow handlers
+        // (tap/swipe detection, toolbar activation).
+        if self.preview_slideshow_active() {
+            // Update the cursor to the final position before release analysis.
+            if let Some((x, y)) = self.preview_last_doc {
+                let _ = self.preview_slideshow_release_point(
+                    x,
+                    y,
+                    self.last_viewport_w,
+                    self.last_viewport_h,
+                );
+            }
+            // Toolbar release handles button activation; board release handles
+            // taps and swipes. Both consume the gesture if they were armed.
+            let handled = self.slideshow_toolbar_release() || self.slideshow_board_release();
+            self.preview_last_doc = None;
+            return handled;
+        }
 
         // Mirrors the native host's `preview_dispatch_release`.
         self.preview_surface_capture = None;

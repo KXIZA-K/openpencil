@@ -55,62 +55,21 @@
 //! (shared), with the fields those sibling modules touch scoped
 //! `pub(crate)` (internal fields visible to sibling modules).
 
-pub mod device_frame;
-#[cfg(all(test, not(target_os = "windows")))]
-mod device_frame_tests;
 mod app_mode;
 #[cfg(feature = "gl-host")]
 mod auto_wire;
 #[cfg(not(feature = "gl-host"))]
 mod auto_wire_stub;
 mod binding_sites;
+pub mod device_frame;
+#[cfg(all(test, not(target_os = "windows")))]
+mod device_frame_tests;
 mod error;
 mod input;
 mod mode_transition;
 mod present;
 mod scene_helpers;
 mod transition;
-// Gated off Windows: preview tests exercise runtime layout through
-// `jian_skia::SkiaMeasure`, which hits DirectWrite in Windows CI and aborts
-// with STATUS_ACCESS_VIOLATION before Rust can report a normal failure.
-// macOS + Linux keep the full preview coverage.
-#[cfg(all(test, not(target_os = "windows")))]
-mod tests;
-#[cfg(all(test, not(target_os = "windows")))]
-mod tests_app_mode;
-#[cfg(all(test, not(target_os = "windows")))]
-mod tests_bindings;
-#[cfg(all(test, not(target_os = "windows")))]
-mod tests_caret;
-#[cfg(all(test, not(target_os = "windows")))]
-mod tests_device_frame;
-#[cfg(all(test, not(target_os = "windows")))]
-mod tests_geometry_parity;
-#[cfg(all(test, not(target_os = "windows")))]
-mod tests_tabs;
-#[cfg(all(test, not(target_os = "windows")))]
-mod tests_transition;
-
-/// The measurement backend preview tests solve layout against — the same
-/// skia backend the native host injects, so test geometry matches
-/// production. Kept in one place so the 45 call sites don't each spell
-/// out the construction.
-#[cfg(all(test, not(target_os = "windows")))]
-pub(crate) fn test_measure() -> Rc<dyn MeasureBackend> {
-    Rc::new(jian_skia::SkiaMeasure::new())
-}
-
-#[cfg(test)]
-pub(crate) mod font_registry_test_support {
-    use std::sync::{LazyLock, Mutex, MutexGuard};
-
-    static LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
-
-    pub(crate) fn lock() -> MutexGuard<'static, ()> {
-        LOCK.lock().unwrap_or_else(|e| e.into_inner())
-    }
-}
-
 use app_mode::AppMode;
 use binding_sites::{collect_binding_sites, BindingSite};
 pub use error::{PreviewEnterError, PreviewLayoutError};
@@ -776,5 +735,46 @@ impl PreviewSession {
             Some(WidgetState::TextInput(st)) => st.text().to_string(),
             _ => String::new(),
         }
+    }
+}
+
+// Gated off Windows: preview tests exercise runtime layout through
+// `jian_skia::SkiaMeasure`, which hits DirectWrite in Windows CI and aborts
+// with STATUS_ACCESS_VIOLATION before Rust can report a normal failure.
+// macOS + Linux keep the full preview coverage.
+#[cfg(all(test, not(target_os = "windows")))]
+mod tests;
+#[cfg(all(test, not(target_os = "windows")))]
+mod tests_app_mode;
+#[cfg(all(test, not(target_os = "windows")))]
+mod tests_bindings;
+#[cfg(all(test, not(target_os = "windows")))]
+mod tests_caret;
+#[cfg(all(test, not(target_os = "windows")))]
+mod tests_device_frame;
+#[cfg(all(test, not(target_os = "windows")))]
+mod tests_geometry_parity;
+#[cfg(all(test, not(target_os = "windows")))]
+mod tests_tabs;
+#[cfg(all(test, not(target_os = "windows")))]
+mod tests_transition;
+
+/// The measurement backend preview tests solve layout against — the same
+/// skia backend the native host injects, so test geometry matches
+/// production. Kept in one place so the 45 call sites don't each spell
+/// out the construction.
+#[cfg(all(test, not(target_os = "windows")))]
+pub(crate) fn test_measure() -> Rc<dyn MeasureBackend> {
+    Rc::new(jian_skia::SkiaMeasure::new())
+}
+
+#[cfg(test)]
+pub(crate) mod font_registry_test_support {
+    use std::sync::{LazyLock, Mutex, MutexGuard};
+
+    static LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+    pub(crate) fn lock() -> MutexGuard<'static, ()> {
+        LOCK.lock().unwrap_or_else(|e| e.into_inner())
     }
 }

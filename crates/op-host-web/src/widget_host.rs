@@ -156,7 +156,6 @@ mod pan_tests;
 mod pen_press;
 #[cfg(test)]
 mod pen_press_tests;
-mod preview_frame;
 mod press;
 mod press_canvas_tiers;
 mod press_chrome_tiers;
@@ -164,6 +163,8 @@ mod press_ctx;
 mod press_overlay_tiers;
 mod press_property_tiers;
 mod press_surface_tiers;
+mod preview_frame;
+mod preview_slideshow;
 #[cfg(test)]
 mod prompt_center_host_tests;
 mod prompt_center_press;
@@ -433,6 +434,11 @@ pub struct WidgetHost {
     /// on exit and be driven from the paint loop.
     #[cfg(feature = "canvaskit")]
     pub(in crate::widget_host) preview_mode_transition: Option<op_preview_core::ModeTransition>,
+    /// Current pointer position for slideshow gesture tracking (swipe detection).
+    pub(in crate::widget_host) slideshow_cursor: Option<(f32, f32)>,
+    /// Pointer-down position for slideshow board press, used to distinguish
+    /// clicks from swipes on release.
+    pub(in crate::widget_host) slideshow_press_screen: Option<(f32, f32)>,
 }
 
 impl WidgetHost {

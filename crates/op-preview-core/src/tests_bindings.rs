@@ -51,8 +51,16 @@ fn counter_doc() -> jian_ops_schema::PenDocument {
 #[test]
 fn enter_compiles_binding_sites() {
     let doc = counter_doc();
-    let session = PreviewSession::enter(&doc, (800.0, 600.0), &default_theme(), 0, false, false, test_measure())
-        .expect("enter");
+    let session = PreviewSession::enter(
+        &doc,
+        (800.0, 600.0),
+        &default_theme(),
+        0,
+        false,
+        false,
+        test_measure(),
+    )
+    .expect("enter");
     assert_eq!(
         session.binding_sites_len_for_test(),
         1,
@@ -71,8 +79,16 @@ fn invalid_binding_becomes_warning_not_error() {
         ]
     }"##;
     let doc = jian_ops_schema::load_str(src).expect("parse").value;
-    let session = PreviewSession::enter(&doc, (800.0, 600.0), &default_theme(), 0, false, false, test_measure())
-        .expect("enter still ok");
+    let session = PreviewSession::enter(
+        &doc,
+        (800.0, 600.0),
+        &default_theme(),
+        0,
+        false,
+        false,
+        test_measure(),
+    )
+    .expect("enter still ok");
     assert_eq!(session.binding_sites_len_for_test(), 0);
     assert!(
         session
@@ -91,8 +107,16 @@ fn binding_content_resolves_on_enter() {
     // Even before any interaction, a bound text node must show the
     // expression's value over the doc-root default state.
     let doc = counter_doc();
-    let session = PreviewSession::enter(&doc, (800.0, 600.0), &default_theme(), 0, false, false, test_measure())
-        .expect("enter");
+    let session = PreviewSession::enter(
+        &doc,
+        (800.0, 600.0),
+        &default_theme(),
+        0,
+        false,
+        false,
+        test_measure(),
+    )
+    .expect("enter");
     let scene = session.preview_scene_for_test();
     let label = find(&scene, "label").expect("label in scene");
     assert_eq!(label.text.as_deref(), Some("Count: 2"));
@@ -103,9 +127,16 @@ fn tap_event_updates_bound_text() {
     // The Spec-2 acceptance loop: tap switch → onTap set $app.count →
     // bound label repaints with the new value.
     let doc = counter_doc();
-    let mut session =
-        PreviewSession::enter(&doc, (800.0, 600.0), &default_theme(), 0, false, false, test_measure())
-            .expect("enter");
+    let mut session = PreviewSession::enter(
+        &doc,
+        (800.0, 600.0),
+        &default_theme(),
+        0,
+        false,
+        false,
+        test_measure(),
+    )
+    .expect("enter");
     session.set_now_ms(0);
     let (x, y, w, h) = session.node_rect("sw").expect("switch rect");
     session.dispatch_tap(x + w / 2.0, y + h / 2.0);
@@ -122,9 +153,16 @@ fn bindings_do_not_mutate_document() {
     let doc = counter_doc();
     let before = serde_json::to_string(&doc).expect("before");
     {
-        let mut session =
-            PreviewSession::enter(&doc, (800.0, 600.0), &default_theme(), 0, false, false, test_measure())
-                .expect("enter");
+        let mut session = PreviewSession::enter(
+            &doc,
+            (800.0, 600.0),
+            &default_theme(),
+            0,
+            false,
+            false,
+            test_measure(),
+        )
+        .expect("enter");
         session.set_now_ms(0);
         let (x, y, w, h) = session.node_rect("sw").expect("switch rect");
         session.dispatch_tap(x + w / 2.0, y + h / 2.0);

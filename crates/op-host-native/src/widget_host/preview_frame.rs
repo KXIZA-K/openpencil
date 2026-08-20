@@ -441,7 +441,6 @@ impl super::WidgetHostNative {
     }
 }
 
-
 // Pure geometry tests (`compute_frame_geometry` / `device_surface_at` /
 // `device_scene_point`) live in the sibling `preview_frame_geometry_tests.rs`
 // — this file was at the 800-line cap with them inline.

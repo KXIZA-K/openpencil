@@ -483,10 +483,17 @@ pub fn handle_web_canvas_request(
             Ok(doc_json) => WebReply {
                 status: "200 OK",
                 body: format!(
-                    r#"{{"document":{doc_json},"version":{},"activePageIndex":{},"preserveAuthoredGeometry":{}}}"#,
+                    r#"{{"document":{doc_json},"version":{},"activePageIndex":{},"preserveAuthoredGeometry":{},"scenario":{}}}"#,
                     state.version,
                     state.editor.ui.active_page_index,
-                    state.editor.editor_ui.preserve_authored_geometry
+                    state.editor.editor_ui.preserve_authored_geometry,
+                    // The scene tag rides the same wire as the rest of the
+                    // editor meta: a Slides deck must reach the browser as a
+                    // deck or web preview cannot enter its presentation.
+                    match state.editor.editor_ui.scenario {
+                        Some(scene) => format!("\"{}\"", scene.as_str()),
+                        None => "null".to_string(),
+                    }
                 ),
             },
             Err(e) => WebReply {

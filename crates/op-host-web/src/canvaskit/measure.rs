@@ -29,7 +29,9 @@ impl BrowserMeasure {
     /// any single call, and `OpCk` is a `#[wasm_bindgen]` import whose clone is
     /// just a JS handle refcount bump.
     pub fn new(op_ck: &OpCk) -> Self {
-        Self { op_ck: op_ck.clone() }
+        Self {
+            op_ck: op_ck.clone(),
+        }
     }
 }
 
