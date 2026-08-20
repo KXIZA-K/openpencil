@@ -36,32 +36,32 @@ use op_editor_ui::{Point2D, Rect};
 /// enter-only slice — `allow(dead_code)` at the struct level covers the
 /// gap without littering per-field attributes.
 #[allow(dead_code)]
-pub(in crate::preview) struct AppMode {
+pub(crate) struct AppMode {
     /// The full normalized multi-screen document (all synthetic pages,
     /// entry first) — refs/tokens resolved, legacy widgets promoted.
     /// Retained so Task 9 can re-derive scenes for any screen without
     /// re-running projection.
-    pub(in crate::preview) promoted_doc: jian_ops_schema::PenDocument,
+    pub(crate) promoted_doc: jian_ops_schema::PenDocument,
     /// Route table derived from the projected document (path → synthetic
     /// page).
-    pub(in crate::preview) table: jian_core::screens::ScreenTable,
+    pub(crate) table: jian_core::screens::ScreenTable,
     /// Installed on `runtime.nav`; also the drainer of rejected navs.
-    pub(in crate::preview) router: std::rc::Rc<jian_core::screens::ScreenRouter>,
+    pub(crate) router: std::rc::Rc<jian_core::screens::ScreenRouter>,
     /// The screen path currently mounted in the runtime — compared
     /// against `router.current()` each reconcile pass.
-    pub(in crate::preview) current_path: String,
+    pub(crate) current_path: String,
     /// The route stack (`router.current().stack`) as of the LAST
     /// reconcile pass — Track C-3's reference point for classifying a
     /// NEW switch as push/pop/replace. The live router's stack has
     /// already advanced by the time `reconcile` runs (the tap mutated it
     /// synchronously), so this recorded copy is the only way to see the
     /// depth BEFORE the switch being reconciled right now.
-    pub(in crate::preview) mounted_stack: Vec<String>,
+    pub(crate) mounted_stack: Vec<String>,
     /// Index of `current_path`'s synthetic page inside `promoted_doc`.
-    pub(in crate::preview) page_idx: usize,
+    pub(crate) page_idx: usize,
     /// The active theme `enter` was called with — reused so a screen
     /// switch re-derives the scene against the same theme.
-    pub(in crate::preview) theme: std::collections::BTreeMap<String, String>,
+    pub(crate) theme: std::collections::BTreeMap<String, String>,
 }
 
 /// Result of the app-mode per-frame reconcile. `repaint` preserves the
@@ -278,7 +278,7 @@ impl PreviewSession {
             &mut self.binding_sites,
             &mut self.warnings,
         );
-        match solve_roots(&mut self.runtime) {
+        match solve_roots(&mut self.runtime, &self.measure) {
             Ok((frames, available)) => {
                 self.root_frames = frames;
                 self.available = available;
@@ -356,8 +356,8 @@ impl PreviewSession {
 
     /// Test-only: the APP MODE screen path currently mounted
     /// (`app.current_path`), or `""` outside APP MODE.
-    #[cfg(all(test, not(target_os = "windows")))]
-    pub(crate) fn current_path_for_test(&self) -> &str {
+    #[cfg(any(all(test, not(target_os = "windows")), feature = "testing"))]
+    pub fn current_path_for_test(&self) -> &str {
         self.app
             .as_ref()
             .map(|a| a.current_path.as_str())
@@ -367,8 +367,8 @@ impl PreviewSession {
     /// Test-only: the installed `ScreenRouter`, so a test can drive
     /// navigations directly (`router.push(...)`) without a tap. Panics
     /// outside APP MODE.
-    #[cfg(all(test, not(target_os = "windows")))]
-    pub(crate) fn router_for_test(&self) -> &std::rc::Rc<jian_core::screens::ScreenRouter> {
+    #[cfg(any(all(test, not(target_os = "windows")), feature = "testing"))]
+    pub fn router_for_test(&self) -> &std::rc::Rc<jian_core::screens::ScreenRouter> {
         &self.app.as_ref().expect("app mode").router
     }
 }
@@ -398,14 +398,13 @@ fn sorted_screen_paths(app: &AppMode) -> Vec<String> {
     paths
 }
 
-pub(in crate::preview) fn solve_roots(
+pub(crate) fn solve_roots(
     runtime: &mut Runtime,
+    measure: &std::rc::Rc<dyn jian_core::layout::measure::MeasureBackend>,
 ) -> Result<(Vec<RootFrame>, (f32, f32)), super::PreviewLayoutError> {
     use super::PreviewLayoutError;
 
-    runtime
-        .layout
-        .set_backend(std::rc::Rc::new(jian_skia::SkiaMeasure::new()));
+    runtime.layout.set_backend(std::rc::Rc::clone(measure));
     let primary_available = {
         let Some(rt_doc) = runtime.document.as_ref() else {
             return Err(PreviewLayoutError::NoDocument);

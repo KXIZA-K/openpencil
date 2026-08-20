@@ -3,7 +3,7 @@
 
 #![cfg(test)]
 
-use super::PreviewSession;
+use super::{test_measure, PreviewSession};
 
 fn theme() -> std::collections::BTreeMap<String, String> {
     std::collections::BTreeMap::new()
@@ -16,7 +16,7 @@ fn load(src: &str) -> jian_ops_schema::PenDocument {
 }
 
 fn enter(doc: &jian_ops_schema::PenDocument) -> PreviewSession {
-    PreviewSession::enter(doc, (1200.0, 800.0), &theme(), 0, false, false).expect("enter preview")
+    PreviewSession::enter(doc, (1200.0, 800.0), &theme(), 0, false, false, test_measure()).expect("enter preview")
 }
 
 /// 390-wide phone root, 800 tall, with a bottom nav frame flush to the

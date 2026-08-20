@@ -1,4 +1,4 @@
-use super::PreviewSession;
+use super::{test_measure, PreviewSession};
 use jian_core::gesture::pointer::Modifiers;
 use op_editor_ui::widgets::canvas_viewport_paint::tabs_active_index;
 
@@ -32,6 +32,7 @@ fn runtime_tab_switch_keeps_visual_and_hit_mapping_on_the_same_panel() {
         0,
         false,
         false,
+        test_measure(),
     )
     .expect("enter tabs preview");
 

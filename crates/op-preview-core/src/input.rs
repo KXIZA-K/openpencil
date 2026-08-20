@@ -248,7 +248,7 @@ impl PreviewSession {
     /// The runtime layout rect for the node with schema `id`, in the
     /// runtime's hit-test space, or `None` when the id has no live
     /// runtime node (e.g. a child a promotion dropped from the tree).
-    /// `pub(in crate::preview)` so `mod.rs`'s test-only `node_rect`
+    /// `pub(crate)` so `mod.rs`'s test-only `node_rect`
     /// accessor can reach it from the parent module.
     ///
     /// Merge note (responsive-m1a into main): jian-core's `node_rect`
@@ -262,7 +262,7 @@ impl PreviewSession {
     /// above maps into via this function. Subtract the root's authored
     /// origin back out so `runtime_rect` keeps returning root-relative
     /// space regardless of jian-core's own internal convention.
-    pub(in crate::preview) fn runtime_rect(&self, id: &str) -> Option<Rect> {
+    pub(crate) fn runtime_rect(&self, id: &str) -> Option<Rect> {
         let doc = self.runtime.document.as_ref()?;
         let key = doc.tree.by_id.get(id).copied()?;
         let r = self.runtime.layout.node_rect(key)?;

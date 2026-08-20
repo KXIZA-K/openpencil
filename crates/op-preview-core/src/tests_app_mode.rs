@@ -10,7 +10,7 @@
 
 #![cfg(test)]
 
-use super::PreviewSession;
+use super::{test_measure, PreviewSession};
 use jian_core::action::services::Router;
 use jian_core::widget_state::WidgetState;
 
@@ -53,7 +53,7 @@ fn preview_uses_active_page_for_runtime() {
     // runtime (no hit-test, no state) while the scene painted page 1.
     let doc = two_page_switch_doc();
     let mut session =
-        PreviewSession::enter(&doc, (800.0, 600.0), &default_theme(), 1, false, false)
+        PreviewSession::enter(&doc, (800.0, 600.0), &default_theme(), 1, false, false, test_measure())
             .expect("enter preview on page 1");
 
     let rect = session.node_rect("sw1");
@@ -136,7 +136,7 @@ const UNMARKED_TWO_FRAME_PAGE_JSON: &str = r##"{
 fn marked_doc_enters_app_mode_mounting_entry_screen() {
     let doc: jian_ops_schema::PenDocument = serde_json::from_str(TWO_SCREEN_DOC_JSON).unwrap();
     let session =
-        PreviewSession::enter(&doc, (1200.0, 800.0), &Default::default(), 0, false, false).unwrap();
+        PreviewSession::enter(&doc, (1200.0, 800.0), &Default::default(), 0, false, false, test_measure()).unwrap();
     assert!(session.is_app_mode());
     // Entry screen only: one mounted root.
     assert_eq!(session.root_frames_len_for_test(), 1);
@@ -147,7 +147,7 @@ fn unmarked_doc_keeps_workbench_mode() {
     let doc: jian_ops_schema::PenDocument =
         serde_json::from_str(UNMARKED_TWO_FRAME_PAGE_JSON).unwrap();
     let session =
-        PreviewSession::enter(&doc, (1200.0, 800.0), &Default::default(), 0, false, false).unwrap();
+        PreviewSession::enter(&doc, (1200.0, 800.0), &Default::default(), 0, false, false, test_measure()).unwrap();
     assert!(!session.is_app_mode());
     // Both top-level frames of the active page mount side by side.
     assert_eq!(session.root_frames_len_for_test(), 2);
@@ -165,7 +165,7 @@ fn unmarked_doc_reports_no_screen_rect_so_centering_is_skipped() {
     let doc: jian_ops_schema::PenDocument =
         serde_json::from_str(UNMARKED_TWO_FRAME_PAGE_JSON).unwrap();
     let session =
-        PreviewSession::enter(&doc, (1200.0, 800.0), &Default::default(), 0, false, false).unwrap();
+        PreviewSession::enter(&doc, (1200.0, 800.0), &Default::default(), 0, false, false, test_measure()).unwrap();
     assert!(!session.is_app_mode());
     assert!(
         session.root_frames_len_for_test() > 0,
@@ -190,7 +190,7 @@ fn go_button_center_for_test(session: &PreviewSession) -> (f32, f32) {
 fn tap_push_switches_screen_via_reconcile() {
     let doc: jian_ops_schema::PenDocument = serde_json::from_str(TWO_SCREEN_DOC_JSON).unwrap();
     let mut session =
-        PreviewSession::enter(&doc, (1200.0, 800.0), &Default::default(), 0, false, false).unwrap();
+        PreviewSession::enter(&doc, (1200.0, 800.0), &Default::default(), 0, false, false, test_measure()).unwrap();
     // Tap the nav button center (scene coords; screens sit at origin in
     // app mode).
     let (bx, by) = go_button_center_for_test(&session);
@@ -208,7 +208,7 @@ fn tap_push_switches_screen_via_reconcile() {
 fn unknown_push_appends_warning_and_stays() {
     let doc: jian_ops_schema::PenDocument = serde_json::from_str(TWO_SCREEN_DOC_JSON).unwrap();
     let mut session =
-        PreviewSession::enter(&doc, (1200.0, 800.0), &Default::default(), 0, false, false).unwrap();
+        PreviewSession::enter(&doc, (1200.0, 800.0), &Default::default(), 0, false, false, test_measure()).unwrap();
     session.router_for_test().push("/missing");
     let before = session.warnings().len();
     assert!(
@@ -223,7 +223,7 @@ fn unknown_push_appends_warning_and_stays() {
 fn warning_only_reconcile_reports_no_switch() {
     let doc: jian_ops_schema::PenDocument = serde_json::from_str(TWO_SCREEN_DOC_JSON).unwrap();
     let mut session =
-        PreviewSession::enter(&doc, (1200.0, 800.0), &Default::default(), 0, false, false).unwrap();
+        PreviewSession::enter(&doc, (1200.0, 800.0), &Default::default(), 0, false, false, test_measure()).unwrap();
     session.router_for_test().push("/missing");
     let outcome = session.reconcile(1_000);
     assert!(outcome.repaint, "rejection appends a warning → repaint");
@@ -250,7 +250,7 @@ fn bound_input_value_survives_screen_roundtrip() {
     // the real paint overlay path, not just after the next tap/focus.
     let doc: jian_ops_schema::PenDocument = serde_json::from_str(TWO_SCREEN_DOC_JSON).unwrap();
     let mut session =
-        PreviewSession::enter(&doc, (1200.0, 800.0), &Default::default(), 0, false, false).unwrap();
+        PreviewSession::enter(&doc, (1200.0, 800.0), &Default::default(), 0, false, false, test_measure()).unwrap();
 
     assert!(
         session.focus_node_for_test("email"),
@@ -315,7 +315,7 @@ fn reenter_after_exit_resets_to_entry_screen_and_state() {
     // router had navigated to.
     let doc: jian_ops_schema::PenDocument = serde_json::from_str(TWO_SCREEN_DOC_JSON).unwrap();
     let mut session =
-        PreviewSession::enter(&doc, (1200.0, 800.0), &Default::default(), 0, false, false).unwrap();
+        PreviewSession::enter(&doc, (1200.0, 800.0), &Default::default(), 0, false, false, test_measure()).unwrap();
     session.router_for_test().push("/detail");
     assert!(
         session.reconcile(1_000).switched,
@@ -325,7 +325,7 @@ fn reenter_after_exit_resets_to_entry_screen_and_state() {
     drop(session); // mirrors the host's exit_preview drop
 
     let fresh =
-        PreviewSession::enter(&doc, (1200.0, 800.0), &Default::default(), 0, false, false).unwrap();
+        PreviewSession::enter(&doc, (1200.0, 800.0), &Default::default(), 0, false, false, test_measure()).unwrap();
     assert_eq!(
         fresh.current_path_for_test(),
         "/",

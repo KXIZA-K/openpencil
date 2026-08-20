@@ -7,7 +7,7 @@
 
 #![cfg(test)]
 
-use super::preview_frame::*;
+use super::device_frame::*;
 use op_editor_core::PreviewDeviceKind;
 use op_editor_ui::{Point2D, Rect};
 

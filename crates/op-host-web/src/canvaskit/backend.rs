@@ -42,6 +42,10 @@ impl CanvasKitBackend {
     pub fn logical_size(&self) -> (f32, f32) {
         (self.logical_w as f32, self.logical_h as f32)
     }
+    /// Get a reference to the OpCk bridge for preview measurement backend construction.
+    pub fn op_ck(&self) -> &OpCk {
+        &self.ck
+    }
     pub fn resize_for_display(&mut self, logical_w: u32, logical_h: u32, dpr: f32) {
         self.logical_w = logical_w.max(1);
         self.logical_h = logical_h.max(1);

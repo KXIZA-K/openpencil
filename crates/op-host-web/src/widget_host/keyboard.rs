@@ -455,4 +455,39 @@ impl WidgetHost {
     pub fn apply_key(&mut self, _event: &op_editor_ui::KeyEvent) -> bool {
         false
     }
+
+    /// Route a printable character into the live preview runtime.
+    /// Returns `true` when consumed. No-op (false) when not in preview.
+    pub fn apply_preview_text(&mut self, text: &str) -> bool {
+        self.preview_dispatch_text(text)
+    }
+
+    /// Dispatch a named key to the preview runtime.
+    /// Returns `true` when consumed.
+    pub fn apply_preview_key(&mut self, key: &str, shift: bool) -> bool {
+        self.preview_dispatch_key(key, shift)
+    }
+
+    /// Advance focus in the preview. Returns `true` while in preview.
+    pub fn apply_preview_focus(&mut self, shift: bool) -> bool {
+        self.preview_focus(shift)
+    }
+
+    /// Check if preview is active. Used by keydown handler.
+    pub fn is_preview_active(&self) -> bool {
+        #[cfg(feature = "canvaskit")]
+        {
+            self.preview.is_some() && self.editor_state.editor_ui.preview.mode
+        }
+        #[cfg(not(feature = "canvaskit"))]
+        {
+            false
+        }
+    }
+
+    /// Exit Preview mode. Delegates to the preview_frame module which handles
+    /// Track M-1 animation logic.
+    pub fn exit_preview(&mut self, viewport_width: f32, viewport_height: f32) {
+        self.do_exit_preview(viewport_width, viewport_height);
+    }
 }

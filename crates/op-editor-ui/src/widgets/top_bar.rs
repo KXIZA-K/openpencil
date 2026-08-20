@@ -38,10 +38,15 @@ pub(super) const DIVIDER_GAP: f32 = 4.0;
 /// has none, so the button is compiled out there — otherwise it would
 /// toggle an invisible panel (Codex stop-time review).
 pub(super) const GIT_BUTTON_AVAILABLE: bool = !cfg!(target_arch = "wasm32");
-/// Preview needs the host-side jian runtime owner. The current web/wasm host
-/// has no equivalent runtime/measurement bridge, so hide the button there
-/// rather than exposing a non-interactive preview flag.
-pub(super) const PREVIEW_BUTTON_AVAILABLE: bool = !cfg!(target_arch = "wasm32");
+/// Preview needs a host-side jian runtime owner plus a measurement bridge that
+/// matches how that host's design canvas measures text — otherwise preview's
+/// hit-test layout drifts from what the canvas paints and taps miss.
+///
+/// Both hosts supply one now: the desktop host injects `jian_skia::SkiaMeasure`,
+/// and the web host injects `canvaskit::BrowserMeasure`, which routes through
+/// the same Canvas2D `measureText` path the web design canvas lays out with. So
+/// the button is offered on every target rather than compiled out on wasm.
+pub(super) const PREVIEW_BUTTON_AVAILABLE: bool = true;
 /// Stacked agent-icon metrics — mirror TS `top-bar.tsx`
 /// (`w-5 h-5 rounded-md bg-foreground/10 ring-1 ring-card` chips
 /// overlapped by `-space-x-1.5`).

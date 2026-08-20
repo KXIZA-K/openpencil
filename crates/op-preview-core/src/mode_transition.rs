@@ -47,13 +47,14 @@ use op_editor_ui::{Point2D, Rect};
 pub(crate) const MODE_TRANSITION_DURATION_MS: u64 = 220;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ModeTransitionKind {
+/// Screen transition direction (Enter / Exit preview mode).
+pub enum ModeTransitionKind {
     Enter,
     Exit,
 }
 
-/// An in-flight canvas ↔ device-frame merge animation.
-pub(crate) struct ModeTransition {
+/// An in-flight canvas ↔ device-frame merge animation — used by host integration layer.
+pub struct ModeTransition {
     kind: ModeTransitionKind,
     started_at_ms: u64,
     /// The screen's on-SCREEN rect (after the canvas's own pan/zoom)
@@ -69,7 +70,7 @@ pub(crate) struct ModeTransition {
 }
 
 impl ModeTransition {
-    pub(crate) fn start(
+    pub fn start(
         kind: ModeTransitionKind,
         source_rect: Option<Rect>,
         settled_frame_rect: Rect,
@@ -83,11 +84,11 @@ impl ModeTransition {
         }
     }
 
-    pub(crate) fn kind(&self) -> ModeTransitionKind {
+    pub fn kind(&self) -> ModeTransitionKind {
         self.kind
     }
 
-    pub(crate) fn is_active(&self, now_ms: u64) -> bool {
+    pub fn is_active(&self, now_ms: u64) -> bool {
         now_ms
             < self
                 .started_at_ms
@@ -101,7 +102,7 @@ impl ModeTransition {
     /// while that's true), kept for parity / a future tighter wake
     /// schedule.
     #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) fn next_deadline_ms(&self, now_ms: u64) -> Option<u64> {
+    pub fn next_deadline_ms(&self, now_ms: u64) -> Option<u64> {
         if !self.is_active(now_ms) {
             return None;
         }
@@ -132,7 +133,7 @@ impl ModeTransition {
     /// between the captured source rect (or, absent one, the settled
     /// rect itself — a pure cross-fade with no geometric movement) and
     /// the settled device-frame rect.
-    pub(crate) fn canvas_rect_for_frame(&self, now_ms: u64) -> Rect {
+    pub fn canvas_rect_for_frame(&self, now_ms: u64) -> Rect {
         let t = self.settle_t(now_ms);
         let source = self.source_rect.unwrap_or(self.settled_frame_rect);
         lerp_rect(source, self.settled_frame_rect, t)
@@ -142,7 +143,7 @@ impl ModeTransition {
     /// device-frame's own tone: 0 at the canvas-only end, 1 at the
     /// fully-settled device-frame end (both directions share this via
     /// `settle_t`).
-    pub(crate) fn chrome_blend(&self, now_ms: u64) -> f32 {
+    pub fn chrome_blend(&self, now_ms: u64) -> f32 {
         self.settle_t(now_ms)
     }
 
@@ -173,7 +174,8 @@ fn lerp_rect(a: Rect, b: Rect, t: f32) -> Rect {
 /// blending since the backdrop underneath is a known, already-painted
 /// solid colour (`widget_host::preview_frame::paint_device_frame`
 /// always fills the canvas region with `theme.canvas_surface` first).
-pub(crate) fn lerp_color(
+/// Used by host integration layer.
+pub fn lerp_color(
     from: op_editor_ui::Color,
     to: op_editor_ui::Color,
     t: f32,

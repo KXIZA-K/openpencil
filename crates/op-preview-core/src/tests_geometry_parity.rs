@@ -19,7 +19,7 @@
 
 #![cfg(test)]
 
-use super::PreviewSession;
+use super::{test_measure, PreviewSession};
 use op_editor_ui::layout_scene::{LayoutScene, SceneNode};
 
 fn default_theme() -> std::collections::BTreeMap<String, String> {
@@ -110,7 +110,7 @@ fn preview_matches_design_for_preserve_geometry_doc() {
     // the flex-solved stacked position.
     let doc = preserve_geometry_doc();
     let design = design_scene(&doc, true);
-    let session = PreviewSession::enter(&doc, (800.0, 600.0), &default_theme(), 0, true, false)
+    let session = PreviewSession::enter(&doc, (800.0, 600.0), &default_theme(), 0, true, false, test_measure())
         .expect("enter preview");
     let preview = session.preview_scene_for_test();
     assert_same_bounds(&design, &preview, "a");
@@ -162,7 +162,7 @@ fn preview_matches_design_for_promoted_role_frame_doc() {
     // The field's own box and the sibling below it must not move.
     let doc = role_frame_doc();
     let design = design_scene(&doc, false);
-    let session = PreviewSession::enter(&doc, (800.0, 600.0), &default_theme(), 0, false, false)
+    let session = PreviewSession::enter(&doc, (800.0, 600.0), &default_theme(), 0, false, false, test_measure())
         .expect("enter preview");
     let preview = session.preview_scene_for_test();
     assert_same_bounds(&design, &preview, "emailField");
@@ -183,7 +183,7 @@ fn held_drag_stays_anchored_to_the_down_node() {
     use jian_core::gesture::pointer::PointerPhase;
     use op_editor_ui::{Point2D, Rect};
     let doc = preserve_geometry_doc();
-    let mut session = PreviewSession::enter(&doc, (800.0, 600.0), &default_theme(), 0, true, false)
+    let mut session = PreviewSession::enter(&doc, (800.0, 600.0), &default_theme(), 0, true, false, test_measure())
         .expect("enter preview");
 
     // Simulate a Down that anchored on a node painted at (120,210)
@@ -254,7 +254,7 @@ fn preview_matches_design_for_free_layout_doc() {
     }"##,
     );
     let design = design_scene(&doc, false);
-    let session = PreviewSession::enter(&doc, (800.0, 600.0), &default_theme(), 0, false, false)
+    let session = PreviewSession::enter(&doc, (800.0, 600.0), &default_theme(), 0, false, false, test_measure())
         .expect("enter preview");
     let preview = session.preview_scene_for_test();
     assert_same_bounds(&design, &preview, "root");

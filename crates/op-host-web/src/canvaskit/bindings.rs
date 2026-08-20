@@ -16,6 +16,12 @@ extern "C" {
     pub(super) fn set_image_cache_factory(factory: &js_sys::Function);
 
     /// The bridge object: flat scalar-arg ops over a CanvasKit canvas.
+    ///
+    /// `Clone` is a JS handle refcount bump, not a canvas copy. Preview's
+    /// `BrowserMeasure` holds one for the life of the session (the layout
+    /// engine keeps it behind an `Rc<dyn MeasureBackend>`), so it needs to own
+    /// a handle rather than borrow the host's.
+    #[derive(Clone)]
     pub type OpCk;
     #[wasm_bindgen(method, js_name = beginFrame)]
     pub(super) fn begin_frame(this: &OpCk);
@@ -461,6 +467,24 @@ extern "C" {
         weight: i32,
         italic: bool,
     ) -> f32;
+    /// Measure a multi-run paragraph with optional line wrapping.
+    /// Takes parallel arrays of run properties (texts, families, sizes, weights,
+    /// italics as u8 bools, letter_spacing) and returns [width, height, line_count, baseline]
+    /// in a Float32Array. Uses the same text measurement path as the design canvas to
+    /// keep preview's hit-test layout aligned with painted output.
+    /// maxWidth < 0 means natural single-line extent; lineHeight 0 means engine default (1.3).
+    #[wasm_bindgen(method, js_name = measureParagraph)]
+    pub(super) fn measure_paragraph(
+        this: &OpCk,
+        texts: &js_sys::Array,
+        families: &js_sys::Array,
+        sizes: &[f32],
+        weights: &[i32],
+        italics: &[u8],
+        spacing: &[f32],
+        max_width: f32,
+        line_height: f32,
+    ) -> js_sys::Float32Array;
     #[wasm_bindgen(method, js_name = registerSystemFont)]
     pub(super) fn register_system_font(this: &OpCk, family: &str, bytes: &[u8]) -> bool;
     /// Register a user-imported font face; the family becomes selectable by

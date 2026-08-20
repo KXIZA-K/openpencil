@@ -53,10 +53,11 @@
 //! (`apply_widget_state` / `display_string` / `format_warning`) live in
 //! `scene_helpers.rs`. `RootFrame` + `PreviewSession` stay here
 //! (shared), with the fields those sibling modules touch scoped
-//! `pub(in crate::preview)` (not `pub(super)`, which resolves to
-//! `pub(crate)` at this top-level module and would trip
-//! `private_interfaces` on the `AppMode` type).
+//! `pub(crate)` (internal fields visible to sibling modules).
 
+pub mod device_frame;
+#[cfg(all(test, not(target_os = "windows")))]
+mod device_frame_tests;
 mod app_mode;
 #[cfg(feature = "gl-host")]
 mod auto_wire;
@@ -90,17 +91,42 @@ mod tests_tabs;
 #[cfg(all(test, not(target_os = "windows")))]
 mod tests_transition;
 
+/// The measurement backend preview tests solve layout against — the same
+/// skia backend the native host injects, so test geometry matches
+/// production. Kept in one place so the 45 call sites don't each spell
+/// out the construction.
+#[cfg(all(test, not(target_os = "windows")))]
+pub(crate) fn test_measure() -> Rc<dyn MeasureBackend> {
+    Rc::new(jian_skia::SkiaMeasure::new())
+}
+
+#[cfg(test)]
+pub(crate) mod font_registry_test_support {
+    use std::sync::{LazyLock, Mutex, MutexGuard};
+
+    static LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+    pub(crate) fn lock() -> MutexGuard<'static, ()> {
+        LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+}
+
 use app_mode::AppMode;
 use binding_sites::{collect_binding_sites, BindingSite};
 pub use error::{PreviewEnterError, PreviewLayoutError};
 use scene_helpers::{apply_widget_state, display_string, format_warning};
 
+/// Screen transition animation state and helpers — used by the host integration layer.
 #[allow(unused_imports)]
-pub(crate) use mode_transition::{lerp_color, ModeTransition, ModeTransitionKind};
+pub use mode_transition::{lerp_color, ModeTransition, ModeTransitionKind};
+/// Pinned paint tracking for caret animation — used by the host integration layer.
 #[allow(unused_imports)]
-pub(crate) use present::PinnedPaint;
+pub use present::PinnedPaint;
+
+use std::rc::Rc;
 
 use jian_core::action::services::Router;
+use jian_core::layout::measure::MeasureBackend;
 use jian_core::render::widget_style::{resolve_authored_widget_visual, with_visual_opacity};
 use jian_core::widget_state::WidgetState;
 use jian_core::Runtime;
@@ -115,14 +141,14 @@ use op_editor_ui::{Color, Point2D, Rect, RenderBackend};
 /// hit-test space. Used to translate a scene-space tap back into the
 /// space `Runtime::dispatch_pointer` expects.
 ///
-/// Fields are `pub(in crate::preview)` so `app_mode::solve_roots` (which
+/// Fields are `pub(crate)` so `app_mode::solve_roots` (which
 /// constructs these) can reach them from the child module.
-pub(in crate::preview) struct RootFrame {
+pub(crate) struct RootFrame {
     /// The root's bounds in SCENE space (authored origin + size).
-    pub(in crate::preview) scene_rect: Rect,
+    pub(crate) scene_rect: Rect,
     /// The root's authored `(base.x, base.y)` — the delta between scene
     /// space and the runtime's root-relative space.
-    pub(in crate::preview) offset: (f32, f32),
+    pub(crate) offset: (f32, f32),
 }
 
 /// A live preview runtime built from a snapshot of the editor document.
@@ -133,6 +159,13 @@ pub(in crate::preview) struct RootFrame {
 /// UI-thread-local host.
 pub struct PreviewSession {
     runtime: Runtime,
+    /// Text-measurement backend the runtime layout solves against.
+    /// Injected by the host rather than hard-wired to
+    /// `jian_skia::SkiaMeasure`, so a wasm host can supply a
+    /// CanvasKit-backed implementation. Retained on the session because
+    /// an app-mode screen switch re-solves layout (`app_mode::reconcile`
+    /// → `solve_roots`) long after `enter` returned.
+    measure: Rc<dyn MeasureBackend>,
     /// The available size the runtime's PRIMARY (first) root was laid
     /// out against (the root's authored size). Read only by the
     /// layout-parity test; retained as the record of what the runtime
@@ -140,9 +173,9 @@ pub struct PreviewSession {
     #[cfg_attr(not(test), allow(dead_code))]
     available: (f32, f32),
     /// Per-root scene↔runtime coordinate mapping for tap translation.
-    /// `pub(in crate::preview)` so `app_mode`'s
+    /// `pub(crate)` so `app_mode`'s
     /// `current_screen_scene_rect` can read the first frame's scene rect.
-    pub(in crate::preview) root_frames: Vec<RootFrame>,
+    pub(crate) root_frames: Vec<RootFrame>,
     /// The design `LayoutScene` preview paints: paint tree from the
     /// prepared + PROMOTED document (so a generated/legacy `role=input`
     /// field renders as an interactive `text_input` widget, not a
@@ -168,9 +201,9 @@ pub struct PreviewSession {
     /// `apply_binding_sites`) so `set $app.*` writes become visible.
     binding_sites: Vec<BindingSite>,
     /// APP MODE state (routed multi-screen doc), or `None` for the
-    /// classic single-page workbench preview. `pub(in crate::preview)`
+    /// classic single-page workbench preview. `pub(crate)`
     /// so `app_mode`'s `is_app_mode` can read it. See [`AppMode`].
-    pub(in crate::preview) app: Option<AppMode>,
+    pub(crate) app: Option<AppMode>,
     /// The (scene rect, runtime rect) pair the current pointer gesture
     /// anchored on at `Down` — held `Move`s and the `Up` map through
     /// it (pointer capture), so a drag that leaves the node's scene
@@ -214,9 +247,12 @@ impl PreviewSession {
     /// ## Layout
     ///
     /// The runtime layout is solved per page-root against that root's
-    /// OWN authored size (`root_available_size`) with real skia text
-    /// metrics (`jian_skia::SkiaMeasure`) — the SAME backend the design
-    /// canvas uses. The runtime layout now serves only hit-testing (the
+    /// OWN authored size (`root_available_size`) with the `measure`
+    /// backend the caller supplies — which MUST be the same backend the
+    /// host's design canvas measures with (`jian_skia::SkiaMeasure` on
+    /// the native host, a CanvasKit-backed one on the web host), or taps
+    /// stop landing where widgets paint. The runtime layout now serves
+    /// only hit-testing (the
     /// visible scene is painted by the host through the design
     /// `LayoutScene`); keeping it bit-identical to the design canvas
     /// keeps taps landing where widgets paint.
@@ -258,6 +294,7 @@ impl PreviewSession {
         active_page_index: usize,
         preserve_authored_geometry: bool,
         presenting: bool,
+        measure: Rc<dyn MeasureBackend>,
     ) -> Result<Self, PreviewEnterError> {
         let _ = canvas_size; // layout is root-derived, not canvas-derived.
 
@@ -425,7 +462,7 @@ impl PreviewSession {
             runtime.nav = a.router.clone();
         }
 
-        let (root_frames, primary_available) = app_mode::solve_roots(&mut runtime)?;
+        let (root_frames, primary_available) = app_mode::solve_roots(&mut runtime, &measure)?;
 
         // Build the preview scene: paint tree from the promoted
         // document, geometry from the unpromoted `layout_doc` — the
@@ -444,6 +481,7 @@ impl PreviewSession {
 
         Ok(Self {
             runtime,
+            measure,
             available: primary_available,
             root_frames,
             scene,

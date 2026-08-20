@@ -1391,6 +1391,171 @@ export async function opCkInit(canvasId) {
       }
       return w;
     },
+    /// Measure a multi-run paragraph with optional line-wrapping and return
+    /// [width, height, line_count, baseline] to match the layout engine's contract.
+    ///
+    /// Runs are arrays passed from Rust: texts[], families[], sizes[], weights[],
+    /// italics[] (u8 bools), spacing[] (letter_spacing per run).
+    /// maxWidth is the wrap budget; -1 means natural single-line extent.
+    /// lineHeight is the multiplier (0 = engine default = 1.3).
+    ///
+    /// Wrapping strategy: measure each run segment-by-segment (same as the
+    /// design-canvas draw path), break on newlines, and when a run exceeds the
+    /// budget, measure character by character to find the break point.
+    measureParagraph(texts, families, sizes, weights, italics, spacing, maxWidth, lineHeight) {
+      if (!texts || texts.length === 0) {
+        return Float32Array.of(0, 0, 0, 0);
+      }
+
+      // Collect runs into a flat array structure.
+      const runs = [];
+      let hasNewline = false;
+      for (let i = 0; i < texts.length; i++) {
+        const text = String(texts[i] || '');
+        const family = String(families[i] || '');
+        const sz = Number(sizes[i]) || 16;
+        const weight = Number(weights[i]) || 400;
+        const italic = Boolean(italics[i]);
+        const letterSpacing = Number(spacing[i]) || 0;
+        if (text.includes('\n')) hasNewline = true;
+        runs.push({ text, family, sz, weight, italic, letterSpacing });
+      }
+
+      // Compute baseline and natural height metrics from the largest/heaviest run.
+      let maxSz = 0;
+      let ascent = 0;
+      let descent = 0;
+      for (const run of runs) {
+        maxSz = Math.max(maxSz, run.sz);
+        if (browserTextCtx) {
+          browserTextCtx.font = browserTextFont(run.sz, run.weight, run.italic, run.family);
+          const metrics = browserTextCtx.measureText('M');
+          const fontAsc = Number(metrics.fontBoundingBoxAscent);
+          const fontDesc = Number(metrics.fontBoundingBoxDescent);
+          const inkAsc = Number(metrics.actualBoundingBoxAscent);
+          const inkDesc = Number(metrics.actualBoundingBoxDescent);
+          ascent = Math.max(ascent,
+            Number.isFinite(fontAsc) ? fontAsc : 0,
+            Number.isFinite(inkAsc) ? inkAsc : 0);
+          descent = Math.max(descent,
+            Number.isFinite(fontDesc) ? fontDesc : 0,
+            Number.isFinite(inkDesc) ? inkDesc : 0);
+        }
+      }
+      if (!(ascent > 0)) ascent = maxSz * 0.8;
+      if (!(descent > 0)) descent = maxSz * 0.2;
+      const naturalLineHeight = ascent + descent;
+      const finalLineHeight = lineHeight > 0 ? maxSz * lineHeight : naturalLineHeight;
+      const baseline = ascent + (finalLineHeight - naturalLineHeight) / 2;
+
+      // Helper to measure a single run with explicit text, sz, weight, italic, family.
+      const measureRunWidth = (runText, runSz, runWeight, runItalic, runFamily) => {
+        return this.measureTextFamilyStyled(runText, runFamily, runSz, runWeight, runItalic);
+      };
+
+      // If no max width or no newlines and no need to wrap, return natural width.
+      if (maxWidth < 0) {
+        let w = 0;
+        for (const run of runs) {
+          w += measureRunWidth(run.text, run.sz, run.weight, run.italic, run.family);
+          // Add letter spacing: # of chars * spacing.
+          if (run.letterSpacing !== 0) {
+            w += run.text.length * run.letterSpacing;
+          }
+        }
+        // Count explicit lines from newlines.
+        let lineCount = 1;
+        for (const run of runs) {
+          lineCount += (run.text.match(/\n/g) || []).length;
+        }
+        const height = maxSz * (lineHeight > 0 ? lineHeight : 1.3) * lineCount;
+        return Float32Array.of(w, height, lineCount, baseline);
+      }
+
+      // Wrapping logic: split runs into lines based on maxWidth.
+      // Strategy mirrors the existing code around line 1375 — measure each run,
+      // break on newlines, and when a run exceeds the budget, split it.
+      const lines = [];
+      let currentLine = [];
+      let currentLineWidth = 0;
+
+      for (const run of runs) {
+        // Split on newlines first.
+        const chunks = run.text.split('\n');
+        for (let chunkIdx = 0; chunkIdx < chunks.length; chunkIdx++) {
+          const chunk = chunks[chunkIdx];
+          const isLastChunk = chunkIdx === chunks.length - 1;
+
+          if (chunk) {
+            // Measure this chunk with wrapping if needed.
+            const chunkWidth = measureRunWidth(chunk, run.sz, run.weight, run.italic, run.family);
+            const totalChunkWidth = chunkWidth + chunk.length * run.letterSpacing;
+
+            if (currentLineWidth + totalChunkWidth <= maxWidth) {
+              // Fits on current line.
+              currentLine.push({ text: chunk, width: chunkWidth, spacing: run.letterSpacing });
+              currentLineWidth += totalChunkWidth;
+            } else if (currentLineWidth > 0) {
+              // Doesn't fit; start a new line if there's anything on the current line.
+              lines.push(currentLine);
+              currentLine = [{ text: chunk, width: chunkWidth, spacing: run.letterSpacing }];
+              currentLineWidth = totalChunkWidth;
+            } else {
+              // Current line is empty but chunk still doesn't fit: break chunk.
+              let remaining = chunk;
+              while (remaining) {
+                let fit = '';
+                let fitWidth = 0;
+                for (const ch of remaining) {
+                  const candidate = fit + ch;
+                  const candidateWidth = measureRunWidth(candidate, run.sz, run.weight, run.italic, run.family);
+                  const totalWidth = candidateWidth + candidate.length * run.letterSpacing;
+                  if (totalWidth <= maxWidth) {
+                    fit = candidate;
+                    fitWidth = candidateWidth;
+                  } else {
+                    break;
+                  }
+                }
+                if (!fit && remaining) {
+                  // Degenerate: even one char doesn't fit; output it anyway.
+                  fit = remaining[0];
+                  fitWidth = measureRunWidth(fit, run.sz, run.weight, run.italic, run.family);
+                }
+                if (fit) {
+                  lines.push([{ text: fit, width: fitWidth, spacing: run.letterSpacing }]);
+                  remaining = remaining.slice(fit.length);
+                } else {
+                  break;
+                }
+              }
+              currentLine = [];
+              currentLineWidth = 0;
+            }
+          }
+
+          if (!isLastChunk) {
+            // Newline: close the current line.
+            if (currentLine.length > 0) {
+              lines.push(currentLine);
+            }
+            currentLine = [];
+            currentLineWidth = 0;
+          }
+        }
+      }
+
+      if (currentLine.length > 0) {
+        lines.push(currentLine);
+      }
+
+      // Compute final metrics.
+      const lineCount = Math.max(1, lines.length);
+      const width = maxWidth;
+      const height = finalLineHeight * lineCount;
+
+      return Float32Array.of(width, height, lineCount, baseline);
+    },
     registerSystemFont(family, bytes) {
       const key = normalizedFamily(family);
       if (!key || systemTypefaceKeys.has(key)) return Boolean(key);

@@ -54,6 +54,7 @@ gl-host = [
   "dep:scopeguard",
   "dep:jian-host-desktop",
   "dep:op-orchestrator",
+  "op-preview-core/gl-host",
 ]
 
 # The basic_window demo needs the GL host stack (SharedSkiaContext + winit);
@@ -64,6 +65,10 @@ name = "basic_window"
 required-features = ["gl-host"]
 
 [dependencies]
+# Canvas Preview (Play) mode runtime — extracted into its own crate.
+# Feature flag: gl-host enables auto-wire via op-orchestrator (desktop-only).
+op-preview-core = { path = "../op-preview-core" }
+
 # Phase 7.3 reorg: openpencil-shell-core dissolved — widget facade /
 # theme / layout scene / scene vars / render-backend / gesture types
 # all resolve through the op-editor-ui crate.
@@ -238,6 +243,10 @@ sysinfo = "0.30"
 # registry the widget layer resolves pins against. Already in the build graph
 # through op-editor-ui; named here only so the tests can reach it.
 op-ai-skills = { path = "../op-ai-skills" }
+# Preview crate with testing feature enabled — exposes test-only helper
+# methods (`current_path_for_test`, `router_for_test`, etc.) needed by
+# op-host-native's cross-crate tests.
+op-preview-core = { path = "../op-preview-core", features = ["testing"] }
 # `no-env-filter` is required for integration tests — the default filter
 # only captures logs from the test crate itself, but our `#[tracing::instrument]`
 # spans live inside `op_host_native::*`. (Per upstream README §136.)

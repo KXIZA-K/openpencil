@@ -76,6 +76,13 @@ wasm-bindgen-futures = { version = "0.4", optional = true }
 # re-exports `gesture::*`), so pull jian-core directly. Same path-with-
 # version pattern as shell-core's own jian-core dep.
 jian-core = { path = "../../vendor/jian/crates/jian-core", version = "0.0.1" }
+# Canvas Preview (Play) mode runtime — jian runtime integration, hit-testing
+# overlay, app-mode routing. Preview enters with CkMeasure as the text-measurement
+# backend, keeping layout in sync with the design canvas's CanvasKit rendering.
+op-preview-core = { path = "../op-preview-core" }
+# Preview device-switcher segment labels use the same i18n keys as the
+# native host so both shells read identically.
+op-i18n = { path = "../op-i18n" }
 # Pin to 0.2.117 — last wasm-bindgen-cli release compatible with the
 # workspace's Rust 1.85 toolchain. Newer 0.2.120+ requires rustc 1.86.
 # When the workspace bumps Rust, raise this bound.

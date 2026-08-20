@@ -92,7 +92,7 @@ pub mod widget_host;
     target_os = "ios",
     target_os = "android"
 ))]
-pub mod preview;
+pub use op_preview_core as preview;
 
 #[cfg(any(
     target_os = "macos",

@@ -26,11 +26,11 @@ use op_editor_ui::layout_scene::{LayoutScene, SceneNode, ScenePage};
 use op_editor_ui::widgets::{paint_scene_page_with, PaintCx, PaintSceneOptions};
 use op_editor_ui::{Point2D, Rect, RenderBackend};
 
-pub(in crate::preview) const PUSH_POP_DURATION_MS: u64 = 240;
-pub(in crate::preview) const REPLACE_DURATION_MS: u64 = 160;
+pub(crate) const PUSH_POP_DURATION_MS: u64 = 240;
+pub(crate) const REPLACE_DURATION_MS: u64 = 160;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(in crate::preview) enum TransitionKind {
+pub(crate) enum TransitionKind {
     Push,
     Pop,
     Replace,
@@ -43,7 +43,7 @@ pub(in crate::preview) enum TransitionKind {
 /// itself (`push`/`replace`/`pop`) isn't available here — but depth is
 /// the exact, sufficient signature of all three: deeper is only ever a
 /// push, shallower only ever a pop, same depth only ever a replace/reset.
-pub(in crate::preview) fn classify_transition(prev_len: usize, new_len: usize) -> TransitionKind {
+pub(crate) fn classify_transition(prev_len: usize, new_len: usize) -> TransitionKind {
     match new_len.cmp(&prev_len) {
         std::cmp::Ordering::Greater => TransitionKind::Push,
         std::cmp::Ordering::Less => TransitionKind::Pop,
@@ -52,7 +52,7 @@ pub(in crate::preview) fn classify_transition(prev_len: usize, new_len: usize) -
 }
 
 /// An in-flight screen-transition animation.
-pub(in crate::preview) struct ScreenTransition {
+pub(crate) struct ScreenTransition {
     kind: TransitionKind,
     started_at_ms: u64,
     duration_ms: u64,
@@ -62,7 +62,7 @@ pub(in crate::preview) struct ScreenTransition {
 }
 
 impl ScreenTransition {
-    pub(in crate::preview) fn start(
+    pub(crate) fn start(
         kind: TransitionKind,
         outgoing: ScenePage,
         now_ms: u64,
@@ -79,7 +79,7 @@ impl ScreenTransition {
         }
     }
 
-    pub(in crate::preview) fn is_active(&self, now_ms: u64) -> bool {
+    pub(crate) fn is_active(&self, now_ms: u64) -> bool {
         now_ms < self.started_at_ms.saturating_add(self.duration_ms)
     }
 
@@ -89,7 +89,7 @@ impl ScreenTransition {
     /// already ticks ~30fps for the whole `self.preview.is_some()` window.
     /// Kept for parity / a future host that wants a tighter wake schedule.
     #[cfg_attr(not(test), allow(dead_code))]
-    pub(in crate::preview) fn next_deadline_ms(&self, now_ms: u64) -> Option<u64> {
+    pub(crate) fn next_deadline_ms(&self, now_ms: u64) -> Option<u64> {
         if !self.is_active(now_ms) {
             return None;
         }
@@ -344,7 +344,7 @@ impl PreviewSession {
     /// risk firing against whichever screen happens to be mounted once
     /// the animation ends, which is not necessarily what the user was
     /// aiming at when they tapped.
-    pub(in crate::preview) fn transition_active(&self) -> bool {
+    pub(crate) fn transition_active(&self) -> bool {
         self.transition
             .as_ref()
             .is_some_and(|t| t.is_active(self.last_now_ms))
@@ -352,7 +352,7 @@ impl PreviewSession {
 
     /// Test-only: whether a transition is currently playing at `now_ms`.
     #[cfg(all(test, not(target_os = "windows")))]
-    pub(in crate::preview) fn transition_active_for_test(&self, now_ms: u64) -> bool {
+    pub(crate) fn transition_active_for_test(&self, now_ms: u64) -> bool {
         self.transition
             .as_ref()
             .is_some_and(|t| t.is_active(now_ms))
@@ -360,7 +360,7 @@ impl PreviewSession {
 
     /// Test-only: the kind of the current (possibly finished) transition.
     #[cfg(all(test, not(target_os = "windows")))]
-    pub(in crate::preview) fn transition_kind_for_test(&self) -> Option<TransitionKind> {
+    pub(crate) fn transition_kind_for_test(&self) -> Option<TransitionKind> {
         self.transition.as_ref().map(|t| t.kind)
     }
 }

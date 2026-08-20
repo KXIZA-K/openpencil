@@ -58,6 +58,70 @@ impl WidgetHost {
         // BEFORE any resolve stores under it (mirrors native paint).
         self.rotate_chat_owner_if_session_changed();
         self.sync_theme_from_editor();
+        // Pump the preview router BEFORE painting, mirroring the native
+        // host: `navigate_to_screen` only queues `router.replace(path)`,
+        // and `reconcile` is what actually swaps the mounted screen. Doing
+        // it here means a switched screen paints this same frame instead of
+        // one frame late — and without it a pill tap looks like a no-op.
+        #[cfg(feature = "canvaskit")]
+        if self.preview.is_some() {
+            // The viewport arrives as a paint parameter on this host, so a
+            // resize has no event of its own. Rebuild the cached device
+            // frame when it changes — otherwise the frame keeps the `fit`
+            // it was solved with and the content paints squashed against a
+            // canvas region that is no longer that size.
+            let vp = (viewport_width, viewport_height);
+            if self.preview_frame_viewport != Some(vp) {
+                self.preview_frame_viewport = Some(vp);
+                // Keep the hit-test's cached viewport in step: hover and
+                // switcher hit-tests read these and would otherwise stay on
+                // the pre-resize geometry until the next press.
+                self.last_viewport_w = viewport_width;
+                self.last_viewport_h = viewport_height;
+                let (_cx, _cy, cw, ch) = self.canvas_region(viewport_width, viewport_height);
+                if let Some(preview) = self.preview.as_mut() {
+                    preview.resize((cw, ch));
+                }
+                self.recompute_device_frame(viewport_width, viewport_height);
+            }
+        }
+        #[cfg(feature = "canvaskit")]
+        {
+            // Track M-1: finalize a finished canvas ↔ device-frame merge
+            // animation BEFORE anything below reads `self.preview` /
+            // `device_mode_active()` this frame — an Exit whose 220ms
+            // window just elapsed drops the runtime here, so the rest of
+            // this pass sees the settled (real) mode immediately rather
+            // than one stale frame late.
+            self.settle_mode_transition();
+
+            let mut switched = false;
+            if let Some(preview) = self.preview.as_mut() {
+                // Advance the session clock FIRST. `dispatch_pointer_phase`
+                // has no clock parameter of its own — it reads the value last
+                // handed to `set_now_ms` to decide whether a screen
+                // transition is still running, and suppresses input while one
+                // is. Never advancing it freezes the session at the first
+                // transition, so every tap after the first screen switch is
+                // silently dropped.
+                preview.set_now_ms(self.now_ms);
+                let outcome = preview.reconcile(self.now_ms);
+                if outcome.repaint {
+                    let warnings = preview.warnings().to_vec();
+                    self.editor_state.editor_ui.preview.warnings = warnings;
+                }
+                switched = outcome.switched;
+            }
+            if switched {
+                if self.device_mode_active() {
+                    // The new screen has its own root, nav strip and scroll
+                    // extent, so the cached frame is stale.
+                    self.on_preview_screen_switched(viewport_width, viewport_height);
+                } else {
+                    self.center_canvas_on_preview_root(viewport_width, viewport_height);
+                }
+            }
+        }
         backend.fill_rect(
             Rect {
                 origin: Point2D::new(0.0, 0.0),
@@ -174,25 +238,78 @@ impl WidgetHost {
             size: Point2D::new(canvas_w, canvas_h),
         };
         if canvas_w > 0.0 && canvas_h > 0.0 {
-            // PAINT path — the canvas reads editor state + the
-            // layout-resolved render scene (`refresh_layout_scene`).
-            let mut transition_scene = None;
-            if let Some(transition) = self.layout_transition.as_ref() {
-                if transition.is_active(self.now_ms) {
-                    let mut scene = self.layout_scene.clone();
-                    transition.apply_to_scene(&mut scene, self.now_ms);
-                    transition_scene = Some(scene);
+            // Check if preview mode is active and we have a session
+            #[cfg(feature = "canvaskit")]
+            if self.editor_state.editor_ui.preview.mode && self.preview.is_some() {
+                // PREVIEW PAINT path. Clear first: neither presentation
+                // necessarily covers the whole canvas rect, and the previous
+                // frame's design content must not show through around it.
+                backend.fill_rect(canvas_rect, self.theme.canvas_surface);
+                if self.device_mode_active() {
+                    // Phone / Desktop — present inside the device silhouette,
+                    // with the screen's bottom nav and top status bar pinned
+                    // out of the scroll flow.
+                    self.paint_device_frame(backend, canvas_rect);
+                } else if let Some(session) = self.preview.as_ref() {
+                    // Canvas segment — the raw scene at the editor's own
+                    // pan/zoom. Painting at a hard-coded identity transform
+                    // would draw the document at its own origin instead of
+                    // where the user is looking.
+                    let viewport = self.editor_state.viewport;
+                    session.paint_scene(
+                        backend,
+                        canvas_rect,
+                        (viewport.pan_x, viewport.pan_y),
+                        viewport.zoom,
+                        self.now_ms,
+                    );
                 }
+                // Chrome paints over the presentation in every segment.
+                self.paint_preview_switcher(backend, canvas_rect);
+                self.paint_screen_switcher(backend, canvas_rect);
+            } else {
+                // NORMAL PAINT path — the canvas reads editor state + the
+                // layout-resolved render scene (`refresh_layout_scene`).
+                let mut transition_scene = None;
+                if let Some(transition) = self.layout_transition.as_ref() {
+                    if transition.is_active(self.now_ms) {
+                        let mut scene = self.layout_scene.clone();
+                        transition.apply_to_scene(&mut scene, self.now_ms);
+                        transition_scene = Some(scene);
+                    }
+                }
+                let canvas_scene = transition_scene.as_ref().unwrap_or(&self.layout_scene);
+                let mut canvas = CanvasViewport::from_editor(&self.editor_state, canvas_scene);
+                canvas.now_ms = self.now_ms;
+                canvas.set_node_drag_active(self.node_drag.as_ref().is_some_and(|drag| drag.moved));
+                canvas.set_node_drag_overlay(self.node_drag_overlay_for_paint());
+                let mut cx = PaintCx {
+                    backend: &mut *backend,
+                };
+                canvas.paint(&mut cx, canvas_rect);
             }
-            let canvas_scene = transition_scene.as_ref().unwrap_or(&self.layout_scene);
-            let mut canvas = CanvasViewport::from_editor(&self.editor_state, canvas_scene);
-            canvas.now_ms = self.now_ms;
-            canvas.set_node_drag_active(self.node_drag.as_ref().is_some_and(|drag| drag.moved));
-            canvas.set_node_drag_overlay(self.node_drag_overlay_for_paint());
-            let mut cx = PaintCx {
-                backend: &mut *backend,
-            };
-            canvas.paint(&mut cx, canvas_rect);
+
+            #[cfg(not(feature = "canvaskit"))]
+            {
+                // NORMAL PAINT path (non-canvaskit build)
+                let mut transition_scene = None;
+                if let Some(transition) = self.layout_transition.as_ref() {
+                    if transition.is_active(self.now_ms) {
+                        let mut scene = self.layout_scene.clone();
+                        transition.apply_to_scene(&mut scene, self.now_ms);
+                        transition_scene = Some(scene);
+                    }
+                }
+                let canvas_scene = transition_scene.as_ref().unwrap_or(&self.layout_scene);
+                let mut canvas = CanvasViewport::from_editor(&self.editor_state, canvas_scene);
+                canvas.now_ms = self.now_ms;
+                canvas.set_node_drag_active(self.node_drag.as_ref().is_some_and(|drag| drag.moved));
+                canvas.set_node_drag_overlay(self.node_drag_overlay_for_paint());
+                let mut cx = PaintCx {
+                    backend: &mut *backend,
+                };
+                canvas.paint(&mut cx, canvas_rect);
+            }
         }
 
         let property_panel = PropertyPanel::for_selection_at_with_scene(
@@ -718,6 +835,19 @@ impl WidgetHost {
                 },
                 self.now_ms,
             );
+        }
+
+        // Track M-1: request repaint while a mode transition animation is
+        // active. The canvas ↔ device-frame merge animation must drive the
+        // paint loop until it completes.
+        #[cfg(feature = "canvaskit")]
+        {
+            if self.preview_mode_transition
+                .as_ref()
+                .is_some_and(|t| t.is_active(self.now_ms))
+            {
+                crate::repaint_coalescer::request();
+            }
         }
     }
 }

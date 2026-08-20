@@ -40,6 +40,8 @@ pub(super) async fn mount_ck(canvas_id: String) -> Result<(), JsValue> {
 
     let backend = init_backend(&canvas_id, dpr, logical_w, logical_h).await?;
     let mut host = crate::widget_host::WidgetHost::new();
+    // Set the OpCk for preview text measurement before any paint.
+    host.set_op_ck(backend.op_ck());
     // The editor opens on its canvas, not on a chat panel: the AI panel
     // starts as its compact input bar and expands on click. Applied here
     // rather than in `WidgetHost::new` because that constructor is also
@@ -591,6 +593,7 @@ pub(super) async fn mount_ck(canvas_id: String) -> Result<(), JsValue> {
                 panel.search_open || panel.generate_open
             };
             let prompt_center_open = b.host.editor_state().editor_ui.prompt_center.open;
+            let preview_active = b.host.is_preview_active();
             let mut consumed = false;
             if starts_space_pan && !b.host.input_active() {
                 b.host.set_space_pan(true);
@@ -600,7 +603,25 @@ pub(super) async fn mount_ck(canvas_id: String) -> Result<(), JsValue> {
                 "Backspace" if !is_mod => consumed = b.host.apply_backspace(),
                 "Delete" if !is_mod => consumed = b.host.apply_delete(),
                 "Enter" if !is_mod => consumed = b.host.apply_send(),
-                "Escape" if !is_mod => consumed = b.host.apply_escape(),
+                "Escape" if !is_mod => {
+                    if preview_active {
+                        // Exit preview mode (same as native behavior).
+                        // Note: Esc is called from keydown before paint has the
+                        // current viewport dimensions; exit logic will short-circuit
+                        // if there's no device frame, so pass zero dimensions here.
+                        b.host.exit_preview(0.0, 0.0);
+                        consumed = true;
+                    } else {
+                        consumed = b.host.apply_escape();
+                    }
+                }
+                "Tab" if !is_mod && preview_active => {
+                    // Tab / Shift+Tab for preview focus traversal
+                    consumed = b.host.apply_preview_focus(shift);
+                    if consumed {
+                        evt.prevent_default();
+                    }
+                }
                 "ArrowUp" | "ArrowDown" if !is_mod && prompt_center_open => consumed = true,
                 "ArrowLeft" | "ArrowRight" if is_mod && prompt_center_open => consumed = true,
                 "ArrowUp" if !is_mod && image_popover_open => consumed = true,
@@ -721,12 +742,30 @@ pub(super) async fn mount_ck(canvas_id: String) -> Result<(), JsValue> {
                 }
                 _ if is_mod && image_popover_open => consumed = true,
                 _ => {
+                    // Preview mode takes precedence over canvas text editing and
+                    // other shortcuts. Dispatch keys first to preview if active.
+                    if preview_active && !is_mod {
+                        // Try dispatching to preview runtime first
+                        let mut chars = key.chars();
+                        if let (Some(c), None) = (chars.next(), chars.next()) {
+                            // Printable characters — dispatch as text
+                            if !c.is_control() {
+                                if b.host.apply_preview_text(&c.to_string()) {
+                                    consumed = true;
+                                }
+                            }
+                        }
+                        // Dispatch non-printable named keys to preview
+                        if !consumed {
+                            consumed = b.host.apply_preview_key(key.as_str(), shift);
+                        }
+                    }
                     // No Cmd/Ctrl held: a bare letter is first offered to the
                     // single-key tool router (V/R/O/L/T/F/P/Y/H), which self-
                     // gates on no input owning the keyboard; every other letter
                     // (and any keystroke while a field is focused) types via
                     // apply_text.
-                    if !is_mod {
+                    if !consumed && !is_mod {
                         // Alt-modified keys never switch tools — Alt is a chord
                         // modifier (and on macOS yields special glyphs like ®/π),
                         // so an Alt+letter must not trip the bare-letter router.

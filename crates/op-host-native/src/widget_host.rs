@@ -189,7 +189,6 @@ mod preview_edge_swipe;
 mod preview_edge_swipe_tests;
 mod preview_frame;
 #[cfg(test)]
-mod preview_frame_geometry_tests;
 #[cfg(all(test, not(target_os = "windows")))]
 mod preview_frame_tests;
 mod preview_input;

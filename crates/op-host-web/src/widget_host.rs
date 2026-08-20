@@ -156,6 +156,7 @@ mod pan_tests;
 mod pen_press;
 #[cfg(test)]
 mod pen_press_tests;
+mod preview_frame;
 mod press;
 mod press_canvas_tiers;
 mod press_chrome_tiers;
@@ -393,6 +394,45 @@ pub struct WidgetHost {
     /// change rotates `chat_panel_owner` (see
     /// [`Self::rotate_chat_owner_if_session_changed`]).
     pub(in crate::widget_host) last_chat_session_index: usize,
+    /// Live preview session when preview mode is active (`editor_ui.preview.mode`).
+    /// Holds the interactive runtime, layout, and rendering state.
+    /// `None` when not previewing or if preview entry failed.
+    #[cfg(feature = "canvaskit")]
+    preview: Option<op_preview_core::PreviewSession>,
+    /// Cached device-frame geometry for the active preview presentation.
+    /// Derived state: rebuilt by `recompute_device_frame` on enter,
+    /// resize, device switch, and app-mode screen switch.
+    preview_device_frame: Option<op_preview_core::device_frame::DeviceFrame>,
+    /// Logical scroll offset of the framed content, in scene pixels.
+    preview_scroll_y: f32,
+    /// Segment the user explicitly chose; `None` means "keep inferring
+    /// from the framed root width on every screen switch".
+    preview_manual_pick: Option<op_editor_core::PreviewDeviceKind>,
+    /// Presentation surface captured at pointer-down, so a held drag
+    /// keeps mapping through the surface it started on.
+    preview_surface_capture: Option<op_preview_core::device_frame::PreviewSurface>,
+    /// Whether a preview pointer gesture is in flight. Guards the Up
+    /// dispatch: sending an unpaired Up leaves the runtime's gesture
+    /// state wedged and it swallows the NEXT Down.
+    preview_press_active: bool,
+    /// Last scene-space point sent to the runtime. The Up must be
+    /// dispatched HERE, not at the origin — the runtime resolves a tap by
+    /// where the release landed.
+    preview_last_doc: Option<(f32, f32)>,
+    /// Start screen-x for edge-swipe-to-pop candidate. `None` when not armed.
+    preview_edge_swipe_start_x: Option<f32>,
+    /// Viewport the cached device frame was solved against, so paint can
+    /// notice a resize and rebuild rather than scaling stale geometry.
+    preview_frame_viewport: Option<(f32, f32)>,
+    /// CanvasKit bridge for text measurement — required for preview construction.
+    /// Set by the mount / repaint path after the backend is initialized.
+    #[cfg(feature = "canvaskit")]
+    op_ck: Option<crate::canvaskit::OpCk>,
+    /// Track M-1: canvas ↔ device-frame merge animation state during enter/exit preview.
+    /// Lives here (not in `PreviewSession`) because it must survive the session teardown
+    /// on exit and be driven from the paint loop.
+    #[cfg(feature = "canvaskit")]
+    pub(in crate::widget_host) preview_mode_transition: Option<op_preview_core::ModeTransition>,
 }
 
 impl WidgetHost {

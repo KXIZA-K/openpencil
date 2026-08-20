@@ -176,6 +176,17 @@ impl WidgetHost {
         viewport_height: f32,
     ) -> bool {
         self.last_viewport_w = viewport_width;
+        // Preview owns the wheel while it is presenting: in a device frame
+        // the gesture scrolls the framed content (the design's own scroll
+        // surface), NOT the editor's canvas pan/zoom underneath it.
+        #[cfg(feature = "canvaskit")]
+        if self.editor_state.editor_ui.preview.mode && self.preview.is_some() {
+            self.last_viewport_h = viewport_height;
+            if self.device_mode_active() {
+                return self.apply_device_scroll(delta_y);
+            }
+            // Canvas segment keeps the ordinary canvas wheel behaviour.
+        }
         self.last_viewport_h = viewport_height;
         if self.try_scroll_missing_fonts_picker(x, y, delta_y, viewport_width, viewport_height) {
             return true;

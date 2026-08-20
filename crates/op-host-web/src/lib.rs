@@ -156,6 +156,14 @@ mod font_store_idb;
 // build has no family-name introspection).
 #[cfg(feature = "canvaskit")]
 mod font_meta;
+// Canvas Preview (Play) mode — instantiates `PreviewSession` with
+// `canvaskit::BrowserMeasure`, the SAME Canvas2D `measureText` path the design
+// canvas already lays out through. Preview's runtime layout serves only
+// hit-testing, so it must measure identically to the canvas or taps stop
+// landing where widgets paint. Wired here but not yet called from the top bar
+// (awaiting the TogglePreview action handler).
+#[cfg(feature = "canvaskit")]
+mod preview_host;
 
 #[cfg(not(feature = "canvaskit"))]
 use wasm_bindgen::prelude::*;

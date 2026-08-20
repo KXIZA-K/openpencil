@@ -4300,6 +4300,7 @@ dependencies = [
  "op-i18n",
  "op-orchestrator",
  "op-pen-loader",
+ "op-preview-core",
  "raw-window-handle",
  "scopeguard",
  "serde_json",
@@ -4373,7 +4374,9 @@ dependencies = [
  "op-editor-ui",
  "op-figma",
  "op-html",
+ "op-i18n",
  "op-pen-loader",
+ "op-preview-core",
  "op-util",
  "serde",
  "serde_json",
@@ -4488,6 +4491,22 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_stacker",
+]
+
+[[package]]
+name = "op-preview-core"
+version = "0.8.5"
+dependencies = [
+ "jian-core",
+ "jian-ops-schema",
+ "jian-skia",
+ "op-editor-core",
+ "op-editor-ui",
+ "op-orchestrator",
+ "op-pen-loader",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tracing",
 ]
 
 [[package]]

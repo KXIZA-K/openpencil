@@ -64,6 +64,20 @@ impl WidgetHost {
             chat_panel_owner: op_editor_ui::widgets::AIChatPlaceholder::next_owner(),
             layer_panel_owner: op_editor_ui::widgets::LayerPanel::next_layer_panel_owner(),
             last_chat_session_index,
+            #[cfg(feature = "canvaskit")]
+            preview: None,
+            preview_device_frame: None,
+            preview_scroll_y: 0.0,
+            preview_manual_pick: None,
+            preview_surface_capture: None,
+            preview_press_active: false,
+            preview_last_doc: None,
+            preview_edge_swipe_start_x: None,
+            preview_frame_viewport: None,
+            #[cfg(feature = "canvaskit")]
+            op_ck: None,
+            #[cfg(feature = "canvaskit")]
+            preview_mode_transition: None,
         }
     }
 
@@ -207,6 +221,13 @@ impl WidgetHost {
         {
             self.doc_sync_dirty = true;
         }
+    }
+
+    /// Set the CanvasKit bridge object for preview text measurement.
+    /// Called by the mount path after the backend is initialized.
+    #[cfg(feature = "canvaskit")]
+    pub(crate) fn set_op_ck(&mut self, op_ck: &crate::canvaskit::OpCk) {
+        self.op_ck = Some(op_ck.clone());
     }
 }
 

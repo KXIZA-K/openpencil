@@ -9,7 +9,7 @@
 #![cfg(test)]
 
 use super::transition::TransitionKind;
-use super::PreviewSession;
+use super::{test_measure, PreviewSession};
 use jian_core::action::services::Router;
 use op_editor_ui::{Color, ImageDrawMode, Point2D, Rect, RenderBackend, TextLayout};
 
@@ -28,7 +28,7 @@ fn go_button_center(session: &PreviewSession) -> (f32, f32) {
 fn push_reconcile_starts_a_push_transition() {
     let doc = two_screen_doc();
     let mut session =
-        PreviewSession::enter(&doc, (1200.0, 800.0), &Default::default(), 0, false, false).unwrap();
+        PreviewSession::enter(&doc, (1200.0, 800.0), &Default::default(), 0, false, false, test_measure()).unwrap();
     let (bx, by) = go_button_center(&session);
     session.dispatch_tap(bx, by);
     assert!(session.reconcile(1_000).switched);
@@ -47,7 +47,7 @@ fn push_reconcile_starts_a_push_transition() {
 fn pop_reconcile_starts_a_pop_transition() {
     let doc = two_screen_doc();
     let mut session =
-        PreviewSession::enter(&doc, (1200.0, 800.0), &Default::default(), 0, false, false).unwrap();
+        PreviewSession::enter(&doc, (1200.0, 800.0), &Default::default(), 0, false, false, test_measure()).unwrap();
     session.router_for_test().push("/detail");
     session.reconcile(1_000);
     session.router_for_test().pop();
@@ -67,7 +67,7 @@ fn pop_reconcile_starts_a_pop_transition() {
 fn same_depth_replace_starts_a_replace_transition() {
     let doc = two_screen_doc();
     let mut session =
-        PreviewSession::enter(&doc, (1200.0, 800.0), &Default::default(), 0, false, false).unwrap();
+        PreviewSession::enter(&doc, (1200.0, 800.0), &Default::default(), 0, false, false, test_measure()).unwrap();
     // `replace` keeps the stack at depth 1 — a tab-switch shape, not a push.
     session.router_for_test().replace("/detail");
     assert!(session.reconcile(1_000).switched);
@@ -86,7 +86,7 @@ fn same_depth_replace_starts_a_replace_transition() {
 fn mid_animation_switch_replaces_the_transition_outright() {
     let doc = two_screen_doc();
     let mut session =
-        PreviewSession::enter(&doc, (1200.0, 800.0), &Default::default(), 0, false, false).unwrap();
+        PreviewSession::enter(&doc, (1200.0, 800.0), &Default::default(), 0, false, false, test_measure()).unwrap();
     let (bx, by) = go_button_center(&session);
     session.dispatch_tap(bx, by);
     assert!(session.reconcile(1_000).switched, "push to /detail");
@@ -157,7 +157,7 @@ fn framed_paint_args() -> (Rect, Point2D, f32) {
 fn paint_framed_animated_composites_two_layers_while_active() {
     let doc = two_screen_doc();
     let mut session =
-        PreviewSession::enter(&doc, (1200.0, 800.0), &Default::default(), 0, false, false).unwrap();
+        PreviewSession::enter(&doc, (1200.0, 800.0), &Default::default(), 0, false, false, test_measure()).unwrap();
     let (bx, by) = go_button_center(&session);
     session.dispatch_tap(bx, by);
     session.reconcile(1_000);
@@ -186,7 +186,7 @@ fn paint_framed_animated_composites_two_layers_while_active() {
 fn paint_framed_animated_falls_back_to_single_layer_once_finished() {
     let doc = two_screen_doc();
     let mut session =
-        PreviewSession::enter(&doc, (1200.0, 800.0), &Default::default(), 0, false, false).unwrap();
+        PreviewSession::enter(&doc, (1200.0, 800.0), &Default::default(), 0, false, false, test_measure()).unwrap();
     let (bx, by) = go_button_center(&session);
     session.dispatch_tap(bx, by);
     session.reconcile(1_000);

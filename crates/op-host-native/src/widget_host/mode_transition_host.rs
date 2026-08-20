@@ -63,6 +63,10 @@ impl WidgetHostNative {
             self.editor_state.editor_ui.preserve_authored_geometry,
             // A deck is presented, not routed — see `PreviewSession::enter`.
             op_editor_core::preview_slideshow::slideshow_for_document(&self.editor_state).is_some(),
+            // The native host measures its design canvas with skia, so
+            // preview's hit-test layout must solve against the same
+            // backend (see `PreviewSession::enter`'s Layout section).
+            std::rc::Rc::new(jian_skia::SkiaMeasure::new()),
         ) {
             Ok(mut session) => {
                 let source_rect = session.framed_root().map(|(_, rect)| {

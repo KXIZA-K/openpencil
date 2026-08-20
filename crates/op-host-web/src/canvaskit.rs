@@ -25,6 +25,7 @@ mod backend;
 mod bindings;
 mod convert;
 mod inner;
+mod measure;
 mod mount;
 mod ops;
 #[cfg(test)]
@@ -32,6 +33,7 @@ mod tests;
 
 pub use backend::{init_backend, CanvasKitBackend};
 pub use bindings::OpCk;
+pub use measure::BrowserMeasure;
 
 /// Mount the full editor chrome on `canvas_id`, rendered via CanvasKit on the
 /// GPU, with mouse / wheel / keyboard interactivity. Builds the shared
