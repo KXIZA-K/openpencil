@@ -393,8 +393,16 @@ impl PreviewSession {
 /// independently in each so a caller only needing the count/index doesn't
 /// pay for label lookups.
 fn sorted_screen_paths(app: &AppMode) -> Vec<String> {
+    // Present screens in the DOCUMENT's page order, not alphabetical route
+    // order: the designer arranged the screens (and any in-design nav that
+    // mirrors them) in page order, so an alphabetized switcher reads as
+    // shuffled next to the design's own bottom nav. Path is only the
+    // tiebreak for screens that share a page slot.
     let mut paths = app.table.paths();
-    paths.sort();
+    paths.sort_by(|a, b| {
+        let key = |p: &String| (app.table.page_index(p).unwrap_or(usize::MAX), p.clone());
+        key(a).cmp(&key(b))
+    });
     paths
 }
 

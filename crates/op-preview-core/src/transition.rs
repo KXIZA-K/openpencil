@@ -328,6 +328,29 @@ impl PreviewSession {
                 );
             }
         }
+
+        // The pinned strips stay STEADY through the whole slide/fade,
+        // painted opaque from the entering screen — exactly as
+        // `paint_framed` paints them outside a transition. Without this
+        // the strip band renders nothing for the transition's 160-240ms
+        // (the content layers are clipped to `content_clip`, which the
+        // host inset past the strips), so a tab switch flashes the nav
+        // to bare bezel and back — the opposite of what a persistent
+        // bottom bar is for.
+        for paint in [pinned, pinned_top].into_iter().flatten() {
+            if entering_page.find(&paint.node_id).is_none() {
+                continue;
+            }
+            backend.save();
+            backend.clip_rect(paint.strip_clip);
+            {
+                let mut cx = PaintCx {
+                    backend: &mut *backend,
+                };
+                op_editor_ui::widgets::paint_scene_subtree(&mut cx, entering_page, &paint.node_id, paint.paint_origin, fit);
+            }
+            backend.restore();
+        }
     }
 
     /// Whether a Track C-3 transition is currently playing, using the
@@ -340,7 +363,12 @@ impl PreviewSession {
     /// risk firing against whichever screen happens to be mounted once
     /// the animation ends, which is not necessarily what the user was
     /// aiming at when they tapped.
-    pub(crate) fn transition_active(&self) -> bool {
+    /// Public so a host can keep driving frames while the screen slide
+    /// plays: an event-driven shell (the web host) repaints only when
+    /// something asks it to, and without this the animation renders as
+    /// one or two discrete jumps whenever an unrelated event happens to
+    /// trigger a paint.
+    pub fn transition_active(&self) -> bool {
         self.transition
             .as_ref()
             .is_some_and(|t| t.is_active(self.last_now_ms))

@@ -853,16 +853,28 @@ impl WidgetHost {
             );
         }
 
-        // Track M-1: request repaint while a mode transition animation is
-        // active. The canvas ↔ device-frame merge animation must drive the
-        // paint loop until it completes.
+        // Keep the frame loop alive while EITHER preview animation plays.
+        // This host repaints only on request, so an animation that stops
+        // asking for frames freezes mid-way and then jumps whenever some
+        // unrelated event (a sync poll) happens to repaint.
+        //
+        // Both must be checked: `preview_mode_transition` is the canvas <->
+        // device-frame merge on enter/exit, while the app-mode screen slide
+        // lives inside the session and is what a nav tap starts. Checking
+        // only the former is why switching screens rendered as one or two
+        // discrete jumps, leaving a half-composited nav strip on screen
+        // until the next poll repainted over it.
         #[cfg(feature = "canvaskit")]
         {
-            if self
+            let mode_animating = self
                 .preview_mode_transition
                 .as_ref()
-                .is_some_and(|t| t.is_active(self.now_ms))
-            {
+                .is_some_and(|t| t.is_active(self.now_ms));
+            let screen_animating = self
+                .preview
+                .as_ref()
+                .is_some_and(|session| session.transition_active());
+            if mode_animating || screen_animating {
                 crate::repaint_coalescer::request();
             }
         }

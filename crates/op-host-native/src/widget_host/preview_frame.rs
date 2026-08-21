@@ -10,7 +10,7 @@ use op_editor_ui::widgets::TOP_BAR_HEIGHT;
 use op_editor_ui::{Point2D, Rect};
 
 pub(crate) use op_preview_core::device_frame::{
-    compute_frame_geometry, device_scene_point, device_surface_at, frame_radius, frame_size,
+    compute_frame_geometry, device_scene_point, device_surface_at, frame_radius,
     infer_kind_for_width, paint_corner_notches, scroll_max, DeviceFrame, PinnedGeom,
     PreviewSurface,
 };
