@@ -467,8 +467,11 @@ if profile.get("ProvisionsAllDevices") is True:
 entitlements = profile.get("Entitlements", {})
 if entitlements.get("beta-reports-active") is not True:
     raise SystemExit("error: provisioning profile is not enabled for TestFlight beta reports")
+# Apple encodes the wildcard authorization as the bare string "*" in team
+# profiles and as a list in domain-scoped ones; both authorize the app's
+# canonical applinks domain.
 associated_domains = entitlements.get("com.apple.developer.associated-domains")
-if associated_domains not in (["*"], ["applinks:op.zseven.cn"]):
+if associated_domains not in ("*", ["*"], ["applinks:op.zseven.cn"]):
     raise SystemExit("error: provisioning profile does not authorize the canonical associated domain")
 PY
 [[ "$profile_uuid" \
