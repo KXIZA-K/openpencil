@@ -85,6 +85,14 @@ impl Phase {
     /// bug this budget is meant to prevent. The new ceiling keeps the combined
     /// production prompt byte-complete with a small drift margin.
     ///
+    /// Generation moved again 15700 → 15850 (2026-08-19) when bar-chart geometry
+    /// and CJK punctuation line-break rules were added to the deck-patterns and
+    /// cjk-typography skills. A mixed CJK branding + deck request (logo review +
+    /// slides + design rules) measured 15694 tokens; at 15700 the Step 3 knapsack
+    /// truncated the `slides` tail, losing the contract. The new ceiling provides
+    /// headroom for the expanded corpus while keeping all orthogonal skill contracts
+    /// complete.
+    ///
     /// Planning moved 4000 → 6000 for a related reason (2026-07-28). Its
     /// three `Base` skills are budget-EXEMPT but still counted against the
     /// total, and they need ~4500 tokens on their own once
@@ -96,7 +104,7 @@ impl Phase {
     pub fn default_budget(self) -> u32 {
         match self {
             Phase::Planning => 6000,
-            Phase::Generation => 15700,
+            Phase::Generation => 15850,
             Phase::Validation => 3000,
             Phase::Maintenance => 5000,
         }
@@ -106,7 +114,7 @@ impl Phase {
 /// Per-phase default token budgets — the TS `DEFAULT_BUDGETS` record.
 pub const DEFAULT_BUDGETS: [(Phase, u32); 4] = [
     (Phase::Planning, 6000),
-    (Phase::Generation, 15700),
+    (Phase::Generation, 15850),
     (Phase::Validation, 3000),
     (Phase::Maintenance, 5000),
 ];
@@ -380,7 +388,7 @@ mod tests {
     #[test]
     fn default_budget_table() {
         assert_eq!(Phase::Planning.default_budget(), 6000);
-        assert_eq!(Phase::Generation.default_budget(), 15700);
+        assert_eq!(Phase::Generation.default_budget(), 15850);
         assert_eq!(Phase::Validation.default_budget(), 3000);
         assert_eq!(Phase::Maintenance.default_budget(), 5000);
         // The const table agrees with the per-variant method.

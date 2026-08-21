@@ -15,7 +15,8 @@ const DECK_PATTERNS_TAIL: &str = "a rectangle does not render its children, so t
 const DECK_CONTRACT_TAIL: &str =
     "**Formulaic titles** — \"From X to Y\", ad slogans, parallel phrasing on every page.";
 const WEB_APP_TAIL: &str = "Apply these silently through node structure.";
-const CJK_TAIL: &str = "Detect CJK from the request language — apply these rules (script-specific Noto for headings; the size-banded lineHeight/letterSpacing above everywhere).";
+const CJK_TAIL: &str =
+    "- **Execution** — adjust width or rewrite to avoid orphaned punctuation at line edges.";
 
 fn assert_resolves_in_full(prompt: &str, names_and_tails: &[(&str, &str)]) {
     let ctx = resolve_skills(Phase::Generation, prompt, &ResolveOptions::default());
@@ -264,4 +265,75 @@ fn logo_and_web_app_contracts_survive_the_same_production_assembly() {
             "the mixed logo/web-app assembly lost contract tail {tail:?}"
         );
     }
+}
+
+#[test]
+fn deck_patterns_carries_bar_chart_baseline_and_empty_placeholder_rules() {
+    let prompt = "Create a 6-slide pitch deck with bar charts showing quarterly revenue trends and growth metrics";
+    let assembled = design_agent_system_prompt_with_skills(prompt);
+
+    // Verify bar chart baseline rule is present
+    assert!(
+        assembled.contains("Bottom baseline"),
+        "deck-patterns must carry the bar chart baseline rule for slide presentations"
+    );
+    assert!(
+        assembled.contains("bars align to same bottom"),
+        "deck-patterns must state that bars share one bottom baseline"
+    );
+
+    // Verify bar height proportionality rule
+    assert!(
+        assembled.contains("Height ∝ value"),
+        "deck-patterns must specify that bar heights reflect data values"
+    );
+
+    // Verify flex layout requirement (not layout="none")
+    assert!(
+        assembled.contains("never `layout=\"none\"` with manual x/y"),
+        "deck-patterns must prohibit manual x/y positioning for bars in slides"
+    );
+
+    assert!(
+        assembled.contains("x-axis sits below bars"),
+        "deck-patterns must put the chart axis under the bars, not above them"
+    );
+
+    // Verify empty placeholder defect rule
+    assert!(
+        assembled.contains("frame + fill color alone is a defect"),
+        "deck-patterns must mark empty placeholders (zero children + fill color) as defects"
+    );
+}
+
+#[test]
+fn cjk_typography_carries_punctuation_line_break_prohibition() {
+    let prompt = "设计一份包含多行 CJK 文案的营销卡片";
+    let assembled = design_agent_system_prompt_with_skills(prompt);
+
+    // Verify line-start prohibition rule
+    assert!(
+        assembled.contains("Line-start taboo"),
+        "cjk-typography must carry line-start prohibition rules for CJK text"
+    );
+    assert!(
+        assembled.contains("，。、；：？！"),
+        "cjk-typography must list closing punctuation that cannot start a line"
+    );
+
+    // Verify line-end prohibition rule
+    assert!(
+        assembled.contains("Line-end taboo"),
+        "cjk-typography must carry line-end prohibition rules for CJK text"
+    );
+    assert!(
+        assembled.contains("《「『（【"),
+        "cjk-typography must list opening punctuation that cannot end a line"
+    );
+
+    // Verify execution guidance (model-actionable rules)
+    assert!(
+        assembled.contains("orphaned punctuation at line edges"),
+        "cjk-typography must provide actionable execution methods (width adjustment or rewording)"
+    );
 }
