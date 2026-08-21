@@ -115,6 +115,8 @@ Exporte de um único arquivo `.op` para React + Tailwind, HTML + CSS, Vue, Svelt
 
 ## Instalação
 
+**Compilar no Windows:** [BUILD_WINDOWS.pt.md](./docs/build_windows/BUILD_WINDOWS.pt.md)
+
 **macOS (Homebrew):**
 
 ```bash

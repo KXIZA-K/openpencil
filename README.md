@@ -147,6 +147,8 @@ Design together over authenticated peer-to-peer sessions with a public relay and
 
 ## Install
 
+**Building from source on Windows:** see [BUILD_WINDOWS.md](./docs/build_windows/BUILD_WINDOWS.md)
+
 **macOS (Homebrew):**
 
 ```bash

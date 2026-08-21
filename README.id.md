@@ -115,6 +115,8 @@ Ekspor dari satu file `.op` ke React + Tailwind, HTML + CSS, Vue, Svelte, Flutte
 
 ## Instalasi
 
+**Build di Windows:** [BUILD_WINDOWS.id.md](./docs/build_windows/BUILD_WINDOWS.id.md)
+
 **macOS (Homebrew):**
 
 ```bash

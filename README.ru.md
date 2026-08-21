@@ -115,6 +115,8 @@
 
 ## Установка
 
+**Сборка на Windows:** [BUILD_WINDOWS.ru.md](./docs/build_windows/BUILD_WINDOWS.ru.md)
+
 **macOS (Homebrew):**
 
 ```bash
