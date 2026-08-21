@@ -108,6 +108,13 @@ hvigor + plugin versions live in `hvigor/hvigor-config.json5`.
 ```bash
 cd packaging/harmony
 
+# One-time: fetch the proprietary native sign-in SDK .har packages
+# (Douyin OpenSDK + Alipay AFServiceSDK) into entry/libs/, then install.
+# The entry module references them as file: dependencies, so `ohpm install`
+# fails until this has run once.
+bash scripts/fetch-vendor-sdks.sh
+ohpm install --all
+
 # Debug HAP
 hvigorw assembleHap --mode module -p product=default -p buildMode=debug
 

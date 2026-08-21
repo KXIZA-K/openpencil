@@ -11,6 +11,11 @@ struct OpenPencilPlayerApp: App {
             // docked keyboard occlusion is delivered through its own channel.
             OpPlayerContainer()
                 .ignoresSafeArea(.all, edges: .all)
+                // Native provider sign-in SDKs (Douyin / Alipay) return via
+                // the app's URL schemes; forward every callback to them.
+                .onOpenURL { url in
+                    NativeProviderCallbacks.handle(url)
+                }
         }
     }
 }

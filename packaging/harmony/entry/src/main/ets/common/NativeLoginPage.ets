@@ -1,9 +1,12 @@
 import { common } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { AlipayNativeSignIn } from './AlipayNativeSignIn';
 import { AuthCodeForm, AuthFormMode } from './AuthCodeForm';
 import { AuthField } from './AuthField';
 import { AuthTheme } from './AuthTheme';
+import { DouyinNativeSignIn } from './DouyinNativeSignIn';
 import { LucideGlyph, LucideIcon } from './LucideIcon';
+import { NativeSignInKind, NativeSignInOutcome } from './NativeSignInOutcome';
 import { SsoAuthClient, SsoAuthError } from './SsoAuthClient';
 import { SsoProviderEntry, SsoProviderList } from './SsoProviderList';
 import { SsoRegion, SsoRegionStore } from './SsoRegion';
@@ -272,7 +275,7 @@ export struct NativeLoginPage {
         .backgroundColor(AuthTheme.cardFill(this.night))
         .justifyContent(FlexAlign.Center)
         .margin({ left: index > 0 ? 16 : 0 })
-        .onClick(() => this.openProviderLogin(provider.id))
+        .onClick(() => this.providerTapped(provider.id))
       }, (provider: SsoProviderEntry) => provider.id)
     }
     .margin({ top: 14 })
@@ -316,6 +319,99 @@ export struct NativeLoginPage {
     }
     this.setBusy(true);
     const loginError: SsoAuthError | null = await client.passwordLogin(email, this.password);
+    if (!this.visible) {
+      return;
+    }
+    if (loginError !== null) {
+      this.setBusy(false);
+      this.showError(AuthTheme.errorText(loginError));
+      return;
+    }
+    const approveError: SsoAuthError | null = await this.approvePairing();
+    if (!this.visible) {
+      return;
+    }
+    if (approveError !== null) {
+      this.setBusy(false);
+      this.showError(approveError.code === 'not_found'
+        ? $r('app.string.native_login_error_pairing_expired')
+        : AuthTheme.errorText(approveError));
+      return;
+    }
+    // Rust's poll observes the approval, exchanges the pairing, and drives the
+    // close action that dismisses this page.
+    this.statusText = $r('app.string.native_login_completing');
+  }
+
+  /** Douyin and Alipay run their native SDK flows; the rest open the web page. */
+  private providerTapped(providerId: string): void {
+    if (providerId === 'douyin') {
+      this.startNativeProviderSignIn(providerId, (state, done) => {
+        DouyinNativeSignIn.start(getContext(this) as common.UIAbilityContext, state, done);
+      });
+      return;
+    }
+    if (providerId === 'alipay') {
+      this.startNativeProviderSignIn(providerId, (state, done) => {
+        AlipayNativeSignIn.start(getContext(this) as common.UIAbilityContext, state, done);
+      });
+      return;
+    }
+    this.openProviderLogin(providerId);
+  }
+
+  /**
+   * Obtains a single-use state (with its binder cookie) from the SSO, runs
+   * one native-SDK authorization carrying that state, exchanges
+   * `{state, code}` at the provider's native-login endpoint, and approves
+   * the pairing. A user cancel just returns to this page; a failure surfaces
+   * an inline error instead of bouncing to the browser flow.
+   */
+  private async startNativeProviderSignIn(
+    providerId: string,
+    run: (state: string, done: (outcome: NativeSignInOutcome) => void) => void
+  ): Promise<void> {
+    const client: SsoAuthClient | null = this.client;
+    if (client === null || this.pairingId.length === 0 || this.busy) {
+      return;
+    }
+    this.setBusy(true);
+    const start = await client.nativeLoginStart(providerId);
+    if (!this.visible) {
+      return;
+    }
+    if (start.error !== null || start.state.length === 0) {
+      this.setBusy(false);
+      this.showError(start.error !== null
+        ? AuthTheme.errorText(start.error)
+        : $r('app.string.native_login_error_native_provider'));
+      return;
+    }
+    run(start.state, (outcome: NativeSignInOutcome): void => {
+      this.finishNativeProviderSignIn(client, providerId, start.state, outcome);
+    });
+  }
+
+  private async finishNativeProviderSignIn(
+    client: SsoAuthClient,
+    providerId: string,
+    state: string,
+    outcome: NativeSignInOutcome
+  ): Promise<void> {
+    if (!this.visible) {
+      return;
+    }
+    if (outcome.kind === NativeSignInKind.CANCELED) {
+      this.setBusy(false);
+      return;
+    }
+    if (outcome.kind === NativeSignInKind.FAILED) {
+      this.setBusy(false);
+      this.showError($r('app.string.native_login_error_native_provider'));
+      return;
+    }
+    const loginError: SsoAuthError | null =
+      await client.nativeLogin(providerId, state, outcome.authCode);
     if (!this.visible) {
       return;
     }

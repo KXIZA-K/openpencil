@@ -17,6 +17,9 @@ dependencyResolutionManagement {
         mavenCentral()
         maven("https://maven.aliyun.com/repository/google")
         maven("https://maven.aliyun.com/repository/public")
+        // Douyin OpenSDK (native sign-in) is published only on ByteDance's
+        // own repository.
+        maven("https://artifact.bytedance.com/repository/AwemeOpenSDK")
     }
 }
 

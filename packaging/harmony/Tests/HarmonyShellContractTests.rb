@@ -561,4 +561,41 @@ raise "the account center presentation must follow the form factor" unless index
   "compact: this.host.isDesktopClass(),",
 )
 
+# NATIVE PROVIDER SDK SIGN-IN. Douyin and Alipay run their vendor SDK flows
+# (auth code → native-login exchange → pairing approval); everything else
+# stays on the browser start endpoint. The SDK wrappers pin the mobile-app
+# credentials, and the entry ability drains the returning wants.
+douyin_native = read(ets_dir, "common/DouyinNativeSignIn.ets")
+alipay_native = read(ets_dir, "common/AlipayNativeSignIn.ets")
+entry_ability = read(ets_dir, "entryability/EntryAbility.ets")
+raise "douyin card must run the OpenSDK flow" unless login_page.include?(
+  "DouyinNativeSignIn.start(getContext(this) as common.UIAbilityContext, state, done)",
+)
+raise "alipay card must run the in-app authorization" unless login_page.include?(
+  "AlipayNativeSignIn.start(getContext(this) as common.UIAbilityContext, state, done)",
+)
+raise "native sign-in must obtain a server-issued state first" unless auth_client.include?(
+  "/native-login-start",
+) && login_page.include?("client.nativeLoginStart(providerId)")
+raise "native provider code must exchange with the bound state" unless auth_client.include?(
+  "/native-login",
+) && auth_client.include?("{ state: state, code: code }") &&
+  login_page.include?("client.nativeLogin(providerId, state, outcome.authCode)")
+raise "douyin client key drifted" unless douyin_native.include?(
+  "'awbponwo0ls6cjos'",
+)
+raise "alipay mobile AppID drifted" unless alipay_native.include?(
+  "'2021006190626680'",
+)
+raise "alipay must use the unsigned PURE_OAUTH_SDK flow" unless alipay_native.include?(
+  "https://authweb.alipay.com/auth?auth_type=PURE_OAUTH_SDK",
+)
+raise "douyin must return on the owned App Link" unless douyin_native.include?(
+  "DOUYIN_AUTH_APP_LINK",
+)
+raise "returning wants must reach both SDKs" unless entry_ability.include?(
+  "AlipayNativeSignIn.handleWant(want)",
+) && entry_ability.include?("DouyinNativeSignIn.handleWant(this.context, want)") &&
+  entry_ability.include?("onNewWant")
+
 puts "HarmonyOS shell contract validates"

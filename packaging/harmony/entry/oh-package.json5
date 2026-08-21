@@ -10,6 +10,11 @@
     // `libopenpencil.so` is dropped into `entry/libs/<abi>/` by
     // `scripts/build-ohos.sh`; this entry only teaches the ArkTS compiler
     // the shape of `import napi from 'libopenpencil.so'`.
-    "libopenpencil.so": "file:./src/main/cpp/types/libopenpencil"
+    "libopenpencil.so": "file:./src/main/cpp/types/libopenpencil",
+    // Native sign-in SDK .har files, fetched by
+    // `../scripts/fetch-vendor-sdks.sh` before `ohpm install` (proprietary
+    // binaries, deliberately not committed).
+    "@douyin/opensdk-common-external": "file:./libs/douyin-opensdk-common-external.har",
+    "@alipay/afservicesdk": "file:./libs/afservicesdk.har"
   }
 }

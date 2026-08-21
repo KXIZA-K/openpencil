@@ -125,6 +125,10 @@
       "value": "登录失败，请重试。"
     },
     {
+      "name": "native_login_error_native_provider",
+      "value": "登录未完成，请重试。"
+    },
+    {
       "name": "native_login_error_pairing_expired",
       "value": "本次登录请求已过期，请关闭后重试。"
     },

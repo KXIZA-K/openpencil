@@ -421,12 +421,92 @@ final class NativeLoginViewController: UIViewController {
     }
 
     @objc private func providerCardTapped(_ sender: UIButton) {
-        let providerID = sender.accessibilityIdentifier
-        if providerID == "apple" {
+        switch sender.accessibilityIdentifier {
+        case "apple":
             startAppleNativeSignIn()
-            return
+        case "douyin":
+            startDouyinNativeSignIn()
+        case "alipay":
+            startAlipayNativeSignIn()
+        case let providerID:
+            openProviderLogin(providerID: providerID)
         }
-        openProviderLogin(providerID: providerID)
+    }
+
+    /// Douyin sign-in runs on the Douyin OpenSDK: the SSO issues a
+    /// single-use state (with its binder cookie), the Douyin app (or the
+    /// SDK's built-in H5 page) mints an auth code bound to that state, and
+    /// the SSO redeems `{state, code}` against the mobile-app credentials
+    /// before the running pairing is approved. A user cancel just returns to
+    /// this screen; a failure surfaces an error instead of bouncing to the
+    /// browser flow.
+    private func startDouyinNativeSignIn() {
+        startNativeProviderSignIn(providerID: "douyin") { [weak self] state, done in
+            guard let self else { return }
+            DouyinNativeSignIn.start(from: self, state: state, completion: done)
+        }
+    }
+
+    /// Alipay sign-in runs on the Alipay SDK's in-app authorization with the
+    /// same state-bound exchange as Douyin's.
+    private func startAlipayNativeSignIn() {
+        startNativeProviderSignIn(providerID: "alipay") { state, done in
+            AlipayNativeSignIn.start(state: state, completion: done)
+        }
+    }
+
+    private func startNativeProviderSignIn(
+        providerID: String,
+        run: @escaping (_ state: String, _ done: @escaping (NativeSignInOutcome) -> Void) -> Void
+    ) {
+        setBusy(true)
+        client.nativeLoginStart(providerID: providerID) { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .failure(let error):
+                self.setBusy(false)
+                self.showError(error.localizedText)
+            case .success(let state):
+                run(state) { [weak self] outcome in
+                    self?.finishNativeProviderSignIn(
+                        providerID: providerID, state: state, outcome: outcome
+                    )
+                }
+            }
+        }
+    }
+
+    private func finishNativeProviderSignIn(
+        providerID: String,
+        state: String,
+        outcome: NativeSignInOutcome
+    ) {
+        switch outcome {
+        case .canceled:
+            setBusy(false)
+        case .failed:
+            setBusy(false)
+            showError(NSLocalizedString(
+                "nativeLogin.error.providerUnavailable",
+                value: "Sign-in didn’t complete. Please try again.",
+                comment: "Native provider SDK failure"
+            ))
+        case .authorized(let authCode):
+            client.nativeCodeLogin(
+                providerID: providerID,
+                state: state,
+                code: authCode
+            ) { [weak self] result in
+                guard let self else { return }
+                switch result {
+                case .failure(let error):
+                    self.setBusy(false)
+                    self.showError(error.localizedText)
+                case .success:
+                    self.approvePairing()
+                }
+            }
+        }
     }
 
     /// Apple sign-in runs fully natively: the system sheet mints an identity

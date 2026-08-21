@@ -114,10 +114,13 @@ xcrun simctl launch <sim-id> tech.zseven.openpencil
 
 ## Real-device build
 
-Use the device archive and replace `<device-id>` with the attached phone's destination identifier. Signing values may be supplied by the orchestrator or selected in Xcode:
+Use the device archive and replace `<device-id>` with the attached phone's destination identifier. Signing values may be supplied by the orchestrator or selected in Xcode.
+
+Device builds link the vendored native sign-in SDKs (Douyin OpenSDK + Alipay AFServiceSDK). Fetch them once with `bash scripts/fetch-vendor-sdks.sh` (the Xcode pre-build phase also does this automatically) and pass the framework flags shown below; simulator builds skip both, compiling the stub branches instead — Douyin/Alipay sign-in therefore only works on device.
 
 ```bash
 cd packaging/ios
+bash scripts/fetch-vendor-sdks.sh
 xcodebuild \
   -project OpenPencilPlayer.xcodeproj \
   -scheme OpenPencilPlayer \
@@ -126,7 +129,8 @@ xcodebuild \
   -destination 'platform=iOS,id=<device-id>' \
   -derivedDataPath "$PWD/.derived-data-device" \
   HEADER_SEARCH_PATHS="$PWD/../../crates/op-engine-ffi/include" \
-  OTHER_LDFLAGS="$PWD/../../target/aarch64-apple-ios/release/libop_engine_ffi.a -lc++ -framework CoreFoundation -framework CoreGraphics -framework CoreText -framework ImageIO -framework MobileCoreServices -framework UIKit -framework Foundation -framework Metal -framework QuartzCore -framework Security" \
+  FRAMEWORK_SEARCH_PATHS="$PWD/Vendor" \
+  OTHER_LDFLAGS="$PWD/../../target/aarch64-apple-ios/release/libop_engine_ffi.a -lc++ -ObjC -framework DouyinOpenSDK -framework AFServiceSDK -framework WebKit -framework CoreData -framework SystemConfiguration -framework Network -framework CoreFoundation -framework CoreGraphics -framework CoreText -framework ImageIO -framework MobileCoreServices -framework UIKit -framework Foundation -framework Metal -framework QuartzCore -framework Security" \
   build
 ```
 

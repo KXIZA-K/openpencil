@@ -79,6 +79,14 @@ dependencies {
     implementation("androidx.activity:activity-ktx:1.7.0")
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.appcompat:appcompat:1.7.0")
+    // Native third-party sign-in SDKs: Douyin OpenSDK (auth code via the
+    // Douyin app) and the Alipay SDK (in-app authorization). The auth codes
+    // they mint are exchanged server-side by the SSO backend.
+    // Pinned to 0.2.0.10: 0.2.0.11 depends on com.bytedance.security:polaris,
+    // which ByteDance does not publish on any reachable repository.
+    implementation("com.bytedance.ies.ugc.aweme:opensdk-china-external:0.2.0.10")
+    implementation("com.bytedance.ies.ugc.aweme:opensdk-common:0.2.0.10")
+    implementation("com.alipay.sdk:alipaysdk-android:15.8.42")
     testImplementation("junit:junit:4.13.2")
     // Real org.json for JVM unit tests (the android.jar copy is a stub).
     testImplementation("org.json:json:20240303")

@@ -61,13 +61,61 @@ raise "WebKit must stay out of the login path" if login_source.include?("import 
 # cancel returns to the screen; other failures surface an inline error and
 # never touch a web page.
 raise "apple card must run the native sheet" unless login_source.include?(
-  'if providerID == "apple" {'
-)
+  'case "apple":'
+) && login_source.include?("startAppleNativeSignIn()")
 raise "apple token must exchange at native-login" unless login_source.include?(
   'providerID: "apple",'
 ) && login_source.include?("self.client.nativeLogin(")
 raise "native apple success must approve the pairing" unless login_source.include?(
   "self.approvePairing()"
+)
+
+# Douyin and Alipay are SDK-native too: the SSO issues a single-use state
+# (with its binder cookie) first, the vendor SDK flow carries that state to
+# the minted auth code, `{state, code}` exchanges at the same native-login
+# endpoint, and the pairing is approved directly. A user cancel returns to
+# the screen; failures surface an inline error and never bounce to the
+# browser flow.
+raise "douyin card must run the OpenSDK flow" unless login_source.include?(
+  'case "douyin":'
+) && login_source.include?("DouyinNativeSignIn.start(from: self, state: state")
+raise "alipay card must run the in-app authorization" unless login_source.include?(
+  'case "alipay":'
+) && login_source.include?("AlipayNativeSignIn.start(state: state")
+raise "native sign-in must obtain a server-issued state first" unless login_source.include?(
+  "client.nativeLoginStart(providerID: providerID)"
+)
+raise "native provider code must exchange with the bound state" unless login_source.include?(
+  "client.nativeCodeLogin("
+) && login_source.include?("state: state,\n                code: authCode")
+
+# The SDK wrappers pin the mobile-app credentials and the callback plumbing.
+douyin_source = File.read(File.expand_path("../Sources/DouyinNativeSignIn.swift", __dir__))
+alipay_source = File.read(File.expand_path("../Sources/AlipayNativeSignIn.swift", __dir__))
+callbacks_source = File.read(
+  File.expand_path("../Sources/NativeProviderCallbacks.swift", __dir__)
+)
+raise "douyin client key drifted" unless douyin_source.include?(
+  'clientKey = "awbponwo0ls6cjos"'
+)
+raise "alipay mobile AppID drifted" unless alipay_source.include?(
+  'appID = "2021006190626680"'
+)
+raise "alipay must use the unsigned PURE_OAUTH_SDK flow" unless alipay_source.include?(
+  "https://authweb.alipay.com/auth?auth_type=PURE_OAUTH_SDK"
+)
+raise "alipay callback scheme drifted" unless alipay_source.include?(
+  'callbackScheme = "openpencilalipay"'
+)
+raise "simulator builds must compile SDK stubs" unless
+  douyin_source.include?("#if targetEnvironment(simulator)") &&
+  alipay_source.include?("#if targetEnvironment(simulator)")
+raise "scheme callbacks must route into both SDKs" unless
+  callbacks_source.include?("DouyinNativeSignIn.handleOpenURL(url)") &&
+  callbacks_source.include?("AlipayNativeSignIn.handleOpenURL(url)")
+app_source = File.read(File.expand_path("../Sources/OpPlayerApp.swift", __dir__))
+raise "scene must forward onOpenURL to the provider SDKs" unless app_source.include?(
+  "NativeProviderCallbacks.handle(url)"
 )
 
 # Region codes are literals for standalone-test compilability; pin them to

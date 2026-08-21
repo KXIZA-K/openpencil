@@ -26,6 +26,17 @@ interface ErrorBody {
   message?: string;
 }
 
+/** One POST's outcome: the success payload, or the typed failure. */
+class PostBodyResult {
+  readonly payload: string;
+  readonly error: SsoAuthError | null;
+
+  constructor(payload: string, error: SsoAuthError | null) {
+    this.payload = payload;
+    this.error = error;
+  }
+}
+
 interface ErrorPayload {
   error?: ErrorBody;
 }
@@ -37,6 +48,32 @@ interface ErrorPayload {
 interface PasswordLoginBody {
   email: string;
   password: string;
+}
+
+interface NativeLoginStartBody {
+}
+
+interface NativeLoginStartPayload {
+  state?: string;
+}
+
+interface NativeLoginBody {
+  state: string;
+  code: string;
+}
+
+/**
+ * Result of `nativeLoginStart`: the single-use state on success, or the
+ * failure. Exactly one of the two fields is set.
+ */
+export class NativeLoginStart {
+  readonly state: string;
+  readonly error: SsoAuthError | null;
+
+  constructor(state: string, error: SsoAuthError | null) {
+    this.state = state;
+    this.error = error;
+  }
 }
 
 interface EmailCodeBody {
@@ -85,6 +122,45 @@ export class SsoAuthClient {
   async passwordLogin(email: string, password: string): Promise<SsoAuthError | null> {
     const body: PasswordLoginBody = { email: email, password: password };
     return this.post('/api/v1/auth/password-login', body);
+  }
+
+  /**
+   * `POST /api/v1/auth/providers/<id>/native-login-start` — issues the
+   * single-use state for a native authorization-code sign-in (Douyin /
+   * Alipay) and drops the binder cookie into this client's jar; the same
+   * client instance must complete the login so the cookie travels back.
+   */
+  async nativeLoginStart(providerId: string): Promise<NativeLoginStart> {
+    const body: NativeLoginStartBody = {};
+    const result = await this.postForBody(
+      `/api/v1/auth/providers/${providerId}/native-login-start`,
+      body
+    );
+    if (result.error !== null) {
+      return new NativeLoginStart('', result.error);
+    }
+    let state = '';
+    try {
+      const payload: NativeLoginStartPayload = JSON.parse(result.payload) as NativeLoginStartPayload;
+      state = payload.state ?? '';
+    } catch (_error) {
+      state = '';
+    }
+    if (state.length === 0) {
+      return new NativeLoginStart('', new SsoAuthError('protocol', ''));
+    }
+    return new NativeLoginStart(state, null);
+  }
+
+  /**
+   * `POST /api/v1/auth/providers/<id>/native-login` with the
+   * authorization-code shape — redeems a native SDK auth code (Douyin /
+   * Alipay) against the state issued by `nativeLoginStart`; the binder
+   * cookie in this client's jar proves both calls came from one attempt.
+   */
+  async nativeLogin(providerId: string, state: string, code: string): Promise<SsoAuthError | null> {
+    const body: NativeLoginBody = { state: state, code: code };
+    return this.post(`/api/v1/auth/providers/${providerId}/native-login`, body);
   }
 
   /**
@@ -178,6 +254,11 @@ export class SsoAuthClient {
   // ---- Transport ---------------------------------------------------------
 
   private async post(path: string, body: object): Promise<SsoAuthError | null> {
+    return (await this.postForBody(path, body)).error;
+  }
+
+  /** Runs one POST; on success delivers the response body, else the error. */
+  private async postForBody(path: string, body: object): Promise<PostBodyResult> {
     const request: http.HttpRequest = http.createHttp();
     try {
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -197,13 +278,16 @@ export class SsoAuthClient {
       this.storeCookies(response.cookies);
       const status: number = response.responseCode;
       if (status >= 200 && status <= 299) {
-        return null;
+        return new PostBodyResult(SsoAuthClient.bodyText(response.result), null);
       }
-      return SsoAuthClient.decodeError(SsoAuthClient.bodyText(response.result), status);
+      return new PostBodyResult(
+        '',
+        SsoAuthClient.decodeError(SsoAuthClient.bodyText(response.result), status)
+      );
     } catch (error) {
       // The transport never surfaces the request body, so nothing sensitive
       // can leak through this sentinel.
-      return new SsoAuthError('network', SsoAuthClient.errorMessage(error));
+      return new PostBodyResult('', new SsoAuthError('network', SsoAuthClient.errorMessage(error)));
     } finally {
       request.destroy();
     }

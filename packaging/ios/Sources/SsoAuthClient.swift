@@ -87,6 +87,71 @@ final class SsoAuthClient {
         )
     }
 
+    /// `POST /api/v1/auth/providers/<id>/native-login-start` — issues the
+    /// single-use state for a native authorization-code sign-in (Douyin /
+    /// Alipay) and drops the binder cookie into this client's jar; the same
+    /// client instance must complete the login so the cookie travels back.
+    func nativeLoginStart(
+        providerID: String,
+        completion: @escaping (Result<String, SsoAuthError>) -> Void
+    ) {
+        var request = URLRequest(
+            url: origin.appendingPathComponent(
+                "/api/v1/auth/providers/\(providerID)/native-login-start"
+            )
+        )
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = Data("{}".utf8)
+        let finish: (Result<String, SsoAuthError>) -> Void = { result in
+            DispatchQueue.main.async { completion(result) }
+        }
+        let task = session.dataTask(with: request) { data, response, error in
+            if error != nil {
+                finish(.failure(SsoAuthError(code: "network", message: "")))
+                return
+            }
+            guard let http = response as? HTTPURLResponse else {
+                finish(.failure(SsoAuthError(code: "protocol", message: "")))
+                return
+            }
+            guard (200..<300).contains(http.statusCode) else {
+                finish(.failure(Self.decodeError(data: data, status: http.statusCode)))
+                return
+            }
+            struct StartBody: Decodable {
+                let state: String
+            }
+            guard
+                let data,
+                let body = try? JSONDecoder().decode(StartBody.self, from: data),
+                !body.state.isEmpty
+            else {
+                finish(.failure(SsoAuthError(code: "protocol", message: "")))
+                return
+            }
+            finish(.success(body.state))
+        }
+        task.resume()
+    }
+
+    /// `POST /api/v1/auth/providers/<id>/native-login` with the
+    /// authorization-code shape — redeems a native SDK auth code (Douyin /
+    /// Alipay) against the state issued by `nativeLoginStart`; the binder
+    /// cookie in this client's jar proves both calls came from one attempt.
+    func nativeCodeLogin(
+        providerID: String,
+        state: String,
+        code: String,
+        completion: @escaping (Result<Void, SsoAuthError>) -> Void
+    ) {
+        post(
+            path: "/api/v1/auth/providers/\(providerID)/native-login",
+            body: ["state": state, "code": code],
+            completion: completion
+        )
+    }
+
     /// `POST /api/v1/auth/email-codes` — sends a verification code for
     /// registration (`purpose: "register"`) or password recovery
     /// (`purpose: "password_reset"`), localized to the device language.

@@ -125,6 +125,10 @@
       "value": "Sign-in failed. Please try again."
     },
     {
+      "name": "native_login_error_native_provider",
+      "value": "Sign-in didn’t complete. Please try again."
+    },
+    {
       "name": "native_login_error_pairing_expired",
       "value": "This sign-in request expired. Close and try again."
     },

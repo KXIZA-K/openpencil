@@ -342,7 +342,7 @@ internal class NativeLoginOverlay(
         if (providers.isEmpty()) return
         providerRow.removeAllViews()
         for ((position, provider) in providers.withIndex()) {
-            val card = AuthUi.providerCard(activity, provider.id) { openProviderLogin(provider.id) }
+            val card = AuthUi.providerCard(activity, provider.id) { providerTapped(provider.id) }
             card.contentDescription = provider.displayName
             val params = LinearLayout.LayoutParams(
                 AuthUi.dp(activity, 56),
@@ -384,24 +384,90 @@ internal class NativeLoginOverlay(
                 showError(errorText(loginError))
                 return@passwordLogin
             }
-            client.approvePairing(pairing) { approveError ->
-                if (!isVisible) return@approvePairing
-                if (approveError != null) {
-                    setBusy(false)
-                    showError(
-                        if (approveError.code == "not_found") {
-                            activity.getString(R.string.native_login_error_pairing_expired)
-                        } else {
-                            errorText(approveError)
-                        },
-                    )
-                    return@approvePairing
-                }
-                // Rust's poll observes the approval, exchanges the pairing,
-                // and drives the close action that dismisses this overlay.
-                statusLabel.text = activity.getString(R.string.native_login_completing)
-                statusLabel.visibility = View.VISIBLE
+            approvePairingAfterLogin(client, pairing)
+        }
+    }
+
+    /** Douyin and Alipay run their native SDK flows; the rest open the web page. */
+    private fun providerTapped(providerId: String) {
+        when (providerId) {
+            "douyin" -> startNativeProviderSignIn(providerId) { state, completion ->
+                DouyinNativeSignIn.start(activity, state, completion)
             }
+            "alipay" -> startNativeProviderSignIn(providerId) { state, completion ->
+                AlipayNativeSignIn.start(activity, state, completion)
+            }
+            else -> openProviderLogin(providerId)
+        }
+    }
+
+    /**
+     * Obtains a single-use state (with its binder cookie) from the SSO, runs
+     * one native-SDK authorization carrying that state, exchanges
+     * `{state, code}` at the provider's native-login endpoint, and approves
+     * the pairing. A user cancel just returns to this screen; a failure
+     * surfaces an inline error instead of bouncing to the browser flow.
+     */
+    private fun startNativeProviderSignIn(
+        providerId: String,
+        run: (String, (NativeSignInOutcome) -> Unit) -> Unit,
+    ) {
+        val client = client ?: return
+        val pairing = request?.pairingId ?: return
+        setBusy(true)
+        client.nativeLoginStart(providerId) { state, startError ->
+            if (!isVisible) return@nativeLoginStart
+            if (state == null) {
+                setBusy(false)
+                showError(errorText(startError ?: SsoAuthError("protocol", "")))
+                return@nativeLoginStart
+            }
+            run(state) { outcome ->
+                activity.runOnUiThread {
+                    if (!isVisible) return@runOnUiThread
+                    when (outcome) {
+                        NativeSignInOutcome.Canceled -> setBusy(false)
+                        NativeSignInOutcome.Failed -> {
+                            setBusy(false)
+                            showError(
+                                activity.getString(R.string.native_login_error_native_provider),
+                            )
+                        }
+                        is NativeSignInOutcome.Authorized ->
+                            client.nativeLogin(providerId, state, outcome.authCode) { loginError ->
+                                if (!isVisible) return@nativeLogin
+                                if (loginError != null) {
+                                    setBusy(false)
+                                    showError(errorText(loginError))
+                                    return@nativeLogin
+                                }
+                                approvePairingAfterLogin(client, pairing)
+                            }
+                    }
+                }
+            }
+        }
+    }
+
+    /** Shared approve step for password and native-SDK sign-ins. */
+    private fun approvePairingAfterLogin(client: SsoAuthClient, pairing: String) {
+        client.approvePairing(pairing) { approveError ->
+            if (!isVisible) return@approvePairing
+            if (approveError != null) {
+                setBusy(false)
+                showError(
+                    if (approveError.code == "not_found") {
+                        activity.getString(R.string.native_login_error_pairing_expired)
+                    } else {
+                        errorText(approveError)
+                    },
+                )
+                return@approvePairing
+            }
+            // Rust's poll observes the approval, exchanges the pairing,
+            // and drives the close action that dismisses this overlay.
+            statusLabel.text = activity.getString(R.string.native_login_completing)
+            statusLabel.visibility = View.VISIBLE
         }
     }
 

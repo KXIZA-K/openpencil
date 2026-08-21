@@ -1,7 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- Native sign-in SDKs probe for the Douyin and Alipay apps. -->
+    <queries>
+        <package android:name="com.ss.android.ugc.aweme" />
+        <package android:name="com.ss.android.ugc.aweme.lite" />
+        <package android:name="com.eg.android.AlipayGphone" />
+        <package android:name="hk.alipay.wallet" />
+    </queries>
 
     <application
         android:allowBackup="false"
@@ -20,5 +29,30 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Alipay SDK return-jump activity: the SDK ships it without an
+             intent-filter; re-declaring it binds the app-unique scheme the
+             in-app authorization passes to OpenAuthTask.execute. -->
+        <activity
+            android:name="com.alipay.sdk.app.AlipayResultActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            tools:node="merge">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="openpencilalipay" />
+            </intent-filter>
+        </activity>
+
+        <!-- Douyin OpenSDK auth callback. The SDK resolves this activity by
+             the fixed `<applicationId>.douyinapi.DouYinEntryActivity` naming
+             convention; it relays the auth response and finishes. -->
+        <activity
+            android:name=".douyinapi.DouYinEntryActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:taskAffinity="tech.zseven.openpencil" />
     </application>
 </manifest>

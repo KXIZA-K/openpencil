@@ -43,6 +43,15 @@ targets:
         "LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]": "$(inherited) $(SRCROOT)/../../target/aarch64-apple-ios-sim/release"
         OP_AUTH_ARCHIVE: ""
         OTHER_LDFLAGS: "$(inherited) $(OP_ENGINE_ARCHIVE) $(OP_AUTH_ARCHIVE) -lc++"
+        # Native sign-in SDKs (Douyin OpenSDK / Alipay AFServiceSDK) ship as
+        # proprietary fat static frameworks with device-arm64 + x86_64 slices
+        # only, so they link on device builds exclusively; simulator builds
+        # compile the stub branches of the Swift wrappers. WebKit is required
+        # by the Douyin SDK's built-in H5 auth fallback — it is linked here
+        # (device only) and deliberately kept out of `dependencies`, which
+        # the source contract reserves for the app's own frameworks.
+        "FRAMEWORK_SEARCH_PATHS[sdk=iphoneos*]": "$(inherited) $(SRCROOT)/Vendor"
+        "OTHER_LDFLAGS[sdk=iphoneos*]": "$(inherited) -ObjC -framework DouyinOpenSDK -framework AFServiceSDK -framework WebKit -framework CoreData -framework SystemConfiguration -framework Network"
       configs:
         Debug:
           "OP_ENGINE_ARCHIVE[sdk=iphoneos*]": "$(SRCROOT)/../../target/aarch64-apple-ios/debug/libop_engine_ffi.a"
@@ -51,7 +60,32 @@ targets:
           GCC_OPTIMIZATION_LEVEL: s
           "OP_ENGINE_ARCHIVE[sdk=iphoneos*]": "$(SRCROOT)/../../target/aarch64-apple-ios/release/libop_engine_ffi.a"
           "OP_ENGINE_ARCHIVE[sdk=iphonesimulator*]": "$(SRCROOT)/../../target/aarch64-apple-ios-sim/release/libop_engine_ffi.a"
+    info:
+      path: Info.plist
+      properties:
+        # Third-party sign-in SDK plumbing. The Douyin callback scheme is the
+        # client key by SDK convention; the Alipay scheme is app-chosen and
+        # must match AlipayNativeSignIn.callbackScheme.
+        DouyinAppID: awbponwo0ls6cjos
+        LSApplicationQueriesSchemes:
+          - douyinopensdk
+          - douyinliteopensdk
+          - douyinsharesdk
+          - snssdk1128
+          - alipay
+          - alipays
+        CFBundleURLTypes:
+          - CFBundleURLName: tech.zseven.openpencil.douyin
+            CFBundleURLSchemes: [awbponwo0ls6cjos]
+          - CFBundleURLName: tech.zseven.openpencil.alipay
+            CFBundleURLSchemes: [openpencilalipay]
     preBuildScripts:
+      - name: Fetch vendored sign-in SDKs
+        script: |
+          if [ "${PLATFORM_NAME:-}" = "iphoneos" ]; then
+            bash "$SRCROOT/scripts/fetch-vendor-sdks.sh"
+          fi
+        basedOnDependencyAnalysis: false
       - name: Validate optional op-auth archive
         script: |
           if [ -n "${OP_AUTH_ARCHIVE:-}" ]; then
@@ -61,6 +95,16 @@ targets:
               *) echo "error: unsupported auth link platform: ${PLATFORM_NAME:-unset}" >&2; exit 1 ;;
             esac
             bash "$SRCROOT/../../tools/check-mobile-auth-link-input.sh"
+          fi
+        basedOnDependencyAnalysis: false
+    postCompileScripts:
+      - name: Copy Douyin OpenSDK resource bundle
+        script: |
+          if [ "${PLATFORM_NAME:-}" = "iphoneos" ]; then
+            bundle="$SRCROOT/Vendor/DouyinOpenSDK.framework/Resources/DYOpenCore.bundle"
+            if [ -d "$bundle" ]; then
+              cp -R "$bundle" "${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/"
+            fi
           fi
         basedOnDependencyAnalysis: false
     dependencies:

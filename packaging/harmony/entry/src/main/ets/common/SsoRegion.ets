@@ -22,6 +22,14 @@ const MAINLAND_REDIRECT_HOST = 'op.zseven.cn';
 const PROBE_TIMEOUT_MS = 3000;
 
 /**
+ * HTTPS App Link the Douyin OpenSDK returns on. This file owns every
+ * first-party host; the hub domain must host applinking.json listing this
+ * bundle, and the Douyin console must whitelist the same link for the
+ * HarmonyOS app.
+ */
+export const DOUYIN_AUTH_APP_LINK = 'https://op.zseven.cn/harmony/douyin-auth';
+
+/**
  * Regional SSO deployment this install signs in against. Mirrors the engine's
  * `OpAuthRegion` codes (`OpAuthRegion_China = 0`, `OpAuthRegion_Global = 1`);
  * both origins are pinned first-party hosts. Ported from `SsoRegion.kt`.

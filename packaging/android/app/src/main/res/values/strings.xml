@@ -22,6 +22,7 @@
     <string name="native_login_error_rate_limited">Too many attempts. Try again in a moment.</string>
     <string name="native_login_error_network">Network error. Check your connection and try again.</string>
     <string name="native_login_error_generic">Sign-in failed. Please try again.</string>
+    <string name="native_login_error_native_provider">Sign-in didn’t complete. Please try again.</string>
     <string name="native_login_error_pairing_expired">This sign-in request expired. Close and try again.</string>
     <string name="account_center_signed_out">Not signed in</string>
     <string name="account_center_region_value">Sign-in region: %1$s</string>

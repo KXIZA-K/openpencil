@@ -15,6 +15,13 @@
     "deliveryWithInstall": true,
     "installationFree": false,
     "pages": "$profile:main_pages",
+    // Native sign-in SDKs probe for the Alipay and Douyin apps before
+    // launching their in-app authorization flows.
+    "querySchemes": [
+      "apmqpdispatch",
+      "snssdk1128",
+      "douyinopensdk"
+    ],
     "abilities": [
       {
         "name": "EntryAbility",
@@ -37,6 +44,42 @@
             "actions": [
               "action.system.home"
             ]
+          },
+          // Return path for the Alipay landing page (jumps back through
+          // render.alipay.com when Alipay was installed mid-flow).
+          {
+            "entities": [
+              "entity.system.browsable"
+            ],
+            "actions": [
+              "ohos.want.action.viewData"
+            ],
+            "uris": [
+              {
+                "scheme": "https",
+                "host": "render.alipay.com",
+                "pathStartWith": "p/s/i"
+              }
+            ]
+          },
+          // Douyin OpenSDK returns on this App Link; op.zseven.cn must host
+          // applinking.json listing this bundle, and the Douyin console must
+          // whitelist the same link for the HarmonyOS app.
+          {
+            "entities": [
+              "entity.system.browsable"
+            ],
+            "actions": [
+              "ohos.want.action.viewData"
+            ],
+            "uris": [
+              {
+                "scheme": "https",
+                "host": "op.zseven.cn",
+                "pathStartWith": "harmony/douyin-auth"
+              }
+            ],
+            "domainVerify": true
           }
         ]
       }

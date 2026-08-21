@@ -119,4 +119,44 @@ raise "SSO cookies must stay in a per-client jar" unless client.include?(
 raise "account sign-out must go through the engine" unless account.include?("onSignOut()") &&
   activity.include?("surfaceView.signOutAccount()")
 
+# NATIVE PROVIDER SDK SIGN-IN. Douyin and Alipay run their vendor SDK flows
+# (auth code → native-login exchange → pairing approval); everything else
+# stays on the browser start endpoint. The wrappers pin the mobile-app
+# credentials and the manifest binds the SDK return paths.
+douyin_native = File.read(File.join(root, "DouyinNativeSignIn.kt"))
+alipay_native = File.read(File.join(root, "AlipayNativeSignIn.kt"))
+entry_activity = File.read(File.join(root, "douyinapi/DouYinEntryActivity.kt"))
+manifest = File.read(File.expand_path("../app/src/main/AndroidManifest.xml", __dir__))
+raise "douyin card must run the OpenSDK flow" unless overlay.include?(
+  "DouyinNativeSignIn.start(activity, state, completion)",
+)
+raise "alipay card must run the in-app authorization" unless overlay.include?(
+  "AlipayNativeSignIn.start(activity, state, completion)",
+)
+raise "native sign-in must obtain a server-issued state first" unless client.include?(
+  "/native-login-start",
+) && overlay.include?("client.nativeLoginStart(providerId)")
+raise "native provider code must exchange with the bound state" unless client.include?(
+  "/native-login",
+) && client.include?('put("state", state).put("code", code)') &&
+  overlay.include?("client.nativeLogin(providerId, state, outcome.authCode)")
+raise "douyin client key drifted" unless douyin_native.include?(
+  'CLIENT_KEY = "awbponwo0ls6cjos"',
+)
+raise "alipay mobile AppID drifted" unless alipay_native.include?(
+  'APP_ID = "2021006190626680"',
+)
+raise "alipay must use the unsigned PURE_OAUTH_SDK flow" unless alipay_native.include?(
+  "https://authweb.alipay.com/auth?auth_type=PURE_OAUTH_SDK",
+)
+raise "douyin entry activity must relay the auth response" unless entry_activity.include?(
+  "DouyinNativeSignIn.deliver(resp)",
+)
+raise "manifest must bind the douyin entry activity" unless manifest.include?(
+  'android:name=".douyinapi.DouYinEntryActivity"',
+)
+raise "manifest must bind the alipay return scheme" unless manifest.include?(
+  'android:scheme="openpencilalipay"',
+) && alipay_native.include?('SCHEME = "openpencilalipay"')
+
 puts "Android native login contract validates"

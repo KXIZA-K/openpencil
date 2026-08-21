@@ -2,6 +2,8 @@ import { AbilityConstant, UIAbility, Want } from '@kit.AbilityKit';
 import { window } from '@kit.ArkUI';
 import { deviceInfo } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { AlipayNativeSignIn } from '../common/AlipayNativeSignIn';
+import { DouyinNativeSignIn } from '../common/DouyinNativeSignIn';
 import { WindowBridge } from '../common/WindowBridge';
 
 const DOMAIN = 0x0001;
@@ -20,8 +22,25 @@ const TAG = 'OpenPencilPlayer';
  * The ability itself never touches the engine; `pages/Index` owns it.
  */
 export default class EntryAbility extends UIAbility {
-  onCreate(_want: Want, _launchParam: AbilityConstant.LaunchParam): void {
+  onCreate(want: Want, _launchParam: AbilityConstant.LaunchParam): void {
     hilog.info(DOMAIN, TAG, 'ability create');
+    this.routeProviderWant(want);
+  }
+
+  onNewWant(want: Want, _launchParam: AbilityConstant.LaunchParam): void {
+    this.routeProviderWant(want);
+  }
+
+  /**
+   * Native sign-in SDK flows (Douyin / Alipay) return by relaunching this
+   * ability; hand every incoming want to the SDKs so a pending
+   * authorization can resolve. Non-provider wants fall through untouched.
+   */
+  private routeProviderWant(want: Want): void {
+    if (AlipayNativeSignIn.handleWant(want)) {
+      return;
+    }
+    DouyinNativeSignIn.handleWant(this.context, want);
   }
 
   onWindowStageCreate(windowStage: window.WindowStage): void {
