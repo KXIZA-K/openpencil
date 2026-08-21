@@ -318,6 +318,7 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "htmlImport.warn.layout.margins_on_visual_box_ignored" => {
             "Margin CSS pada kotak visual diabaikan."
         }
+        "htmlImport.warn.layout.inline_margin_wrapping_approximated" => "Elemen inline dengan margin CSS dijadikan kotak dan mungkin tidak lagi membungkus antarbaris.",
         "htmlImport.warn.layout.content_box_percentage_approximated" => {
             "Penentuan ukuran persen content-box diaproksimasi."
         }
@@ -533,6 +534,9 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "htmlImport.warn.media.object_fit_scale_down" => "CSS object-fit:scale-down diaproksimasi.",
         "htmlImport.warn.media.object_fit_none_ignored" => "CSS object-fit:none diabaikan.",
         "htmlImport.warn.media.object_position_ignored" => "CSS object-position diabaikan.",
+        "htmlImport.warn.media.image_intrinsic_axis_unresolved" => {
+            "Rasio aspek intrinsik gambar tidak dapat menentukan sumbu yang hilang karena ukuran yang ditetapkan bersifat dinamis atau blok penampungnya tidak memiliki ukuran pasti."
+        }
         "htmlImport.warn.media.image_mix_blend_mode_unsupported" => {
             "CSS mix-blend-mode pada gambar yang tidak didukung diabaikan."
         }

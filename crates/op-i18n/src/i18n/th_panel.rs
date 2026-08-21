@@ -348,6 +348,7 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "htmlImport.warn.layout.margins_on_visual_box_ignored" => {
             "ระยะขอบ CSS บนกล่องแสดงผล ถูกละเว้น"
         }
+        "htmlImport.warn.layout.inline_margin_wrapping_approximated" => "องค์ประกอบอินไลน์ที่มีระยะขอบ CSS ถูกทำเป็นกล่องและอาจไม่ตัดข้ามบรรทัดอีกต่อไป",
         "htmlImport.warn.layout.content_box_percentage_approximated" => {
             "การกำหนดขนาดแบบเปอร์เซ็นต์ของ content-box ถูกประมาณค่า"
         }
@@ -555,6 +556,9 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "htmlImport.warn.media.object_fit_scale_down" => "CSS object-fit:scale-down ถูกประมาณค่า",
         "htmlImport.warn.media.object_fit_none_ignored" => "CSS object-fit:none ถูกละเว้น",
         "htmlImport.warn.media.object_position_ignored" => "CSS object-position ถูกละเว้น",
+        "htmlImport.warn.media.image_intrinsic_axis_unresolved" => {
+            "ไม่สามารถใช้สัดส่วนดั้งเดิมของภาพเพื่อกำหนดแกนที่ขาดไปได้ เนื่องจากขนาดที่กำหนดเป็นค่าแบบไดนามิกหรือขนาดของบล็อกที่ครอบอยู่ไม่แน่นอน"
+        }
         "htmlImport.warn.media.image_mix_blend_mode_unsupported" => {
             "CSS mix-blend-mode ที่ไม่รองรับบนภาพ ถูกละเว้น"
         }

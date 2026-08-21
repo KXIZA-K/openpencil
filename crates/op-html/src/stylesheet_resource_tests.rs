@@ -8,7 +8,9 @@ fn imported_text_color_at(result: &HtmlImportResult, index: usize) -> &str {
     let PenNode::Frame(root) = &result.nodes[0] else {
         panic!("the import root should be a frame")
     };
-    let PenNode::Frame(container) = &root.children.as_ref().expect("root children")[index] else {
+    let node =
+        crate::mapper::unwrap_margin_node(&root.children.as_ref().expect("root children")[index]);
+    let PenNode::Frame(container) = node else {
         panic!("the styled element should be a frame")
     };
     let PenNode::Text(text) = &container.children.as_ref().expect("element children")[0] else {

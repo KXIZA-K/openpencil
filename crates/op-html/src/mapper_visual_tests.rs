@@ -316,10 +316,14 @@ fn text_shadow_inherits_onto_descendant_text_nodes() {
     let PenNode::Frame(root) = &result.nodes[0] else {
         panic!()
     };
-    let PenNode::Frame(division) = &root.children.as_ref().unwrap()[0] else {
+    let PenNode::Frame(division) =
+        crate::mapper::unwrap_margin_node(&root.children.as_ref().unwrap()[0])
+    else {
         panic!()
     };
-    let PenNode::Frame(paragraph) = &division.children.as_ref().unwrap()[0] else {
+    let PenNode::Frame(paragraph) =
+        crate::mapper::unwrap_margin_node(&division.children.as_ref().unwrap()[0])
+    else {
         panic!()
     };
     let PenNode::Text(text) = &paragraph.children.as_ref().unwrap()[0] else {

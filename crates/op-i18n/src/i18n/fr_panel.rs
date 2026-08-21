@@ -318,6 +318,7 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "htmlImport.warn.layout.margins_on_visual_box_ignored" => {
             "Les marges CSS sur une boîte visuelle ont été ignorées."
         }
+        "htmlImport.warn.layout.inline_margin_wrapping_approximated" => "Un élément en ligne avec des marges CSS a été encadré et peut ne plus passer à la ligne.",
         "htmlImport.warn.layout.content_box_percentage_approximated" => {
             "Le dimensionnement en pourcentage content-box a été approximé."
         }
@@ -546,6 +547,9 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         }
         "htmlImport.warn.media.object_position_ignored" => {
             "La propriété CSS object-position a été ignorée."
+        }
+        "htmlImport.warn.media.image_intrinsic_axis_unresolved" => {
+            "Le rapport d’aspect intrinsèque de l’image n’a pas permis de déterminer l’axe manquant, car la taille définie est dynamique ou son bloc conteneur est indéterminé."
         }
         "htmlImport.warn.media.image_mix_blend_mode_unsupported" => {
             "Une valeur CSS mix-blend-mode non prise en charge sur une image a été ignorée."

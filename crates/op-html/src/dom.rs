@@ -9,6 +9,7 @@ pub(crate) const MAX_DOM_DEPTH: usize = 32;
 // HTML tokenization replaces source NULs, so parsed author CSS cannot collide
 // with this length-prefixed internal envelope.
 const INLINE_MEDIA_MARKER: &str = "\0op-html-media:";
+pub(crate) const INITIAL_ROOT_FONT_SIZE_ATTR: &str = "\0op-html-initial-root-font-size";
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum DomNode {

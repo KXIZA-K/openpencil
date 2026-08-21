@@ -78,6 +78,9 @@ mod stylesheet_resource_tests;
 #[cfg(test)]
 mod project_zip_range_unicode_tests;
 
+#[cfg(test)]
+mod wrapped_image_tests;
+
 pub struct HtmlImportOptions {
     pub viewport_width: f64,
     /// Import viewport height. `None` keeps the historical 16:10 estimate
@@ -222,7 +225,7 @@ pub fn import_html_with_resources(
         viewport_height,
     );
     warnings.extend(ua_warnings);
-    let mut budget = resources::ResourceBudget;
+    let mut budget = resources::ResourceBudget::default();
     let mut author_parser =
         css::cascade::StylesheetParser::new(css::cascade::StyleOrigin::Author, 500);
     stylesheets::extend_author_rules(
@@ -247,7 +250,7 @@ pub fn import_html_with_resources(
     };
     // Keep the browser-created document chain for selector matching and
     // inheritance, while continuing to emit the body as the import root.
-    let document_element = dom::DomElement {
+    let mut document_element = dom::DomElement {
         tag: "html".to_string(),
         attrs: parsed.html_attrs,
         children: vec![
@@ -259,9 +262,10 @@ pub fn import_html_with_resources(
             dom::DomNode::Element(body),
         ],
     };
-    let dom::DomNode::Element(body) = &document_element.children[1] else {
-        unreachable!("the synthesized document chain always contains a body")
-    };
+    document_element.attrs.push((
+        dom::INITIAL_ROOT_FONT_SIZE_ATTR.to_string(),
+        opts.base_font_size.to_string(),
+    ));
     let document_style = css::cascade::compute_style_for_viewport(
         &[&document_element],
         &rules,
@@ -272,15 +276,20 @@ pub fn import_html_with_resources(
     );
     let document_display_none = document_style.get("display") == Some("none");
     let root_font_size = document_style.font_size;
-    let body_path = [&document_element, body];
-    let body_style = css::cascade::compute_style_for_viewport(
-        &body_path,
-        &rules,
-        Some(&document_style),
-        root_font_size,
-        opts.viewport_width,
-        viewport_height,
-    );
+    let body_style = {
+        let dom::DomNode::Element(body) = &document_element.children[1] else {
+            unreachable!("the synthesized document chain always contains a body")
+        };
+        css::cascade::compute_style_for_viewport(
+            &[&document_element, body],
+            &rules,
+            Some(&document_style),
+            root_font_size,
+            opts.viewport_width,
+            viewport_height,
+        )
+    };
+    let body_display_none = document_display_none || body_style.get("display") == Some("none");
     let mapping_opts = HtmlImportOptions {
         viewport_width: opts.viewport_width,
         viewport_height: Some(viewport_height),
@@ -288,6 +297,24 @@ pub fn import_html_with_resources(
         document_name: opts.document_name.clone(),
         base_url: resource_base.clone(),
     };
+    let mut image_cache = resources::ImageResourceCache::default();
+    if !body_display_none {
+        resources::prefetch_image_metadata(
+            &mut document_element,
+            &mapping_opts,
+            &rules,
+            resource_base.as_deref(),
+            fetcher,
+            transform,
+            &mut budget,
+            &mut warnings,
+            &mut image_cache,
+        );
+    }
+    let dom::DomNode::Element(body) = &document_element.children[1] else {
+        unreachable!("the synthesized document chain always contains a body")
+    };
+    let body_path = [&document_element, body];
     let mut context = mapper::MapCtx {
         opts: &mapping_opts,
         rules: &rules,
@@ -349,7 +376,6 @@ pub fn import_html_with_resources(
     {
         base.explain = None;
     }
-    let body_display_none = document_display_none || body_style.get("display") == Some("none");
     if body_display_none {
         base.visible = Some(false);
     }
@@ -370,14 +396,22 @@ pub fn import_html_with_resources(
     let children = if body_display_none {
         Vec::new()
     } else {
-        let children = mapper::map_container_children(
+        let mapped = mapper::map_container_children(
             &mut context,
             &body_path,
             &body_style,
+            Some(&document_style),
             &body.children,
             text_fill_override.as_deref(),
         );
-        mapper::apply_flex_wrap(&mut context, &body_style, &mut container, children)
+        mapper::apply_root_margins(
+            &mut container,
+            &document_style,
+            &body_style,
+            mapped.collapsed,
+            &mut context,
+        );
+        mapper::apply_flex_wrap(&mut context, &body_style, &mut container, mapped.nodes)
     };
     let root = PenNode::Frame(FrameNode {
         base,
@@ -399,16 +433,17 @@ pub fn import_html_with_resources(
     warnings.extend(context.warnings);
     let mut nodes = vec![root];
     font_face::warn_undownloaded(&web_fonts, &nodes, &mut warnings);
-    if let Some(fetcher) = fetcher {
-        resources::embed_images(
-            &mut nodes,
-            resource_base.as_deref(),
-            fetcher,
-            transform,
-            &mut budget,
-            &mut warnings,
-        );
-    }
+    // This pass also reads intrinsic sizes from already-embedded data URLs,
+    // so it still has useful work when no network/project fetcher is present.
+    resources::embed_images(
+        &mut nodes,
+        resource_base.as_deref(),
+        fetcher,
+        transform,
+        &mut budget,
+        &mut warnings,
+        &mut image_cache,
+    );
     HtmlImportResult::new(nodes, warnings)
 }
 
@@ -483,8 +518,16 @@ fn solid_fill(color: &str) -> PenFill {
 }
 
 #[cfg(test)]
+#[path = "lib_document_tests.rs"]
+mod document_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
+
+    fn authored(node: &PenNode) -> &PenNode {
+        crate::mapper::unwrap_margin_node(node)
+    }
 
     #[test]
     fn empty_input_yields_no_nodes_and_a_warning() {
@@ -518,7 +561,7 @@ mod tests {
         let PenNode::Frame(root) = &r.nodes[0] else {
             panic!()
         };
-        let PenNode::Frame(p) = &root.children.as_ref().unwrap()[0] else {
+        let PenNode::Frame(p) = authored(&root.children.as_ref().unwrap()[0]) else {
             panic!()
         };
         let PenNode::Text(t) = &p.children.as_ref().unwrap()[0] else {
@@ -543,7 +586,7 @@ mod tests {
         let PenNode::Frame(root) = &result.nodes[0] else {
             panic!()
         };
-        let PenNode::Frame(paragraph) = &root.children.as_ref().unwrap()[0] else {
+        let PenNode::Frame(paragraph) = authored(&root.children.as_ref().unwrap()[0]) else {
             panic!()
         };
         let PenNode::Text(text) = &paragraph.children.as_ref().unwrap()[0] else {
@@ -668,118 +711,5 @@ mod tests {
                 .unwrap(),
             vec![0xff, 0xd8, 1]
         );
-    }
-
-    #[test]
-    fn e2e_document_wrapper_produces_pendocument() {
-        let r = import_html_document(
-            "<html><head><title>T</title></head><body><p>x</p></body></html>",
-            &HtmlImportOptions::default(),
-            None,
-            None,
-        );
-        assert_eq!(r.document.children.len(), 1);
-        assert_eq!(r.document.name.as_deref(), Some("T"));
-    }
-
-    #[test]
-    fn body_layout_base_styles_and_generated_content_reach_the_root() {
-        let result = import_html(
-            "<style>body::before{content:'before'}</style>\
-             <body style='display:block flex;flex-direction:row;opacity:.4;visibility:hidden;\
-                          background:#123456'><p>copy</p></body>",
-            &HtmlImportOptions::default(),
-        );
-        let PenNode::Frame(root) = &result.nodes[0] else {
-            panic!()
-        };
-        assert_eq!(
-            root.container.layout,
-            Some(jian_ops_schema::node::container::LayoutMode::Horizontal)
-        );
-        assert_eq!(root.base.visible, Some(false));
-        assert!(matches!(
-            root.base.opacity,
-            Some(jian_ops_schema::node::base::NumberOrExpression::Number(value))
-                if value == 0.4
-        ));
-        assert!(root
-            .children
-            .as_ref()
-            .is_some_and(|children| children.len() == 2));
-        assert!(matches!(
-            root.container.fill.as_deref(),
-            Some([PenFill::Solid(fill)]) if fill.color == "#123456"
-        ));
-    }
-
-    #[test]
-    fn document_root_styles_inherit_through_body_and_ancestor_selectors_match() {
-        let result = import_html(
-            "<style>\
-                html[data-theme=night]{--ink:#123456}\
-                :root{--copy-size:2rem}\
-                body{background:var(--ink)}\
-                html body p{color:var(--ink);font-size:var(--copy-size)}\
-             </style>\
-             <html data-theme=night style='font-size:20px'><body><p>copy</p></body></html>",
-            &HtmlImportOptions::default(),
-        );
-        let PenNode::Frame(root) = &result.nodes[0] else {
-            panic!()
-        };
-        assert!(matches!(
-            root.container.fill.as_deref(),
-            Some([PenFill::Solid(fill)]) if fill.color == "#123456"
-        ));
-        let PenNode::Frame(paragraph) = &root.children.as_ref().unwrap()[0] else {
-            panic!()
-        };
-        let PenNode::Text(text) = &paragraph.children.as_ref().unwrap()[0] else {
-            panic!()
-        };
-        assert_eq!(text.font_size, Some(40.0));
-        assert!(matches!(
-            text.fill.as_deref(),
-            Some([PenFill::Solid(fill)]) if fill.color == "#123456"
-        ));
-    }
-
-    #[test]
-    fn fragment_uses_the_generated_html_and_body_ancestor_chain() {
-        let result = import_html(
-            "<style>:root{--ink:#654321}html body > p{color:var(--ink)}</style><p>x</p>",
-            &HtmlImportOptions::default(),
-        );
-        let PenNode::Frame(root) = &result.nodes[0] else {
-            panic!()
-        };
-        let PenNode::Frame(paragraph) = &root.children.as_ref().unwrap()[0] else {
-            panic!()
-        };
-        let PenNode::Text(text) = &paragraph.children.as_ref().unwrap()[0] else {
-            panic!()
-        };
-        assert!(matches!(
-            text.fill.as_deref(),
-            Some([PenFill::Solid(fill)]) if fill.color == "#654321"
-        ));
-    }
-
-    #[test]
-    fn pathological_nesting_reports_depth_truncation() {
-        let mut html = String::from("<body>");
-        for _ in 0..300 {
-            html.push_str("<div>");
-        }
-        html.push('x');
-        for _ in 0..300 {
-            html.push_str("</div>");
-        }
-        let result = import_html(&html, &HtmlImportOptions::default());
-        assert!(result
-            .warnings
-            .iter()
-            .any(|warning| warning.contains("levels")));
     }
 }

@@ -19,6 +19,38 @@ fn box_and_logical_shorthands_expand() {
 }
 
 #[test]
+fn direction_rejects_invalid_literals_but_keeps_deferred_values() {
+    let declarations = parse_declarations(
+        "direction:rtl;direction:nonsense;direction:var(--direction);\
+         direction:'var(--not-a-function)'",
+    );
+    let directions: Vec<_> = declarations
+        .iter()
+        .filter(|declaration| declaration.name == "direction")
+        .map(|declaration| declaration.value.as_str())
+        .collect();
+    assert_eq!(directions, ["rtl", "var(--direction)"]);
+
+    for value in [
+        "LTR",
+        "rtl",
+        "inherit",
+        "initial",
+        "unset",
+        "revert",
+        "revert-layer",
+    ] {
+        assert_eq!(
+            get(
+                &parse_declarations(&format!("direction:{value}")),
+                "direction"
+            ),
+            Some(value)
+        );
+    }
+}
+
+#[test]
 fn borders_expand_per_side_reset_and_corner() {
     let declarations = parse_declarations(
         "border-left-width:3px; border:1px solid #123; border-radius:4px 8px / 2px",

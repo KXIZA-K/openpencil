@@ -332,6 +332,7 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "htmlImport.warn.layout.margins_on_visual_box_ignored" => {
             "Các lề CSS trên một hộp hiển thị đã bị bỏ qua."
         }
+        "htmlImport.warn.layout.inline_margin_wrapping_approximated" => "Phần tử nội tuyến có lề CSS đã được đóng hộp và có thể không còn xuống dòng.",
         "htmlImport.warn.layout.content_box_percentage_approximated" => {
             "Kích thước theo phần trăm của content-box đã được xấp xỉ."
         }
@@ -553,6 +554,9 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         }
         "htmlImport.warn.media.object_fit_none_ignored" => "CSS object-fit:none đã bị bỏ qua.",
         "htmlImport.warn.media.object_position_ignored" => "CSS object-position đã bị bỏ qua.",
+        "htmlImport.warn.media.image_intrinsic_axis_unresolved" => {
+            "Không thể dùng tỷ lệ khung hình nội tại của ảnh để xác định trục còn thiếu vì kích thước đã đặt là động hoặc khối chứa có kích thước không xác định."
+        }
         "htmlImport.warn.media.image_mix_blend_mode_unsupported" => {
             "Một CSS mix-blend-mode không được hỗ trợ trên ảnh đã bị bỏ qua."
         }

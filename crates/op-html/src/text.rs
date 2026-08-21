@@ -31,7 +31,7 @@ use style::{segment_style, sync_single_run_style};
 #[rustfmt::skip]
 pub fn is_inline_tag(tag: &str) -> bool {
     matches!(tag, "a" | "b" | "strong" | "i" | "em" | "u" | "s" | "del" | "strike"
-        | "span" | "code" | "small" | "sub" | "sup" | "label" | "br" | "mark")
+        | "span" | "code" | "small" | "sub" | "sup" | "label" | "br" | "mark" | "picture")
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -543,6 +543,12 @@ mod tests {
             0,
             crate::css::cascade::StyleOrigin::UserAgent,
         );
+        // These tests exercise text-run shaping, not browser default block
+        // spacing. Keep the authored nodes direct so margin-wrapper structure
+        // is covered only by the dedicated mapper margin tests.
+        let (reset_margins, _) =
+            crate::css::cascade::parse_stylesheet("p,h1,h2,h3,h4,h5,h6,ul,ol,hr{margin:0}", 999);
+        rules.extend(reset_margins);
         let (author, _) = crate::css::cascade::parse_stylesheet(css, 1000);
         rules.extend(author);
         let options = crate::HtmlImportOptions::default();

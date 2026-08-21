@@ -536,7 +536,9 @@ mod tests {
         let PenNode::Frame(root) = &result.nodes[0] else {
             panic!()
         };
-        let PenNode::Frame(list) = &root.children.as_ref().unwrap()[0] else {
+        let PenNode::Frame(list) =
+            crate::mapper::unwrap_margin_node(&root.children.as_ref().unwrap()[0])
+        else {
             panic!()
         };
         let PenNode::Frame(item) = &list.children.as_ref().unwrap()[0] else {

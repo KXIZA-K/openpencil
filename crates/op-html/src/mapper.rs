@@ -49,6 +49,18 @@ pub(crate) mod node_access;
 #[path = "mapper_offset.rs"]
 mod offset;
 
+#[path = "mapper_margin.rs"]
+mod margin;
+pub(crate) use margin::apply_root_margins;
+#[cfg(test)]
+pub(crate) use margin::authored_node as unwrap_margin_node;
+
+#[path = "mapper_item.rs"]
+mod item;
+
+#[path = "mapper_intrinsic.rs"]
+pub(crate) mod intrinsic;
+
 #[path = "mapper_wrap.rs"]
 mod wrap;
 pub(crate) use wrap::apply_flex_wrap;
@@ -62,6 +74,10 @@ mod table;
 #[cfg(test)]
 #[path = "mapper_position_tests.rs"]
 mod position_tests;
+
+#[cfg(test)]
+#[path = "mapper_margin_tests.rs"]
+mod margin_tests;
 
 pub struct MapCtx<'a> {
     pub opts: &'a HtmlImportOptions,
@@ -128,7 +144,8 @@ impl MapCtx<'_> {
 pub(crate) fn map_element_scoped(
     context: &mut MapCtx<'_>,
     path: &[&DomElement],
-    parent_style: Option<&ComputedStyle>,
+    inheritance_parent_style: Option<&ComputedStyle>,
+    layout_parent_style: Option<&ComputedStyle>,
     text_fill_override: Option<&str>,
 ) -> Option<PenNode> {
     if context.node_count >= crate::MAX_OUTPUT_NODES {
@@ -139,7 +156,7 @@ pub(crate) fn map_element_scoped(
     let style = compute_style_for_viewport(
         path,
         context.rules,
-        parent_style,
+        inheritance_parent_style,
         context.opts.base_font_size,
         context.opts.viewport_width,
         context.opts.viewport_height(),
@@ -176,7 +193,16 @@ pub(crate) fn map_element_scoped(
         // flow: grid placement, in-flow offsets and auto-margin alignment all
         // apply to them exactly as they do to a mapped frame.
         let outcome = std::mem::take(&mut context.pending_base_outcome);
-        let node = mapped.map(|node| finish_leaf(context, node, &style, parent_style, outcome));
+        let node = mapped.map(|node| {
+            item::finish_leaf(
+                context,
+                node,
+                &element.tag,
+                &style,
+                layout_parent_style,
+                outcome,
+            )
+        });
         context.containing_width = previous_containing.0;
         context.containing_height = previous_containing.1;
         context.containing_width_is_definite = previous_width_is_definite;
@@ -210,8 +236,17 @@ pub(crate) fn map_element_scoped(
     layout_heuristics::apply_sizing_defaults(
         &mut container,
         &style,
-        parent_style,
+        layout_parent_style,
         context.containing_width_is_definite,
+        layout_heuristics::is_inline_level(&style)
+            || (style.get("display").is_none()
+                && crate::text::is_inline_tag(&element.tag)
+                && !layout_parent_style.is_some_and(|parent| {
+                    matches!(
+                        parent.get("display"),
+                        Some("flex" | "inline-flex" | "grid" | "inline-grid")
+                    )
+                })),
     );
     layout_heuristics::apply_aspect_ratio(&mut container, &style, context);
     layout_heuristics::apply_legacy_size_limits(
@@ -228,8 +263,15 @@ pub(crate) fn map_element_scoped(
         ..Default::default()
     };
     let outcome = apply_base_style_with_box(&mut base, &style, context, Some(&mut container));
-    record_parent_hints(&mut base, &style, parent_style, context);
-    table::record_cell_span(&mut base, element, path, &style, parent_style, context);
+    item::record_parent_hints(&mut base, &style, layout_parent_style, context);
+    table::record_cell_span(
+        &mut base,
+        element,
+        path,
+        &style,
+        layout_parent_style,
+        context,
+    );
     context.containing_width_is_definite = layout_heuristics::width_is_definite(
         container.width.as_ref(),
         context.containing_width_is_definite,
@@ -252,8 +294,15 @@ pub(crate) fn map_element_scoped(
     }
     let previous_auto_margin = context.auto_margin_handled_by_parent;
     context.auto_margin_handled_by_parent = children_centered_by_auto_margins;
-    let children =
-        map_container_children(context, path, &style, &element.children, text_fill_override);
+    let mapped_children = map_container_children(
+        context,
+        path,
+        &style,
+        layout_parent_style,
+        &element.children,
+        text_fill_override,
+    );
+    let children = mapped_children.nodes;
     let children = wrap::apply_flex_wrap(context, &style, &mut container, children);
     // Runs before the containing block is restored: the column widths are
     // measured against the table's own used width. That width is only real
@@ -266,6 +315,7 @@ pub(crate) fn map_element_scoped(
             .and_then(|value| map_sizing(value, style.font_size, context.opts, parent_reference.0))
             .is_some();
     let children = table::finish_table(context, path, &style, table_width_is_definite, children);
+    intrinsic::promote_single_image_size(&mut container, &children);
     context.auto_margin_handled_by_parent = previous_auto_margin;
     context.containing_width = previous_containing.0;
     context.containing_height = previous_containing.1;
@@ -278,111 +328,21 @@ pub(crate) fn map_element_scoped(
         outcome.flow_offset,
         outcome.reserved_box,
     );
-    Some(align_by_auto_margins(
+    let node = item::align_by_auto_margins(
         context,
         node,
         &style,
-        parent_style,
+        layout_parent_style,
         previous_auto_margin,
-    ))
-}
-
-fn parent_is_grid(parent_style: Option<&ComputedStyle>) -> bool {
-    parent_style.is_some_and(|parent| matches!(parent.get("display"), Some("grid" | "inline-grid")))
-}
-
-/// Facts only the child's own computed style knows, stashed on the child so
-/// the parent's post-pass can read them back. Both carriers live under private
-/// keys in `PenNodeBase::theme` and are always stripped by that post-pass.
-fn record_parent_hints(
-    base: &mut PenNodeBase,
-    style: &ComputedStyle,
-    parent_style: Option<&ComputedStyle>,
-    context: &mut MapCtx<'_>,
-) {
-    if parent_is_grid(parent_style) {
-        grid_place::record_placement(base, style, context);
-    }
-    if parent_style.is_some_and(wrap::is_wrapping_flex_row) {
-        wrap::record_inline_margins(base, style, context);
-    }
-}
-
-/// The in-flow post-passes an ordinary element gets after its subtree is
-/// mapped, applied to a replaced element (`<img>`, form controls, `<hr>`, …).
-/// Those are leaves rather than frames, but every helper here reaches the node
-/// through `node_access`, so the variant does not matter.
-fn finish_leaf(
-    context: &mut MapCtx<'_>,
-    mut node: PenNode,
-    style: &ComputedStyle,
-    parent_style: Option<&ComputedStyle>,
-    outcome: BaseStyleOutcome,
-) -> PenNode {
-    record_parent_hints(
-        node_access::node_base_mut(&mut node),
-        style,
-        parent_style,
-        context,
     );
-    let node = offset::wrap_offset(context, node, outcome.flow_offset, outcome.reserved_box);
-    let handled_by_parent = context.auto_margin_handled_by_parent;
-    align_by_auto_margins(context, node, style, parent_style, handled_by_parent)
-}
-
-/// CSS `margin-left/right: auto` on a single flow child. The schema has no
-/// `align-self`, so the child moves into a full-width row that reproduces the
-/// push (see `mapper_offset`). Skipped when the parent's own `align-items`
-/// already produces that placement, when the box is inline-level (CSS makes
-/// inline auto margins inert), or when the element is out of flow.
-fn align_by_auto_margins(
-    context: &mut MapCtx<'_>,
-    node: PenNode,
-    style: &ComputedStyle,
-    parent_style: Option<&ComputedStyle>,
-    handled_by_parent: bool,
-) -> PenNode {
-    if handled_by_parent
-        || matches!(style.get("position"), Some("absolute" | "fixed"))
-        || layout_heuristics::is_inline_level(style)
-        || !offset::parent_accepts_alignment_row(parent_style)
-    {
-        return node;
-    }
-    match offset::auto_margin_align(style, context) {
-        Some(align) if !parent_align_covers(parent_style, align) => {
-            offset::wrap_auto_margin(context, node, align)
-        }
-        _ => node,
-    }
-}
-
-/// A vertically stacking parent applies `align-items` on the inline axis, so a
-/// child whose auto margins ask for that same placement is already there and
-/// the extra alignment row would only add a node. A horizontal parent aligns
-/// on the block axis instead, so its `align-items` says nothing about this.
-fn parent_align_covers(
-    parent_style: Option<&ComputedStyle>,
-    align: offset::AutoMarginAlign,
-) -> bool {
-    let Some(parent) = parent_style else {
-        return false;
-    };
-    if layout_heuristics::layout_for(parent) == LayoutMode::Horizontal {
-        return false;
-    }
-    let Some(items) = parent.get("align-items").map(str::trim) else {
-        return false;
-    };
-    match align {
-        offset::AutoMarginAlign::Center => items.eq_ignore_ascii_case("center"),
-        offset::AutoMarginAlign::Start => {
-            matches!(items.to_ascii_lowercase().as_str(), "flex-start" | "start")
-        }
-        offset::AutoMarginAlign::End => {
-            matches!(items.to_ascii_lowercase().as_str(), "flex-end" | "end")
-        }
-    }
+    Some(margin::wrap_margins(
+        context,
+        node,
+        &element.tag,
+        &style,
+        layout_parent_style,
+        mapped_children.collapsed,
+    ))
 }
 
 pub(crate) fn layer_positioned_children(children: Vec<PenNode>) -> Vec<PenNode> {
@@ -517,12 +477,7 @@ fn container_props_from_impl(
     );
     let stroke = visual::map_stroke(style, context);
     let effects = visual::map_effects(style, context);
-    let padding = box_model::map_padding(
-        style,
-        context,
-        border_widths,
-        fill.is_some() || stroke.is_some() || effects.is_some() || border_widths != [0.0; 4],
-    );
+    let padding = box_model::map_padding(style, context, border_widths);
     let mut container = ContainerProps {
         width,
         height,
@@ -609,7 +564,15 @@ pub(crate) fn apply_base_style_with_box(
             base.rotation = Some(bake.rotation_degrees);
         }
     }
-    layout_heuristics::apply_position(base, style, context);
+    layout_heuristics::apply_position(
+        base,
+        style,
+        context,
+        (
+            definite.0.then_some(own_width),
+            definite.1.then_some(own_height),
+        ),
+    );
     let out_of_flow = matches!(style.get("position"), Some("absolute" | "fixed"));
     let mut flow_offset = layout_heuristics::relative_offset(style, context);
     if let Some(bake) = &bake {

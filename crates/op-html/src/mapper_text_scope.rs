@@ -16,7 +16,7 @@ pub fn map_element(
     path: &[&DomElement],
     parent_style: Option<&ComputedStyle>,
 ) -> Option<PenNode> {
-    super::map_element_scoped(context, path, parent_style, None)
+    super::map_element_scoped(context, path, parent_style, parent_style, None)
 }
 
 /// Public compatibility entry point for callers that only need box mapping.
@@ -49,11 +49,13 @@ pub(crate) fn map_container_children(
     context: &mut MapCtx<'_>,
     path: &[&DomElement],
     style: &ComputedStyle,
+    parent_style: Option<&ComputedStyle>,
     dom_children: &[DomNode],
     text_fill_override: Option<&str>,
-) -> Vec<PenNode> {
+) -> MappedChildren {
     let mut children =
         crate::text::map_children(context, path, style, dom_children, text_fill_override);
+    let collapsed = super::margin::finish_children(context, style, parent_style, &mut children);
     if matches!(
         style.get("flex-direction"),
         Some("row-reverse" | "column-reverse")
@@ -61,7 +63,15 @@ pub(crate) fn map_container_children(
         children.reverse();
     }
     children = super::stack::layer_absolute_children(children);
-    super::grid::wrap_grid_rows(context, style, children)
+    MappedChildren {
+        nodes: super::grid::wrap_grid_rows(context, style, children),
+        collapsed,
+    }
+}
+
+pub(crate) struct MappedChildren {
+    pub nodes: Vec<PenNode>,
+    pub collapsed: super::margin::CollapsedMargins,
 }
 
 pub(crate) fn subtree_allows_text_clip_transfer(

@@ -93,10 +93,26 @@ pub(crate) fn map_children<'a, 's>(
         &mut state,
         path,
         block_style,
+        block_style,
         PseudoElement::Before,
     );
-    map_dom_children(context, &mut state, path, block_style, dom_children, false);
-    map_pseudo_into_context(context, &mut state, path, block_style, PseudoElement::After);
+    map_dom_children(
+        context,
+        &mut state,
+        path,
+        block_style,
+        block_style,
+        dom_children,
+        false,
+    );
+    map_pseudo_into_context(
+        context,
+        &mut state,
+        path,
+        block_style,
+        block_style,
+        PseudoElement::After,
+    );
     state.finish(context);
     state.nodes
 }
@@ -106,6 +122,7 @@ fn map_dom_children<'a>(
     state: &mut InlineMapState<'a, '_>,
     parent_path: &[&'a DomElement],
     parent_style: &ComputedStyle,
+    layout_parent_style: &ComputedStyle,
     dom_children: &'a [DomNode],
     nested: bool,
 ) {
@@ -141,6 +158,7 @@ fn map_dom_children<'a>(
                 state,
                 &child_path,
                 &child_style,
+                layout_parent_style,
                 PseudoElement::Before,
             );
             map_dom_children(
@@ -148,6 +166,7 @@ fn map_dom_children<'a>(
                 state,
                 &child_path,
                 &child_style,
+                layout_parent_style,
                 &element.children,
                 true,
             );
@@ -156,6 +175,7 @@ fn map_dom_children<'a>(
                 state,
                 &child_path,
                 &child_style,
+                layout_parent_style,
                 PseudoElement::After,
             );
             continue;
@@ -168,6 +188,7 @@ fn map_dom_children<'a>(
                 context,
                 &child_path,
                 Some(parent_style),
+                Some(layout_parent_style),
                 state.text_fill_override,
             ) {
                 state.inline_nodes.push(node);
@@ -196,6 +217,7 @@ fn map_dom_children<'a>(
                 context,
                 &child_path,
                 Some(parent_style),
+                Some(layout_parent_style),
                 state.text_fill_override,
             ) {
                 state.nodes.push(node);
@@ -209,11 +231,17 @@ fn map_pseudo_into_context(
     state: &mut InlineMapState<'_, '_>,
     path: &[&DomElement],
     style: &ComputedStyle,
+    layout_parent_style: &ComputedStyle,
     pseudo: PseudoElement,
 ) {
-    let Some(mapped) =
-        crate::mapper::pseudo::map_pseudo(context, path, style, pseudo, state.text_fill_override)
-    else {
+    let Some(mapped) = crate::mapper::pseudo::map_pseudo(
+        context,
+        path,
+        style,
+        layout_parent_style,
+        pseudo,
+        state.text_fill_override,
+    ) else {
         return;
     };
     match mapped {
@@ -363,6 +391,7 @@ fn flush_run(
 }
 
 fn inline_row(id: String, children: Vec<PenNode>) -> PenNode {
+    let intrinsic = crate::mapper::intrinsic::single_image_outer_size(&children);
     PenNode::Frame(FrameNode {
         base: PenNodeBase {
             id,
@@ -370,8 +399,14 @@ fn inline_row(id: String, children: Vec<PenNode>) -> PenNode {
             ..Default::default()
         },
         container: ContainerProps {
-            width: Some(SizingBehavior::Keyword(SizingKeyword::FillContainer)),
-            height: Some(SizingBehavior::Keyword(SizingKeyword::FitContent)),
+            width: intrinsic
+                .width
+                .map(SizingBehavior::Number)
+                .or(Some(SizingBehavior::Keyword(SizingKeyword::FillContainer))),
+            height: intrinsic
+                .height
+                .map(SizingBehavior::Number)
+                .or(Some(SizingBehavior::Keyword(SizingKeyword::FitContent))),
             layout: Some(LayoutMode::Horizontal),
             align_items: Some(AlignItems::Center),
             ..Default::default()

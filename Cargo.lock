@@ -4401,6 +4401,7 @@ dependencies = [
  "html5ever",
  "jian-ops-schema",
  "markup5ever_rcdom",
+ "op-util",
  "serde_json",
  "url",
  "zip",
