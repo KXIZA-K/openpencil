@@ -599,9 +599,11 @@ require_literal 'sha512-XSxMosEEDO6vLxELAHVkwmhC0qe0ijZni2jB9Rcs8kQsW4lhTDQ/wMzm
 require_literal '"ovsx": ["ovsx@1.1.1"' "$bun_lock"
 require_literal 'sha512-tklsCzvGVWKlM91Vc9U8tNnaQ+XacPJ12SWHjDaHGUJB49oMhoAULsJGeefhHebPvvckbcWbKqKIXODMZah5SA==' "$bun_lock"
 
+# Baseline 1331: raised from 1326 for the ten-line desktop artifact map
+# comment (f11533d1e); bump deliberately, never to absorb new logic.
 line_count=$(wc -l < "$workflow" | tr -d '[:space:]')
-[[ "$line_count" -le 1326 ]] || {
-    printf 'error: Rust release workflow exceeds its 1326-line baseline\n' >&2
+[[ "$line_count" -le 1331 ]] || {
+    printf 'error: Rust release workflow exceeds its 1331-line baseline\n' >&2
     exit 1
 }
 
