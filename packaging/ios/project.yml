@@ -25,6 +25,10 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: tech.zseven.openpencil
         PRODUCT_NAME: OpenPencilPlayer
+        # Local-development fallbacks; the release pipeline overrides both on
+        # the xcodebuild command line.
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         IPHONEOS_DEPLOYMENT_TARGET: "15.0"
         TARGETED_DEVICE_FAMILY: "1,2"
@@ -63,6 +67,12 @@ targets:
     info:
       path: Info.plist
       properties:
+        # Explicit plist keys beat INFOPLIST_KEY_* injection, so version keys
+        # must resolve from the build settings the release pipeline overrides
+        # (MARKETING_VERSION / CURRENT_PROJECT_VERSION carry dev defaults in
+        # `settings` below).
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         # Third-party sign-in SDK plumbing. The Douyin callback scheme is the
         # client key by SDK convention; the Alipay scheme is app-chosen and
         # must match AlipayNativeSignIn.callbackScheme.

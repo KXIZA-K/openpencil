@@ -366,11 +366,16 @@ require "yaml"
 
 project = YAML.safe_load(File.read(ARGV.fetch(0)), aliases: true)
 target = project.fetch("targets").fetch("OpenPencilPlayer")
-scripts = target.fetch("preBuildScripts")
-raise "iOS project must have exactly one shell build phase" unless scripts.length == 1
-gate = scripts.fetch(0)
-raise "unexpected iOS shell build phase" unless gate.fetch("name") == "Validate optional op-auth archive"
-expected = <<~'SH'
+
+# Every shell phase in the release build is pinned verbatim: the vendored
+# sign-in SDK fetch, the optional auth-archive gate, and the Douyin resource
+# bundle copy. Any other phase — or any drift in these — fails the publish.
+fetch_sdks = <<~'SH'
+  if [ "${PLATFORM_NAME:-}" = "iphoneos" ]; then
+    bash "$SRCROOT/scripts/fetch-vendor-sdks.sh"
+  fi
+SH
+auth_gate = <<~'SH'
   if [ -n "${OP_AUTH_ARCHIVE:-}" ]; then
     case "${PLATFORM_NAME:-}" in
       iphoneos) export OP_AUTH_TARGET=aarch64-apple-ios ;;
@@ -380,12 +385,37 @@ expected = <<~'SH'
     bash "$SRCROOT/../../tools/check-mobile-auth-link-input.sh"
   fi
 SH
-raise "iOS auth build gate changed unexpectedly" unless gate.fetch("script") == expected
+copy_bundle = <<~'SH'
+  if [ "${PLATFORM_NAME:-}" = "iphoneos" ]; then
+    bundle="$SRCROOT/Vendor/DouyinOpenSDK.framework/Resources/DYOpenCore.bundle"
+    if [ -d "$bundle" ]; then
+      cp -R "$bundle" "${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/"
+    fi
+  fi
+SH
+
+expected_pre = [
+  ["Fetch vendored sign-in SDKs", fetch_sdks],
+  ["Validate optional op-auth archive", auth_gate],
+]
+pre = target.fetch("preBuildScripts")
+raise "iOS project must have exactly the reviewed pre-build phases" unless pre.length == expected_pre.length
+expected_pre.each_with_index do |(name, script), index|
+  phase = pre.fetch(index)
+  raise "unexpected iOS pre-build phase #{index}" unless phase.fetch("name") == name
+  raise "iOS pre-build phase #{name.inspect} changed unexpectedly" unless phase.fetch("script") == script
+end
+post = target.fetch("postCompileScripts")
+raise "iOS project must have exactly the reviewed post-compile phase" unless post.length == 1
+raise "unexpected iOS post-compile phase" unless post.fetch(0).fetch("name") == "Copy Douyin OpenSDK resource bundle"
+raise "iOS resource-copy phase changed unexpectedly" unless post.fetch(0).fetch("script") == copy_bundle
 
 pbx = File.read(ARGV.fetch(1))
-raise "generated project shell phase count changed" unless pbx.scan("isa = PBXShellScriptBuildPhase;").length == 1
-encoded = expected.gsub("\\", "\\\\").gsub('"', '\\"').gsub("\n", "\\n")
-raise "generated project does not contain the reviewed auth gate" unless pbx.include?("shellScript = \"#{encoded}\";")
+raise "generated project shell phase count changed" unless pbx.scan("isa = PBXShellScriptBuildPhase;").length == 3
+[fetch_sdks, auth_gate, copy_bundle].each do |script|
+  encoded = script.gsub("\\", "\\\\").gsub('"', '\\"').gsub("\n", "\\n")
+  raise "generated project does not contain a reviewed shell phase" unless pbx.include?("shellScript = \"#{encoded}\";")
+end
 RUBY
 
 certificate_path=$temp_dir/distribution.p12

@@ -657,10 +657,14 @@ while IFS= read -r source_file; do
             continue
             ;;
     esac
-    if printf '%s\n' "$cfg_test_external_sources" \
-        | grep -Fxq -- "$source_file"; then
-        continue
-    fi
+    # Exact-line containment without a pipeline: `printf | grep -q` races
+    # grep's early exit under pipefail — printf can take SIGPIPE after grep
+    # already matched, flipping this exemption to false intermittently.
+    case $'\n'"$cfg_test_external_sources"$'\n' in
+        *$'\n'"$source_file"$'\n'*)
+            continue
+            ;;
+    esac
     hits=$(awk '
         /^[[:space:]]*#!\[cfg\(test\)\][[:space:]]*$/ { exit }
 
