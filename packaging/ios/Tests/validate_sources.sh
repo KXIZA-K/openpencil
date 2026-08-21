@@ -8,6 +8,7 @@ fixture="$repo_dir/crates/op-editor-core/assets/scene_templates/daily-sign-card.
 
 required=(
   "$player_dir/OpenPencilPlayer-Bridging-Header.h"
+  "$player_dir/OpenPencilPlayer.entitlements"
   "$player_dir/project.yml"
   "$player_dir/README.md"
   "$player_dir/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png"
@@ -31,6 +32,7 @@ required=(
   "$player_dir/Sources/SsoProviderList.swift"
   "$player_dir/Sources/SsoRegion.swift"
   "$player_dir/Sources/PinchZoomDelta.swift"
+  "$player_dir/Sources/UniversalLink.swift"
 )
 
 for path in "${required[@]}"; do
@@ -41,6 +43,7 @@ for path in "${required[@]}"; do
 done
 
 plutil -lint \
+  "$player_dir/OpenPencilPlayer.entitlements" \
   "$player_dir/Resources/en.lproj/InfoPlist.strings" \
   "$player_dir/Resources/zh-Hans.lproj/InfoPlist.strings" >/dev/null
 grep -Fq '"NSLocalNetworkUsageDescription"' "$player_dir/Resources/en.lproj/InfoPlist.strings"
@@ -171,6 +174,8 @@ grep -Fq -- 'if editorMode && explicitDocName == nil' "$player_dir/Sources/OpEng
 grep -Fq -- 'document = Data()' "$player_dir/Sources/OpEngineHost.swift"
 grep -Fq -- 'let docName = explicitDocName ?? "ppt-demo"' "$player_dir/Sources/OpEngineHost.swift"
 grep -Fq -- '.ignoresSafeArea(.all, edges: .all)' "$player_dir/Sources/OpPlayerApp.swift"
+grep -Fq -- '.onOpenURL { url in' "$player_dir/Sources/OpPlayerApp.swift"
+grep -Fq -- 'UniversalLinkRouter.handle(url)' "$player_dir/Sources/OpPlayerApp.swift"
 grep -Fq -- 'viewportConvergence.signal' "$player_dir/Sources/OpPlayerView.swift"
 grep -Fq -- 'viewportConvergence.displayFrame' "$player_dir/Sources/OpPlayerView.swift"
 grep -Fq -- 'geometryGate.isPending || !suppressedTouches.isEmpty' "$player_dir/Sources/OpPlayerView.swift"
@@ -187,6 +192,19 @@ grep -Fq -- 'op_editor_begin_transform(engine' "$player_dir/Sources/OpEngineHost
 grep -Fq -- 'host.editorBeginTransform(x: lastMidpoint.x, y: lastMidpoint.y)' "$player_dir/Sources/OpPlayerView.swift"
 grep -Fq -- 'prefersLightIcons ? .dark : .light' "$player_dir/Sources/OpPlayerView.swift"
 grep -Fq -- 'window.overrideUserInterfaceStyle = systemChromeStyle' "$player_dir/Sources/OpPlayerView.swift"
+
+ruby - "$player_dir/OpenPencilPlayer.entitlements" <<'RUBY'
+source = File.read(ARGV.fetch(0))
+raise "Associated Domains entitlement missing" unless source.include?(
+  "<key>com.apple.developer.associated-domains</key>"
+)
+raise "canonical OpenPencil applinks domain missing" unless source.include?(
+  "<string>applinks:op.zseven.cn</string>"
+)
+raise "redirecting global domain must not be associated" if source.include?(
+  "applinks:op.zseven.tech"
+)
+RUBY
 
 ruby - "$player_dir/Sources/OpPlayerView.swift" <<'RUBY'
 source = File.read(ARGV.fetch(0))
@@ -324,6 +342,15 @@ xcrun swiftc \
   "$player_dir/Tests/DeviceLoginRequestInfoTests.swift" \
   -o "$device_login_test"
 "$device_login_test"
+
+universal_link_test="$reader_test_dir/universal-link-runner"
+xcrun swiftc \
+  -warnings-as-errors \
+  -parse-as-library \
+  "$player_dir/Sources/UniversalLink.swift" \
+  "$player_dir/Tests/UniversalLinkTests.swift" \
+  -o "$universal_link_test"
+"$universal_link_test"
 
 ruby "$player_dir/Tests/NativeLoginLifecycleTests.rb" \
   "$player_dir/Sources/OpPlayerView+Login.swift" \

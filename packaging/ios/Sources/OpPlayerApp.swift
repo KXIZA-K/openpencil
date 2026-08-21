@@ -12,9 +12,11 @@ struct OpenPencilPlayerApp: App {
             OpPlayerContainer()
                 .ignoresSafeArea(.all, edges: .all)
                 // Native provider sign-in SDKs (Douyin / Alipay) return via
-                // the app's URL schemes; forward every callback to them.
+                // the app's URL schemes; whatever they do not consume routes
+                // through the universal-link handler.
                 .onOpenURL { url in
-                    NativeProviderCallbacks.handle(url)
+                    if NativeProviderCallbacks.handle(url) { return }
+                    UniversalLinkRouter.handle(url)
                 }
         }
     }

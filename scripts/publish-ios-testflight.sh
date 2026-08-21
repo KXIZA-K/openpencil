@@ -437,6 +437,9 @@ if profile.get("ProvisionsAllDevices") is True:
 entitlements = profile.get("Entitlements", {})
 if entitlements.get("beta-reports-active") is not True:
     raise SystemExit("error: provisioning profile is not enabled for TestFlight beta reports")
+associated_domains = entitlements.get("com.apple.developer.associated-domains")
+if associated_domains not in (["*"], ["applinks:op.zseven.cn"]):
+    raise SystemExit("error: provisioning profile does not authorize the canonical associated domain")
 PY
 [[ "$profile_uuid" \
     =~ ^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$ \
@@ -603,6 +606,21 @@ if /usr/libexec/PlistBuddy \
     -c 'Print :com.apple.developer.networking.multicast' "$entitlements_path" \
     >/dev/null 2>&1; then
     printf 'error: the disabled discovery path must not request multicast entitlement\n' >&2
+    exit 1
+fi
+signed_associated_domain=$(
+    /usr/libexec/PlistBuddy \
+        -c 'Print :com.apple.developer.associated-domains:0' \
+        "$entitlements_path" 2>/dev/null || true
+)
+[[ "$signed_associated_domain" == applinks:op.zseven.cn ]] || {
+    printf 'error: archived app is missing the canonical associated domain\n' >&2
+    exit 1
+}
+if /usr/libexec/PlistBuddy \
+    -c 'Print :com.apple.developer.associated-domains:1' "$entitlements_path" \
+    >/dev/null 2>&1; then
+    printf 'error: archived app contains an unexpected associated domain\n' >&2
     exit 1
 fi
 codesign --verify --strict "$app_path"
