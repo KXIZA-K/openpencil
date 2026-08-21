@@ -55,7 +55,11 @@ targets:
         # (device only) and deliberately kept out of `dependencies`, which
         # the source contract reserves for the app's own frameworks.
         "FRAMEWORK_SEARCH_PATHS[sdk=iphoneos*]": "$(inherited) $(SRCROOT)/Vendor"
-        "OTHER_LDFLAGS[sdk=iphoneos*]": "$(inherited) -ObjC -framework DouyinOpenSDK -framework AFServiceSDK -framework WebKit -framework CoreData -framework SystemConfiguration -framework Network"
+        # -no_compact_unwind: the Rust engine, C++, ObjC, and the vendored
+        # SDKs' hidden copy contribute four unwind personality routines —
+        # one more than the compact-unwind format can encode — so device
+        # links fall back to DWARF unwind info.
+        "OTHER_LDFLAGS[sdk=iphoneos*]": "$(inherited) -ObjC -framework DouyinOpenSDK -framework AFServiceSDK -framework WebKit -framework CoreData -framework SystemConfiguration -framework Network -Wl,-no_compact_unwind"
       configs:
         Debug:
           "OP_ENGINE_ARCHIVE[sdk=iphoneos*]": "$(SRCROOT)/../../target/aarch64-apple-ios/debug/libop_engine_ffi.a"
