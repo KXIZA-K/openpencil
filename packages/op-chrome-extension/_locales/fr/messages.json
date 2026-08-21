@@ -4,7 +4,7 @@
     "description": "Extension name shown in Chrome."
   },
   "extDescription": {
-    "message": "Capturez la page telle qu’elle est rendue et importez-la dans OpenPencil sous forme de nœuds de design modifiables.",
+    "message": "Capturez les pages en nœuds de design OpenPencil modifiables et extrayez en un clic un guide de système de design design.md.",
     "description": "Extension description shown in Chrome."
   },
   "captureButton": {
@@ -15,6 +15,45 @@
   },
   "downloadButton": {
     "message": "Télécharger le .op"
+  },
+  "designButton": {
+    "message": "Extraire design.md"
+  },
+  "statusDesignWorking": {
+    "message": "Collecte d’éléments de style désidentifiés de la page et interrogation d’OpenPencil AI…"
+  },
+  "statusDesignSmartSuccess": {
+    "message": "design.md a été généré et téléchargé avec l’IA configurée."
+  },
+  "statusDesignFallbackSuccess": {
+    "message": "L’IA est indisponible ; design.md a été généré et téléchargé avec le repli local déterministe : $1"
+  },
+  "designFallbackPairing": {
+    "message": "OpenPencil n’a pas autorisé cette extension à utiliser la génération par IA ; le repli local a été utilisé."
+  },
+  "designFallbackOffline": {
+    "message": "OpenPencil à l’adresse $1 est inaccessible."
+  },
+  "designFallbackUnsupported": {
+    "message": "Cette version d’OpenPencil ne prend pas en charge la génération intelligente de design.md."
+  },
+  "designFallbackError": {
+    "message": "Échec de la génération intelligente : $1"
+  },
+  "designBusy": {
+    "message": "Une autre capture ou action design.md est déjà en cours."
+  },
+  "designEvidenceSummary": {
+    "message": "$1 éléments visibles ont été échantillonnés."
+  },
+  "designEvidenceTruncated": {
+    "message": "$1 éléments visibles ont été échantillonnés ; la collecte s’est arrêtée à sa limite de sécurité."
+  },
+  "designFallbackModel": {
+    "message": "Aucun modèle d’IA utilisable n’est configuré."
+  },
+  "errorDesign": {
+    "message": "Échec de la génération de design.md : $1"
   },
   "pickHint": {
     "message": "Cliquez sur un élément pour le capturer"
@@ -83,7 +122,7 @@
     "message": "La capture a été perdue pendant le transfert (la page a probablement changé). Réessayez."
   },
   "errorEndpoint": {
-    "message": "L’adresse doit être une adresse de bouclage avec un port — 127.0.0.1:3100, localhost:3100 ou [::1]:3100."
+    "message": "L’adresse doit être une adresse de bouclage avec un port — 127.0.0.1:3100 ou localhost:3100."
   },
   "errorOffline": {
     "message": "OpenPencil est injoignable à l’adresse $1. Lancez l’application de bureau et démarrez Paramètres → MCP → serveur, ou exécutez : openpencil-desktop --serve-web 3100"

@@ -5,7 +5,7 @@
 //! requests a fresh snapshot from the UI thread for each HTTP request,
 //! then sends write commands back for the UI thread to apply.
 
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::net::TcpListener;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, SyncSender, TryRecvError};
@@ -23,6 +23,7 @@ pub mod error;
 #[cfg(feature = "mcp-debug-tools")]
 pub mod screenshot;
 
+pub use design_md_route::{DesignMdResponder, DesignMdResponseError, PendingDesignMdRequest};
 pub use error::McpLiveError;
 
 /// Per-request budget for a UI-thread snapshot/apply ack. Sized to cover a
@@ -82,6 +83,10 @@ pub struct McpLiveServer {
     /// the previous one's tail animation. UI-thread-only (`pump` takes
     /// `&mut self`), so a plain field — no interior mutability needed.
     last_mcp_epoch: u64,
+    /// Validated extension evidence waiting for the desktop's asynchronous
+    /// provider worker. Kept separate from `EditorState`: this route neither
+    /// reads nor mutates the live document.
+    pending_design_md: VecDeque<PendingDesignMdRequest>,
 }
 
 struct ApplyAck {
@@ -138,6 +143,9 @@ enum UiRequest {
     UpdateEditorMeta {
         editor_meta: op_pen_loader::EditorMeta,
         ack: SyncSender<()>,
+    },
+    GenerateDesignMd {
+        request: PendingDesignMdRequest,
     },
     /// `debug_screenshot` against the LIVE canvas — the connection
     /// thread blocks on `ack` while the UI pump renders the active
@@ -209,6 +217,7 @@ impl McpLiveServer {
             stop_tx,
             client_identity,
             last_mcp_epoch: 0,
+            pending_design_md: VecDeque::new(),
         })
     }
 
@@ -317,6 +326,9 @@ impl McpLiveServer {
                     outcome.repaint = true;
                     outcome.layout_dirty = true;
                 }
+                Ok(UiRequest::GenerateDesignMd { request }) => {
+                    self.pending_design_md.push_back(request);
+                }
                 #[cfg(feature = "mcp-debug-tools")]
                 Ok(UiRequest::Screenshot { spec, ack }) => {
                     // Read-only render of the live state — no repaint needed.
@@ -327,6 +339,13 @@ impl McpLiveServer {
             }
         }
         outcome
+    }
+
+    /// Take the next extension design-analysis request for asynchronous
+    /// provider execution by the desktop host. At most one can exist globally,
+    /// but this queue-shaped API keeps the UI pump non-blocking.
+    pub fn take_pending_design_md_request(&mut self) -> Option<PendingDesignMdRequest> {
+        self.pending_design_md.pop_front()
     }
 
     pub fn stop(&mut self) {
@@ -465,6 +484,8 @@ fn command_invalidates_layout(cmd: &EditorCommand) -> bool {
 
 mod admission;
 mod connection;
+mod design_md_output;
+pub(crate) mod design_md_route;
 mod doc_sync;
 /// `pub(crate)` for two consts only: the shared HTTP parser
 /// (`mcp_serve::read_http_request`) has to recognise this route's path to

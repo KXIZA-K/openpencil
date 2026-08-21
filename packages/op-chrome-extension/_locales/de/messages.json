@@ -4,7 +4,7 @@
     "description": "Extension name shown in Chrome."
   },
   "extDescription": {
-    "message": "Erfasst die gerenderte Seite und importiert sie als bearbeitbare Design-Knoten in OpenPencil.",
+    "message": "Erfasst Seiten als bearbeitbare Designknoten in OpenPencil und extrahiert mit einem Klick einen design.md-Designsystem-Leitfaden.",
     "description": "Extension description shown in Chrome."
   },
   "captureButton": {
@@ -15,6 +15,45 @@
   },
   "downloadButton": {
     "message": ".op herunterladen"
+  },
+  "designButton": {
+    "message": "design.md extrahieren"
+  },
+  "statusDesignWorking": {
+    "message": "De-identifizierte Stilmerkmale der Seite werden erfasst und an OpenPencil AI gesendet…"
+  },
+  "statusDesignSmartSuccess": {
+    "message": "design.md wurde mit der konfigurierten KI erstellt und heruntergeladen."
+  },
+  "statusDesignFallbackSuccess": {
+    "message": "KI nicht verfügbar. design.md wurde mit dem deterministischen lokalen Fallback erstellt und heruntergeladen: $1"
+  },
+  "designFallbackPairing": {
+    "message": "OpenPencil hat diese Erweiterung nicht für die KI-Generierung autorisiert; der lokale Fallback wurde verwendet."
+  },
+  "designFallbackOffline": {
+    "message": "OpenPencil unter $1 ist nicht erreichbar."
+  },
+  "designFallbackUnsupported": {
+    "message": "Diese OpenPencil-Version unterstützt die intelligente Generierung von design.md nicht."
+  },
+  "designFallbackError": {
+    "message": "Intelligente Generierung fehlgeschlagen: $1"
+  },
+  "designBusy": {
+    "message": "Eine andere Erfassung oder design.md-Aktion wird bereits ausgeführt."
+  },
+  "designEvidenceSummary": {
+    "message": "$1 sichtbare Elemente wurden erfasst."
+  },
+  "designEvidenceTruncated": {
+    "message": "$1 sichtbare Elemente wurden erfasst; die Erfassung wurde am Sicherheitslimit beendet."
+  },
+  "designFallbackModel": {
+    "message": "Es ist kein verwendbares KI-Modell konfiguriert."
+  },
+  "errorDesign": {
+    "message": "design.md konnte nicht erstellt werden: $1"
   },
   "pickHint": {
     "message": "Klicke auf ein Element, um es zu erfassen"
@@ -83,7 +122,7 @@
     "message": "Die erfasste Momentaufnahme ging während der Übertragung verloren (die Seite hat vermutlich navigiert). Versuche es erneut."
   },
   "errorEndpoint": {
-    "message": "Die Adresse muss eine Loopback-Adresse mit Port sein — 127.0.0.1:3100, localhost:3100 oder [::1]:3100."
+    "message": "Die Adresse muss eine Loopback-Adresse mit Port sein — 127.0.0.1:3100 oder localhost:3100."
   },
   "errorOffline": {
     "message": "OpenPencil ist unter $1 nicht erreichbar. Starte die Desktop-App und schalte Einstellungen → MCP → Server ein, oder führe aus: openpencil-desktop --serve-web 3100"

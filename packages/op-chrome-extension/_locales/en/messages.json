@@ -4,7 +4,7 @@
     "description": "Extension name shown in Chrome."
   },
   "extDescription": {
-    "message": "Capture the rendered page and import it into OpenPencil as editable design nodes.",
+    "message": "Capture pages as editable OpenPencil design nodes and extract a design.md design-system guide in one click.",
     "description": "Extension description shown in Chrome."
   },
   "captureButton": {
@@ -15,6 +15,45 @@
   },
   "downloadButton": {
     "message": "Download .op"
+  },
+  "designButton": {
+    "message": "Extract design.md"
+  },
+  "statusDesignWorking": {
+    "message": "Collecting de-identified page style evidence and asking OpenPencil AI…"
+  },
+  "statusDesignSmartSuccess": {
+    "message": "Generated and downloaded design.md with the configured AI."
+  },
+  "statusDesignFallbackSuccess": {
+    "message": "AI unavailable; generated and downloaded design.md with the deterministic local fallback: $1"
+  },
+  "designFallbackPairing": {
+    "message": "OpenPencil has not authorized this extension for AI generation; the local fallback was used."
+  },
+  "designFallbackOffline": {
+    "message": "OpenPencil at $1 is unreachable."
+  },
+  "designFallbackUnsupported": {
+    "message": "This OpenPencil version does not support smart design.md generation."
+  },
+  "designFallbackError": {
+    "message": "Smart generation failed: $1"
+  },
+  "designBusy": {
+    "message": "Another capture or design.md action is already running."
+  },
+  "designEvidenceSummary": {
+    "message": "Sampled $1 visible elements."
+  },
+  "designEvidenceTruncated": {
+    "message": "Sampled $1 visible elements; the collector stopped at its safety limit."
+  },
+  "designFallbackModel": {
+    "message": "No usable AI model is configured."
+  },
+  "errorDesign": {
+    "message": "Failed to generate design.md: $1"
   },
   "pickHint": {
     "message": "Click an element to capture it"
@@ -83,7 +122,7 @@
     "message": "The captured snapshot was lost mid-transfer (the page probably navigated). Try again."
   },
   "errorEndpoint": {
-    "message": "Endpoint must be loopback with a port — 127.0.0.1:3100, localhost:3100, or [::1]:3100."
+    "message": "Endpoint must be loopback with a port — 127.0.0.1:3100 or localhost:3100."
   },
   "errorOffline": {
     "message": "OpenPencil is not reachable at $1. Launch the desktop app and start Settings → MCP → server, or run: openpencil-desktop --serve-web 3100"

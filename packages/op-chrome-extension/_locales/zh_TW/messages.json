@@ -4,7 +4,7 @@
     "description": "Extension name shown in Chrome."
   },
   "extDescription": {
-    "message": "擷取網頁算繪後的實際樣貌，並以可編輯的設計節點匯入 OpenPencil。",
+    "message": "擷取網頁算繪後的實際樣貌，以可編輯的設計節點匯入 OpenPencil，並一鍵擷取 design.md 設計系統指南。",
     "description": "Extension description shown in Chrome."
   },
   "captureButton": {
@@ -15,6 +15,45 @@
   },
   "downloadButton": {
     "message": "下載 .op"
+  },
+  "designButton": {
+    "message": "擷取 design.md"
+  },
+  "statusDesignWorking": {
+    "message": "正在收集去識別化的頁面樣式證據並請求 OpenPencil AI…"
+  },
+  "statusDesignSmartSuccess": {
+    "message": "已使用設定的 AI 產生並下載 design.md。"
+  },
+  "statusDesignFallbackSuccess": {
+    "message": "AI 無法使用，已透過本機確定性備援產生並下載 design.md：$1"
+  },
+  "designFallbackPairing": {
+    "message": "OpenPencil 尚未授權此擴充功能使用 AI 產生；已使用本機備援。"
+  },
+  "designFallbackOffline": {
+    "message": "無法存取位於 $1 的 OpenPencil。"
+  },
+  "designFallbackUnsupported": {
+    "message": "目前的 OpenPencil 版本不支援智慧產生 design.md。"
+  },
+  "designFallbackError": {
+    "message": "智慧產生失敗：$1"
+  },
+  "designBusy": {
+    "message": "另一個擷取或 design.md 操作正在執行。"
+  },
+  "designEvidenceSummary": {
+    "message": "已取樣 $1 個可見元素。"
+  },
+  "designEvidenceTruncated": {
+    "message": "已取樣 $1 個可見元素；收集器已在安全上限處停止。"
+  },
+  "designFallbackModel": {
+    "message": "沒有可用且已設定的 AI 模型。"
+  },
+  "errorDesign": {
+    "message": "產生 design.md 失敗：$1"
   },
   "pickHint": {
     "message": "點選要擷取的元素"
@@ -83,7 +122,7 @@
     "message": "快照在傳輸途中遺失（頁面可能已跳轉）。請再試一次。"
   },
   "errorEndpoint": {
-    "message": "位址必須是本機回送位址加連接埠——127.0.0.1:3100、localhost:3100 或 [::1]:3100。"
+    "message": "位址必須是本機回送位址加連接埠——127.0.0.1:3100 或 localhost:3100。"
   },
   "errorOffline": {
     "message": "無法連線到 $1。請啟動 OpenPencil 桌面版並在 設定 → MCP 中啟動伺服器，或執行：openpencil-desktop --serve-web 3100"

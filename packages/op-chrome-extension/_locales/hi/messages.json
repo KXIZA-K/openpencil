@@ -4,7 +4,7 @@
     "description": "Extension name shown in Chrome."
   },
   "extDescription": {
-    "message": "रेंडर हो चुके पेज को कैप्चर करें और उसे संपादन योग्य डिज़ाइन नोड्स के रूप में OpenPencil में आयात करें।",
+    "message": "पेज कैप्चर करके OpenPencil में संपादन योग्य डिज़ाइन नोड्स के रूप में आयात करें और एक क्लिक में design.md गाइड निकालें।",
     "description": "Extension description shown in Chrome."
   },
   "captureButton": {
@@ -15,6 +15,45 @@
   },
   "downloadButton": {
     "message": ".op डाउनलोड करें"
+  },
+  "designButton": {
+    "message": "design.md निकालें"
+  },
+  "statusDesignWorking": {
+    "message": "पेज के पहचान-रहित शैली प्रमाण एकत्र कर OpenPencil AI से अनुरोध किया जा रहा है…"
+  },
+  "statusDesignSmartSuccess": {
+    "message": "कॉन्फ़िगर किए गए AI से design.md जनरेट और डाउनलोड किया गया।"
+  },
+  "statusDesignFallbackSuccess": {
+    "message": "AI उपलब्ध नहीं है; निश्चित स्थानीय फ़ॉलबैक से design.md जनरेट और डाउनलोड किया गया: $1"
+  },
+  "designFallbackPairing": {
+    "message": "OpenPencil ने इस एक्सटेंशन को AI जनरेशन के लिए अधिकृत नहीं किया है; स्थानीय फ़ॉलबैक का उपयोग किया गया।"
+  },
+  "designFallbackOffline": {
+    "message": "$1 पर OpenPencil उपलब्ध नहीं है।"
+  },
+  "designFallbackUnsupported": {
+    "message": "OpenPencil का यह संस्करण स्मार्ट design.md जनरेशन का समर्थन नहीं करता।"
+  },
+  "designFallbackError": {
+    "message": "स्मार्ट जनरेशन विफल हुआ: $1"
+  },
+  "designBusy": {
+    "message": "कोई अन्य कैप्चर या design.md कार्रवाई पहले से चल रही है।"
+  },
+  "designEvidenceSummary": {
+    "message": "$1 दृश्यमान एलिमेंट के नमूने लिए गए।"
+  },
+  "designEvidenceTruncated": {
+    "message": "$1 दृश्यमान एलिमेंट के नमूने लिए गए; कलेक्टर अपनी सुरक्षा सीमा पर रुक गया।"
+  },
+  "designFallbackModel": {
+    "message": "कोई उपयोग योग्य AI मॉडल कॉन्फ़िगर नहीं है।"
+  },
+  "errorDesign": {
+    "message": "design.md जनरेट नहीं हो सका: $1"
   },
   "pickHint": {
     "message": "कैप्चर करने के लिए किसी एलिमेंट पर क्लिक करें"
@@ -83,7 +122,7 @@
     "message": "कैप्चर किया गया स्नैपशॉट भेजते समय खो गया (पेज संभवतः बदल गया)। फिर से कोशिश करें।"
   },
   "errorEndpoint": {
-    "message": "पता पोर्ट सहित लूपबैक होना चाहिए — 127.0.0.1:3100, localhost:3100 या [::1]:3100।"
+    "message": "पता पोर्ट सहित लूपबैक होना चाहिए — 127.0.0.1:3100 या localhost:3100।"
   },
   "errorOffline": {
     "message": "$1 पर OpenPencil तक नहीं पहुँचा जा सका। डेस्कटॉप ऐप शुरू करें और सेटिंग्स → MCP → सर्वर चालू करें, या यह चलाएँ: openpencil-desktop --serve-web 3100"

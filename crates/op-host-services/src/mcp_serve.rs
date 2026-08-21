@@ -440,18 +440,24 @@ pub fn read_http_request<S: std::io::Read>(stream: &mut S) -> Result<HttpRequest
     // boundary mid-slice; that panic would also bypass the live server's
     // connection-count decrement. A malformed length falls back to 0 (empty
     // body) rather than erroring.
-    let declared_length = headers.lines().find_map(|l| {
-        let (name, value) = l.trim().split_once(':')?;
-        name.eq_ignore_ascii_case("content-length")
-            .then(|| value.trim().parse::<usize>().ok())
-            .flatten()
-    });
+    let content_length_values: Vec<&str> = headers
+        .lines()
+        .skip(1)
+        .filter_map(|line| {
+            let (name, value) = line.trim().split_once(':')?;
+            name.eq_ignore_ascii_case("content-length")
+                .then_some(value.trim())
+        })
+        .collect();
+    let declared_length = content_length_values
+        .iter()
+        .find_map(|value| value.parse::<usize>().ok());
     let content_length = declared_length.unwrap_or(0);
-    // The live endpoint's browser-extension snapshot ingress is the one
-    // body-carrying route reachable WITHOUT the per-instance token, so it
-    // caps its body far below the endpoint-wide `MAX_BODY` — and does it
-    // here, before a single body byte is read, so an untokened caller
-    // cannot make this process buffer 64 MiB. See
+    // Browser-extension snapshot ingress is the large body-carrying scoped
+    // route, so it caps its body far below the endpoint-wide `MAX_BODY` — and
+    // does it here, before a single body byte is read, so an untokened caller
+    // cannot make this process buffer 64 MiB. The separate design-evidence
+    // route receives its own smaller cap below. See
     // `mcp_live::snapshot_ingest::MAX_SNAPSHOT_BODY`.
     if method == "POST" && path == crate::mcp_live::snapshot_ingest::SNAPSHOT_INGEST_PATH {
         let limit = crate::mcp_live::snapshot_ingest::MAX_SNAPSHOT_BODY;
@@ -473,6 +479,44 @@ pub fn read_http_request<S: std::io::Read>(stream: &mut S) -> Result<HttpRequest
                 })
             }
             Some(_) => {}
+        }
+    }
+    // Intelligent design extraction is extension-reachable and must never
+    // inherit the endpoint-wide 64 MiB body budget. Require one canonical
+    // decimal Content-Length and reject above 256 KiB before reading bytes.
+    if crate::mcp_live::design_md_route::is_design_md_path(&path) {
+        let limit = crate::design_md_evidence::MAX_DESIGN_MD_EVIDENCE_BYTES;
+        if content_length > limit {
+            return Err(McpServeError::Framing {
+                status: "413 Payload Too Large",
+                message: "design.md evidence body exceeds 256 KiB".into(),
+            });
+        }
+        let starts_job =
+            method == "POST" && path == crate::mcp_live::design_md_route::DESIGN_MD_PATH;
+        if !starts_job && content_length > 0 {
+            return Err(McpServeError::Framing {
+                status: "400 Bad Request",
+                message: "non-POST design.md requests must not carry a body".into(),
+            });
+        }
+    }
+    if method == "POST" && path == crate::mcp_live::design_md_route::DESIGN_MD_PATH {
+        let valid_single_length = content_length_values.len() == 1
+            && !content_length_values[0].is_empty()
+            && content_length_values[0]
+                .bytes()
+                .all(|byte| byte.is_ascii_digit())
+            && declared_length.is_some();
+        if !valid_single_length {
+            return Err(McpServeError::Framing {
+                status: if content_length_values.is_empty() {
+                    "411 Length Required"
+                } else {
+                    "400 Bad Request"
+                },
+                message: "design.md evidence requires one valid Content-Length header".into(),
+            });
         }
     }
     let credential_body_label = match path.as_str() {
@@ -498,6 +542,23 @@ pub fn read_http_request<S: std::io::Read>(stream: &mut S) -> Result<HttpRequest
     let origin = header_value("origin");
     let token = header_value("x-openpencil-token");
     let content_type = header_value("content-type");
+    if method == "POST" && path == crate::mcp_live::design_md_route::DESIGN_MD_PATH {
+        let content_type_count = headers
+            .lines()
+            .skip(1)
+            .filter(|line| {
+                line.trim()
+                    .split_once(':')
+                    .is_some_and(|(name, _)| name.eq_ignore_ascii_case("content-type"))
+            })
+            .count();
+        if content_type_count > 1 {
+            return Err(McpServeError::Framing {
+                status: "400 Bad Request",
+                message: "design.md evidence accepts only one Content-Type header".into(),
+            });
+        }
+    }
     let authorization = header_value("authorization");
     let cookie = header_value("cookie");
     if content_length > MAX_BODY {
@@ -524,10 +585,18 @@ pub fn read_http_request<S: std::io::Read>(stream: &mut S) -> Result<HttpRequest
         body.extend_from_slice(&chunk[..n]);
         remaining -= n;
     }
+    let body = if method == "POST" && path == crate::mcp_live::design_md_route::DESIGN_MD_PATH {
+        String::from_utf8(body).map_err(|_| McpServeError::Framing {
+            status: "400 Bad Request",
+            message: "design.md evidence body must be valid UTF-8".into(),
+        })?
+    } else {
+        String::from_utf8_lossy(&body).into_owned()
+    };
     Ok(HttpRequest {
         method,
         path,
-        body: String::from_utf8_lossy(&body).into_owned(),
+        body,
         host,
         origin,
         token,

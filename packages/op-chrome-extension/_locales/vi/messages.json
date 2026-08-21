@@ -4,7 +4,7 @@
     "description": "Extension name shown in Chrome."
   },
   "extDescription": {
-    "message": "Chụp lại trang web đúng như đang hiển thị và nhập vào OpenPencil dưới dạng các nút thiết kế có thể chỉnh sửa.",
+    "message": "Chụp trang thành nút thiết kế OpenPencil có thể chỉnh sửa và trích xuất hướng dẫn hệ thống thiết kế design.md chỉ với một cú nhấp.",
     "description": "Extension description shown in Chrome."
   },
   "captureButton": {
@@ -15,6 +15,45 @@
   },
   "downloadButton": {
     "message": "Tải .op"
+  },
+  "designButton": {
+    "message": "Trích xuất design.md"
+  },
+  "statusDesignWorking": {
+    "message": "Đang thu thập bằng chứng kiểu dáng đã loại bỏ thông tin nhận dạng của trang và yêu cầu OpenPencil AI…"
+  },
+  "statusDesignSmartSuccess": {
+    "message": "Đã tạo và tải xuống design.md bằng AI đã cấu hình."
+  },
+  "statusDesignFallbackSuccess": {
+    "message": "AI không khả dụng; đã tạo và tải xuống design.md bằng phương án dự phòng cục bộ có tính xác định: $1"
+  },
+  "designFallbackPairing": {
+    "message": "OpenPencil chưa cấp quyền cho tiện ích này tạo bằng AI; phương án dự phòng cục bộ đã được sử dụng."
+  },
+  "designFallbackOffline": {
+    "message": "Không thể truy cập OpenPencil tại $1."
+  },
+  "designFallbackUnsupported": {
+    "message": "Phiên bản OpenPencil này không hỗ trợ tạo design.md thông minh."
+  },
+  "designFallbackError": {
+    "message": "Tạo thông minh không thành công: $1"
+  },
+  "designBusy": {
+    "message": "Một thao tác chụp hoặc design.md khác đang chạy."
+  },
+  "designEvidenceSummary": {
+    "message": "Đã lấy mẫu $1 phần tử hiển thị."
+  },
+  "designEvidenceTruncated": {
+    "message": "Đã lấy mẫu $1 phần tử hiển thị; trình thu thập đã dừng ở giới hạn an toàn."
+  },
+  "designFallbackModel": {
+    "message": "Chưa cấu hình mô hình AI khả dụng nào."
+  },
+  "errorDesign": {
+    "message": "Không thể tạo design.md: $1"
   },
   "pickHint": {
     "message": "Nhấp vào phần tử cần chụp"
@@ -83,7 +122,7 @@
     "message": "Ảnh chụp bị mất khi đang truyền (có lẽ trang đã chuyển hướng). Hãy thử lại."
   },
   "errorEndpoint": {
-    "message": "Địa chỉ phải là loopback kèm cổng — 127.0.0.1:3100, localhost:3100 hoặc [::1]:3100."
+    "message": "Địa chỉ phải là loopback kèm cổng — 127.0.0.1:3100 hoặc localhost:3100."
   },
   "errorOffline": {
     "message": "Không kết nối được tới OpenPencil tại $1. Hãy mở ứng dụng máy tính và bật Cài đặt → MCP → máy chủ, hoặc chạy: openpencil-desktop --serve-web 3100"

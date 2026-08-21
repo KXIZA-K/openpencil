@@ -3808,6 +3808,7 @@ dependencies = [
  "jian-ops-schema",
  "op-html",
  "op-util",
+ "serde",
  "serde_json",
  "wasm-bindgen",
 ]

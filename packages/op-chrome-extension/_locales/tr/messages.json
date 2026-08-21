@@ -4,7 +4,7 @@
     "description": "Extension name shown in Chrome."
   },
   "extDescription": {
-    "message": "İşlenmiş sayfayı yakalayın ve düzenlenebilir tasarım düğümleri olarak OpenPencil’a aktarın.",
+    "message": "Sayfaları düzenlenebilir OpenPencil tasarım düğümleri olarak yakalayın ve tek tıkla design.md tasarım sistemi kılavuzu çıkarın.",
     "description": "Extension description shown in Chrome."
   },
   "captureButton": {
@@ -15,6 +15,45 @@
   },
   "downloadButton": {
     "message": ".op indir"
+  },
+  "designButton": {
+    "message": "design.md dosyasını çıkar"
+  },
+  "statusDesignWorking": {
+    "message": "Sayfadaki kimlikten arındırılmış stil kanıtları toplanıyor ve OpenPencil AI'a soruluyor…"
+  },
+  "statusDesignSmartSuccess": {
+    "message": "design.md yapılandırılmış yapay zekâ ile oluşturulup indirildi."
+  },
+  "statusDesignFallbackSuccess": {
+    "message": "Yapay zekâ kullanılamıyor; design.md deterministik yerel geri dönüş yöntemiyle oluşturulup indirildi: $1"
+  },
+  "designFallbackPairing": {
+    "message": "OpenPencil bu uzantıyı yapay zekâ ile oluşturma için yetkilendirmedi; yerel geri dönüş yöntemi kullanıldı."
+  },
+  "designFallbackOffline": {
+    "message": "$1 adresindeki OpenPencil'e ulaşılamıyor."
+  },
+  "designFallbackUnsupported": {
+    "message": "Bu OpenPencil sürümü akıllı design.md oluşturmayı desteklemiyor."
+  },
+  "designFallbackError": {
+    "message": "Akıllı oluşturma başarısız oldu: $1"
+  },
+  "designBusy": {
+    "message": "Başka bir yakalama veya design.md işlemi zaten çalışıyor."
+  },
+  "designEvidenceSummary": {
+    "message": "$1 görünür öğe örneklendi."
+  },
+  "designEvidenceTruncated": {
+    "message": "$1 görünür öğe örneklendi; toplayıcı güvenlik sınırında durdu."
+  },
+  "designFallbackModel": {
+    "message": "Kullanılabilir bir yapay zekâ modeli yapılandırılmamış."
+  },
+  "errorDesign": {
+    "message": "design.md oluşturulamadı: $1"
   },
   "pickHint": {
     "message": "Yakalamak için bir öğeye tıklayın"
@@ -83,7 +122,7 @@
     "message": "Yakalanan anlık görüntü aktarım sırasında kayboldu (sayfa muhtemelen başka bir adrese geçti). Yeniden deneyin."
   },
   "errorEndpoint": {
-    "message": "Adres, port içeren bir geri döngü adresi olmalı — 127.0.0.1:3100, localhost:3100 veya [::1]:3100."
+    "message": "Adres, port içeren bir geri döngü adresi olmalı — 127.0.0.1:3100 veya localhost:3100."
   },
   "errorOffline": {
     "message": "OpenPencil $1 adresinde erişilebilir değil. Masaüstü uygulamasını başlatıp Ayarlar → MCP → sunucu bölümünden sunucuyu açın veya şunu çalıştırın: openpencil-desktop --serve-web 3100"

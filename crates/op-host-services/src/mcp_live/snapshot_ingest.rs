@@ -9,9 +9,9 @@
 //!   instance's own loopback origin, and a browser ALWAYS attaches
 //!   `Origin: chrome-extension://<id>` to an extension-initiated `POST`
 //!   (Fetch spec: `Origin` is appended for any non-`GET`/`HEAD` request).
-//! * `admission::check_token` requires the per-instance token from
-//!   `~/.openpencil/.op-mcp-port`, and an extension has no filesystem
-//!   access to read it.
+//! * The general `/mcp` surface is intentionally not widened to extension
+//!   origins. It remains available only to callers that clear the endpoint's
+//!   normal numeric-loopback `Host` and same-origin/no-`Origin` boundary.
 //!
 //! So this module adds ONE narrowly-scoped route instead of widening
 //! either gate:
@@ -19,8 +19,8 @@
 //! * It is a fixed alias for exactly one MCP tool, `import_web_snapshot`
 //!   — insert-only. It cannot read the document, cannot delete, cannot
 //!   move or export anything, so an extension reaching it can add visible
-//!   (and undoable) nodes and nothing else. Reads and every other write
-//!   tool stay behind the full token gate.
+//!   (and undoable) nodes and nothing else. Reads and every other write tool
+//!   remain behind the general route's strict Host/Origin boundary.
 //! * `admission::check_boundary` still screens it: `Host` must be a
 //!   numeric loopback literal on the bound port, and the `Origin` must be
 //!   either this instance's own loopback origin or an ACCEPTED

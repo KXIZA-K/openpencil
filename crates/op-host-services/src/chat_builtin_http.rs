@@ -6,6 +6,7 @@
 //! streaming endpoints and converts SSE payloads into `ChatDelta`s.
 
 use std::fmt;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -240,7 +241,44 @@ impl ChatProvider for ConfiguredBuiltinProvider {
         &self.label
     }
 
+    fn supports_cancellable_send(&self) -> bool {
+        true
+    }
+
+    fn supports_evidence_only_send(&self) -> bool {
+        self.tools.is_empty() && self.executor.is_none()
+    }
+
     fn send(&self, request: ChatRequest) -> Box<dyn Iterator<Item = ChatDelta> + Send> {
+        self.send_inner(request, None)
+    }
+
+    fn send_cancellable(
+        &self,
+        request: ChatRequest,
+        cancel: Arc<AtomicBool>,
+    ) -> Box<dyn Iterator<Item = ChatDelta> + Send> {
+        self.send_inner(request, Some(cancel))
+    }
+}
+
+impl ConfiguredBuiltinProvider {
+    fn send_inner(
+        &self,
+        request: ChatRequest,
+        cancel: Option<Arc<AtomicBool>>,
+    ) -> Box<dyn Iterator<Item = ChatDelta> + Send> {
+        if cancel
+            .as_ref()
+            .is_some_and(|cancel| cancel.load(Ordering::Acquire))
+        {
+            return Box::new(
+                [ChatDelta::Done {
+                    stop_reason: StopReason::Aborted,
+                }]
+                .into_iter(),
+            );
+        }
         if let Some(error) = &self.construction_error {
             return Box::new(
                 [
@@ -299,7 +337,7 @@ impl ChatProvider for ConfiguredBuiltinProvider {
         // MiniMax chat.
         let disable_thinking = request.thinking == ThinkingMode::Disabled;
         let (tx, rx) = mpsc::channel::<ChatDelta>(64);
-        shared_runtime().spawn(async move {
+        let task = shared_runtime().spawn(async move {
             let _guard = guard;
             // Tool-capable turns route through the agent loop: tool
             // defs ride the request, `tool_use` streams back, the
@@ -381,7 +419,10 @@ impl ChatProvider for ConfiguredBuiltinProvider {
                 }
             }
         });
-        Box::new(BlockingRecvIter::new(rx))
+        match cancel {
+            Some(cancel) => Box::new(BlockingRecvIter::cancellable(rx, cancel, task)),
+            None => Box::new(BlockingRecvIter::new(rx)),
+        }
     }
 }
 
@@ -681,3 +722,7 @@ async fn run_anthropic_chat(
 #[cfg(test)]
 #[path = "chat_builtin_http_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "chat_builtin_http_cancellation_tests.rs"]
+mod cancellation_tests;

@@ -318,9 +318,27 @@ pub trait ChatProvider: Send + Sync {
     fn provider_label(&self) -> &str;
     fn send(&self, request: ChatRequest) -> Box<dyn Iterator<Item = ChatDelta> + Send>;
 
+    /// Whether [`Self::send_cancellable`] owns a transport that is actually
+    /// aborted when its flag is raised. Callers with a hard deadline must gate
+    /// on this capability instead of assuming every provider can stop paid
+    /// work merely because the trait exposes a cancellation argument.
+    fn supports_cancellable_send(&self) -> bool {
+        false
+    }
+
+    /// Whether this provider guarantees a text-only turn with no local tools,
+    /// filesystem access, MCP surface, or other side effects. Untrusted
+    /// evidence workflows must require this separately from cancellation: an
+    /// abortable coding agent can still act on prompt-injected instructions.
+    fn supports_evidence_only_send(&self) -> bool {
+        false
+    }
+
     /// Start a turn that may be interrupted through `cancel`. Providers with
-    /// an abortable transport should override this; the default preserves the
-    /// existing iterator contract for simple/test providers.
+    /// an abortable transport must override this together with
+    /// [`Self::supports_cancellable_send`]. The default preserves the original
+    /// delegation to [`Self::send`] for existing soft-cancel consumers; callers
+    /// with a hard deadline must first require the explicit capability above.
     fn send_cancellable(
         &self,
         request: ChatRequest,

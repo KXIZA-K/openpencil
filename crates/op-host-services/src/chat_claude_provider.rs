@@ -16,6 +16,10 @@ impl ChatProvider for ClaudeCodeProvider {
         &self.label
     }
 
+    fn supports_cancellable_send(&self) -> bool {
+        true
+    }
+
     fn send(&self, request: ChatRequest) -> Box<dyn Iterator<Item = ChatDelta> + Send> {
         self.send_inner(request, None)
     }
@@ -33,6 +37,13 @@ impl ChatProvider for ClaudeCodeProvider {
 mod tests {
     use super::*;
     use op_ai::chat_provider::{EffortLevel, ThinkingMode};
+
+    #[test]
+    fn claude_is_abortable_but_not_safe_for_untrusted_evidence() {
+        let provider = ClaudeCodeProvider::new();
+        assert!(provider.supports_cancellable_send());
+        assert!(!provider.supports_evidence_only_send());
+    }
 
     #[test]
     fn options_env_never_carries_path() {

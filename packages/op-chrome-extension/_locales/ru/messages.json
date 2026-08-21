@@ -4,7 +4,7 @@
     "description": "Extension name shown in Chrome."
   },
   "extDescription": {
-    "message": "Захватывает отрисованную страницу и импортирует её в OpenPencil как редактируемые узлы дизайна.",
+    "message": "Захватывает страницы как редактируемые узлы OpenPencil и одним нажатием извлекает руководство по дизайн-системе design.md.",
     "description": "Extension description shown in Chrome."
   },
   "captureButton": {
@@ -15,6 +15,45 @@
   },
   "downloadButton": {
     "message": "Скачать .op"
+  },
+  "designButton": {
+    "message": "Извлечь design.md"
+  },
+  "statusDesignWorking": {
+    "message": "Собираем обезличенные сведения о стилях страницы и обращаемся к OpenPencil AI…"
+  },
+  "statusDesignSmartSuccess": {
+    "message": "design.md создан настроенной моделью ИИ и скачан."
+  },
+  "statusDesignFallbackSuccess": {
+    "message": "ИИ недоступен; design.md создан и скачан с помощью детерминированного локального резервного метода: $1"
+  },
+  "designFallbackPairing": {
+    "message": "OpenPencil не авторизовал это расширение для генерации с помощью ИИ; использован локальный резервный метод."
+  },
+  "designFallbackOffline": {
+    "message": "OpenPencil по адресу $1 недоступен."
+  },
+  "designFallbackUnsupported": {
+    "message": "Эта версия OpenPencil не поддерживает интеллектуальное создание design.md."
+  },
+  "designFallbackError": {
+    "message": "Ошибка интеллектуального создания: $1"
+  },
+  "designBusy": {
+    "message": "Уже выполняется другой захват или действие с design.md."
+  },
+  "designEvidenceSummary": {
+    "message": "Собраны образцы $1 видимых элементов."
+  },
+  "designEvidenceTruncated": {
+    "message": "Собраны образцы $1 видимых элементов; сбор остановлен на безопасном пределе."
+  },
+  "designFallbackModel": {
+    "message": "Нет настроенной модели ИИ, которую можно использовать."
+  },
+  "errorDesign": {
+    "message": "Не удалось создать design.md: $1"
   },
   "pickHint": {
     "message": "Нажмите на элемент, чтобы захватить его"
@@ -83,7 +122,7 @@
     "message": "Снимок был потерян при передаче (страница, вероятно, перешла на другой адрес). Повторите попытку."
   },
   "errorEndpoint": {
-    "message": "Адрес должен быть петлевым и содержать порт — 127.0.0.1:3100, localhost:3100 или [::1]:3100."
+    "message": "Адрес должен быть петлевым и содержать порт — 127.0.0.1:3100 или localhost:3100."
   },
   "errorOffline": {
     "message": "OpenPencil недоступен по адресу $1. Запустите настольное приложение и включите Настройки → MCP → сервер либо выполните: openpencil-desktop --serve-web 3100"

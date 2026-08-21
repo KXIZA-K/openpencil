@@ -4,7 +4,7 @@
     "description": "Extension name shown in Chrome."
   },
   "extDescription": {
-    "message": "Capture a página renderizada e importe-a para o OpenPencil como nós de design editáveis.",
+    "message": "Capture páginas como nós de design editáveis no OpenPencil e extraia com um clique um guia de sistema de design em design.md.",
     "description": "Extension description shown in Chrome."
   },
   "captureButton": {
@@ -15,6 +15,45 @@
   },
   "downloadButton": {
     "message": "Baixar .op"
+  },
+  "designButton": {
+    "message": "Extrair design.md"
+  },
+  "statusDesignWorking": {
+    "message": "Coletando evidências de estilo desidentificadas da página e consultando a OpenPencil AI…"
+  },
+  "statusDesignSmartSuccess": {
+    "message": "design.md foi gerado e baixado com a IA configurada."
+  },
+  "statusDesignFallbackSuccess": {
+    "message": "A IA está indisponível; design.md foi gerado e baixado com a alternativa local determinística: $1"
+  },
+  "designFallbackPairing": {
+    "message": "O OpenPencil não autorizou esta extensão para geração por IA; a alternativa local foi usada."
+  },
+  "designFallbackOffline": {
+    "message": "Não foi possível acessar o OpenPencil em $1."
+  },
+  "designFallbackUnsupported": {
+    "message": "Esta versão do OpenPencil não oferece geração inteligente de design.md."
+  },
+  "designFallbackError": {
+    "message": "Falha na geração inteligente: $1"
+  },
+  "designBusy": {
+    "message": "Outra captura ou ação de design.md já está em andamento."
+  },
+  "designEvidenceSummary": {
+    "message": "$1 elementos visíveis foram amostrados."
+  },
+  "designEvidenceTruncated": {
+    "message": "$1 elementos visíveis foram amostrados; o coletor parou no limite de segurança."
+  },
+  "designFallbackModel": {
+    "message": "Nenhum modelo de IA utilizável está configurado."
+  },
+  "errorDesign": {
+    "message": "Falha ao gerar design.md: $1"
   },
   "pickHint": {
     "message": "Clique em um elemento para capturá-lo"
@@ -83,7 +122,7 @@
     "message": "A captura foi perdida durante a transferência (a página provavelmente navegou). Tente novamente."
   },
   "errorEndpoint": {
-    "message": "O endereço precisa ser de loopback com uma porta — 127.0.0.1:3100, localhost:3100 ou [::1]:3100."
+    "message": "O endereço precisa ser de loopback com uma porta — 127.0.0.1:3100 ou localhost:3100."
   },
   "errorOffline": {
     "message": "Não é possível alcançar o OpenPencil em $1. Abra o aplicativo de desktop e inicie Configurações → MCP → servidor, ou execute: openpencil-desktop --serve-web 3100"
