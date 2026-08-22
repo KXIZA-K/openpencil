@@ -332,6 +332,13 @@ OpStatus op_editor_ime_commit(OpEngine *engine, const uint8_t *text_ptr, size_t 
  * focused input; the shells call this from their long-press edit menus. */
 OpStatus op_editor_paste_text(OpEngine *engine, const uint8_t *text_ptr, size_t text_len);
 
+/* Drain the engine's pending copy-to-clipboard text (collab invite / share
+ * address, MCP config, chat copy buttons). NULL/0 probes the required
+ * length without consuming; a complete copy consumes. NotReady = nothing
+ * pending. The shells poll after each frame and write the system
+ * pasteboard. The payload is not NUL-terminated. */
+OpStatus op_editor_take_copy_text(OpEngine *engine, uint8_t *buffer, size_t capacity, size_t *required);
+
 /* Whether the editor host currently holds the IME (show/hide keyboard). */
 OpStatus op_editor_ime_focused(OpEngine *engine, bool *out);
 

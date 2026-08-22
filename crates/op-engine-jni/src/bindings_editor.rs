@@ -129,6 +129,47 @@ pub extern "system" fn Java_tech_zseven_openpencil_OpNative_nativeEditorTakeLogi
         .unwrap_or(std::ptr::null_mut())
 }
 
+/// `OpNative.nativeEditorTakeCopyText` — atomically copies and consumes the
+/// engine's pending copy-to-clipboard text (collab invite / share address,
+/// MCP config, chat copy buttons), or returns null when none is pending.
+/// The shell polls after each frame and writes the system clipboard.
+#[no_mangle]
+pub extern "system" fn Java_tech_zseven_openpencil_OpNative_nativeEditorTakeCopyText<'local>(
+    env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    engine: jlong,
+) -> jstring {
+    let bytes = with_engine(engine, move |e| {
+        let mut required = 0usize;
+        let status = unsafe {
+            op_engine_ffi::op_editor_take_copy_text(e, std::ptr::null_mut(), 0, &mut required)
+        };
+        if status != OpStatus::Ok || required == 0 {
+            return None;
+        }
+        let mut bytes = vec![0_u8; required];
+        let status = unsafe {
+            op_engine_ffi::op_editor_take_copy_text(
+                e,
+                bytes.as_mut_ptr(),
+                bytes.len(),
+                &mut required,
+            )
+        };
+        (status == OpStatus::Ok).then_some(bytes)
+    })
+    .flatten();
+    let Some(bytes) = bytes else {
+        return std::ptr::null_mut();
+    };
+    let Ok(text) = String::from_utf8(bytes) else {
+        return std::ptr::null_mut();
+    };
+    env.new_string(text)
+        .map(|value| value.into_raw())
+        .unwrap_or(std::ptr::null_mut())
+}
+
 /// `OpNative.nativeEditorCancelLogin` — user-dismissed WebView cancellation.
 #[no_mangle]
 pub extern "system" fn Java_tech_zseven_openpencil_OpNative_nativeEditorCancelLogin<'local>(

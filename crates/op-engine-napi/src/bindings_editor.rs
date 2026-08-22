@@ -147,6 +147,15 @@ pub fn editor_ime_commit(engine: i64, text: String) -> i32 {
     })
 }
 
+/// `editorTakeCopyText` — atomically copy AND CONSUME the engine's pending
+/// copy-to-clipboard text (collab invite / share address, MCP config, chat
+/// copy buttons), or `null` when none is pending. The shell polls this in
+/// its pump and writes the system pasteboard.
+#[napi(js_name = "editorTakeCopyText")]
+pub fn editor_take_copy_text(engine: i64) -> Option<String> {
+    copy_out_string(engine, op_engine_ffi::op_editor_take_copy_text)
+}
+
 /// `editorImeFocused` — whether the editor holds the IME (show/hide the
 /// system keyboard).
 #[napi(js_name = "editorImeFocused")]

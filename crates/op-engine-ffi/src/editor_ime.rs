@@ -100,6 +100,68 @@ pub unsafe extern "C" fn op_editor_paste_text(
     }
 }
 
+/// Drain the engine's pending copy-to-clipboard text — the OUTBOUND half
+/// of the clipboard bridge. Engine copy actions (collab invite / share
+/// address, MCP client config, chat and codegen copy buttons, Cmd+C
+/// selections) queue one string into `chat.pending_copy_text`; the desktop
+/// runner drains it into the OS clipboard, and the mobile shells poll this
+/// after each frame and write the system pasteboard.
+///
+/// Two-phase contract like `op_editor_copy_login_url`: a NULL/0 probe
+/// reports the required length WITHOUT consuming; a complete copy consumes.
+/// `NotReady` (with `required = 0`) means no copy is pending — the common
+/// per-frame case.
+///
+/// # Safety
+///
+/// `engine` must be live and called on its owner thread; `required` must be
+/// writable and a non-null `buffer` must cover `capacity` bytes.
+#[no_mangle]
+pub unsafe extern "C" fn op_editor_take_copy_text(
+    engine: *mut crate::OpEngine,
+    buffer: *mut u8,
+    capacity: usize,
+    required: *mut usize,
+) -> OpStatus {
+    unsafe {
+        call_session(engine, |session| {
+            if required.is_null() {
+                return Err(FfiError::invalid("copy-text required pointer is null"));
+            }
+            let host = session.editor_mut()?;
+            let chat = &mut host.editor_state_mut().chat;
+            let Some(text) = chat.pending_copy_text.as_deref() else {
+                required.write(0);
+                return Err(FfiError::new(OpStatus::NotReady, "no copy text is pending"));
+            };
+            let len = text.len();
+            required.write(len);
+            if len > STRING_CAP {
+                return Err(FfiError::invalid(format!(
+                    "copy text length exceeds {STRING_CAP} bytes"
+                )));
+            }
+            if buffer.is_null() {
+                if capacity == 0 {
+                    return Ok(());
+                }
+                return Err(FfiError::invalid(
+                    "copy-text buffer is null with nonzero capacity",
+                ));
+            }
+            if capacity < len {
+                return Err(FfiError::invalid(format!(
+                    "copy-text buffer covers {capacity} bytes but {len} are required"
+                )));
+            }
+            // The full payload fits — copy and consume atomically.
+            let text = chat.pending_copy_text.take().expect("checked above");
+            std::ptr::copy_nonoverlapping(text.as_ptr(), buffer, len);
+            Ok(())
+        })
+    }
+}
+
 /// Whether a canvas text edit (or panel input) currently holds the IME —
 /// the shells show/hide the system keyboard accordingly.
 ///

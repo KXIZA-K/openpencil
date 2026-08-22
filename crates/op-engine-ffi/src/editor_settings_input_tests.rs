@@ -8,7 +8,9 @@ use crate::desc::{Callbacks, CreateOptions};
 use crate::editor::{
     op_editor_key, op_editor_press, op_editor_release, op_editor_text, KEY_BACKSPACE, KEY_DELETE,
 };
-use crate::editor_ime::{op_editor_ime_commit, op_editor_ime_preedit, op_editor_paste_text};
+use crate::editor_ime::{
+    op_editor_ime_commit, op_editor_ime_preedit, op_editor_paste_text, op_editor_take_copy_text,
+};
 use crate::lifecycle::{OpEngine, Session};
 use crate::OpStatus;
 use op_editor_core::agent_settings::{BuiltinAgentField, SettingsFocus};
@@ -452,6 +454,69 @@ fn mobile_paste_text_lands_in_focused_chat_input() {
     );
     let host = engine.session_mut_for_test().editor_mut().unwrap();
     assert_eq!(host.editor_state().chat.input.text(), pasted);
+}
+
+/// Outbound clipboard bridge: an engine copy action (collab invite /
+/// share address, MCP config, chat copy — all funnel through
+/// `chat.queue_copy_text`) must surface through `op_editor_take_copy_text`
+/// with the documented probe/copy/consume contract.
+#[test]
+fn mobile_copy_action_drains_through_take_copy_text() {
+    let mut engine = phone_engine();
+    let pointer = &mut engine as *mut OpEngine;
+
+    // Nothing pending: the per-frame probe reports NotReady + 0 length.
+    let mut required = usize::MAX;
+    assert_eq!(
+        unsafe { op_editor_take_copy_text(pointer, std::ptr::null_mut(), 0, &mut required) },
+        OpStatus::NotReady
+    );
+    assert_eq!(required, 0);
+
+    // The collab panel's copy button (and every other engine copy action)
+    // lands its payload through this exact queue call.
+    let invite = "OP-1234-ABCD-INVITE";
+    engine
+        .session_mut_for_test()
+        .editor_mut()
+        .unwrap()
+        .editor_state_mut()
+        .chat
+        .queue_copy_text(invite);
+
+    // Probe does not consume.
+    let mut required = 0;
+    assert_eq!(
+        unsafe { op_editor_take_copy_text(pointer, std::ptr::null_mut(), 0, &mut required) },
+        OpStatus::Ok
+    );
+    assert_eq!(required, invite.len());
+
+    // A short buffer fails and must NOT consume the payload.
+    let mut short = [0_u8; 4];
+    assert_eq!(
+        unsafe {
+            op_editor_take_copy_text(pointer, short.as_mut_ptr(), short.len(), &mut required)
+        },
+        OpStatus::InvalidArg
+    );
+
+    // A complete copy returns the text and consumes it.
+    let mut buffer = vec![0_u8; required];
+    assert_eq!(
+        unsafe {
+            op_editor_take_copy_text(pointer, buffer.as_mut_ptr(), buffer.len(), &mut required)
+        },
+        OpStatus::Ok
+    );
+    assert_eq!(std::str::from_utf8(&buffer).unwrap(), invite);
+
+    // Consumed: the next per-frame probe is NotReady again.
+    assert_eq!(
+        unsafe { op_editor_take_copy_text(pointer, std::ptr::null_mut(), 0, &mut required) },
+        OpStatus::NotReady
+    );
+    assert_eq!(required, 0);
 }
 
 /// A cancelled composition arrives as an empty IME commit (iOS) or an

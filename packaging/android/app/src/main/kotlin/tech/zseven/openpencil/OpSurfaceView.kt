@@ -529,8 +529,21 @@ class OpSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Call
         } else {
             syncSystemChromeAppearance()
             syncIme()
+            drainCopyText()
         }
         pollShellAction()
+    }
+
+    /** Outbound clipboard bridge: engine copy buttons (collab invite /
+     *  share address, MCP config, chat copy) queue text that the desktop
+     *  drains into the OS clipboard; here the same queue lands on the
+     *  Android clipboard. NotReady (null) is the common per-frame case. */
+    private fun drainCopyText() {
+        if (!editorMode || engine == 0L) return
+        val text = OpNative.nativeEditorTakeCopyText(engine) ?: return
+        val clipboard =
+            context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+        clipboard.setPrimaryClip(android.content.ClipData.newPlainText("OpenPencil", text))
     }
 
     /** Poll after a successful frame so a theme toggle and its icon contrast

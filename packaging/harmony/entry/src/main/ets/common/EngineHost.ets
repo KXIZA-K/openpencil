@@ -1,5 +1,6 @@
 import { http } from '@kit.NetworkKit';
 import { deviceInfo } from '@kit.BasicServicesKit';
+import { ClipboardBridge } from './ClipboardBridge';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { displaySync } from '@kit.ArkGraphics2D';
@@ -49,10 +50,7 @@ export interface ShellActionSink {
   onCloseLoginUi: () => void;
   /** The engine's backdrop needs light system glyphs. */
   onSystemChromeAppearance: (prefersLightIcons: boolean) => void;
-  /**
-   * A long-press landed over a focused engine text input: present the paste
-   * menu (the system PasteButton security component) at `(x, y)` vp.
-   */
+  /** Long-press over a focused engine input: show Paste at `(x, y)` vp. */
   onEditorPasteMenu: (x: number, y: number) => void;
 }
 
@@ -447,33 +445,26 @@ export class EngineHost implements PointerRouterHost, ImeConduitHost {
   }
 
   /**
-   * Long-press over a focused engine text input: hand the page a paste-menu
-   * request (it presents the system PasteButton security component, which
-   * grants the one-shot pasteboard read). Desktop-class shells keep the
-   * right-click path — a mouse long-press is not a touch paste gesture.
+   * Long-press over a focused engine text input: the page presents the
+   * PasteButton security component (its tap grants the one-shot pasteboard
+   * read). Desktop-class shells keep the right-click path instead.
    */
   onEditorLongPressPasteMenu(x: number, y: number): boolean {
     if (this.engine === 0 || !this.editorMode || this.desktopClass) {
       return false;
     }
-    if (!napi.editorImeFocused(this.engine)) {
-      return false;
-    }
     const sink: ShellActionSink | null = this.sink;
-    if (sink === null) {
+    if (sink === null || !napi.editorImeFocused(this.engine)) {
       return false;
     }
     sink.onEditorPasteMenu(x, y);
     return true;
   }
 
-  /** Pastes clipboard text into whichever engine input owns the keyboard. */
   pasteText(text: string): void {
-    if (this.engine === 0 || !this.editorMode || text.length === 0) {
-      return;
+    if (this.editorMode && ClipboardBridge.pasteText(this.engine, text)) {
+      this.requestFrame();
     }
-    napi.editorPasteText(this.engine, text);
-    this.requestFrame();
   }
 
   onImeInput(): void {
@@ -514,6 +505,7 @@ export class EngineHost implements PointerRouterHost, ImeConduitHost {
       }
       this.dispatchShellAction(action);
     }
+    ClipboardBridge.drainCopyText(this.engine);
     this.syncIme();
     this.syncSystemChromeAppearance();
   }

@@ -485,6 +485,26 @@ final class OpEngineHost: NSObject {
         }
     }
 
+    /// Outbound clipboard bridge: engine copy buttons (collab invite /
+    /// share address, MCP config, chat copy) queue text that the desktop
+    /// runner drains into the OS clipboard; here the same queue lands on
+    /// `UIPasteboard`. The two-phase probe/copy contract mirrors
+    /// `copyLoginURL`; NotReady is the common per-frame case.
+    private func drainCopyText() {
+        guard let engine, editorMode else { return }
+        var required = 0
+        var status = op_editor_take_copy_text(engine, nil, 0, &required)
+        guard status == OpStatus_Ok, required > 0 else { return }
+        var buffer = [UInt8](repeating: 0, count: required)
+        status = buffer.withUnsafeMutableBufferPointer { bytes in
+            op_editor_take_copy_text(engine, bytes.baseAddress, bytes.count, &required)
+        }
+        guard status == OpStatus_Ok, let text = String(bytes: buffer, encoding: .utf8) else {
+            return
+        }
+        UIPasteboard.general.string = text
+    }
+
     // MARK: - Remote images
 
     /// `remote_image_request` upcall: the paint pass hit a remote image
@@ -581,6 +601,7 @@ final class OpEngineHost: NSObject {
         }
         if editorMode {
             syncImeFocus()
+            drainCopyText()
             drainShellActions()
         }
         syncSystemChromeStyle()
