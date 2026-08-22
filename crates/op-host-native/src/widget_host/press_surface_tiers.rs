@@ -21,6 +21,7 @@ impl WidgetHostNative {
     pub(in crate::widget_host) fn press_git_and_chat_tiers(
         &mut self,
         ctx: &PressCtx,
+        allow_touch_panel_defer: bool,
     ) -> Option<bool> {
         let (x, y) = (ctx.x, ctx.y);
         let viewport_width = ctx.viewport_width;
@@ -36,6 +37,13 @@ impl WidgetHostNative {
         //    order. DragHandle starts a chat drag; other AI hits
         //    defer to apply_click.
         if let Some(chat_rect) = self.ai_chat_rect(viewport_width, viewport_height) {
+            // 1a. Mobile sheet: a body press defers until release so a
+            //     one-finger drag scrolls the transcript instead of
+            //     painting a text selection; a stationary tap replays
+            //     through this tier with `allow_touch_panel_defer = false`.
+            if allow_touch_panel_defer && self.begin_chat_transcript_touch_gesture(ctx) {
+                return Some(true);
+            }
             let panel =
                 AIChatPlaceholder::from_editor(&self.editor_state).owned_by(self.chat_panel_owner);
             if let Some(hit) = panel.hit_test(chat_rect, Point2D::new(x, y)) {

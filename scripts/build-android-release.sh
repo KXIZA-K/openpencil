@@ -297,6 +297,7 @@ build_target() {
         "AR_$env_target=$ndk_tools/llvm-ar" \
         "CARGO_TARGET_${cargo_env_target}_LINKER=$cc" \
         "CARGO_TARGET_${cargo_env_target}_AR=$ndk_tools/llvm-ar" \
+        "BINDGEN_EXTRA_CLANG_ARGS_$env_target=--target=${clang_prefix}26 --sysroot=$ndk_tools/../sysroot" \
         RUSTUP_TOOLCHAIN=1.94 \
         SKIA_BINARIES_URL="$skia_url" \
         OPENPENCIL_BUILD_COLLAB_BOOTSTRAP_URL_CN="$relay_bootstrap_cn" \

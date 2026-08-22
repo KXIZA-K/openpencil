@@ -6,7 +6,11 @@
 //! `继续完成 explore/profile界面`.  Keep this parser narrow so ordinary
 //! append/modify requests retain their existing behavior.
 
-use super::EXISTING_SCREEN_CTX_CJK;
+/// CJK deictics naming the CURRENT screen — moved here with this module
+/// from `op-host-services::chat_intent` (which re-imports it) so the
+/// listed-screen parser stays a leaf.
+pub const EXISTING_SCREEN_CTX_CJK: &[&str] =
+    &["这个", "这一", "当前", "现有", "此页", "这页", "这屏"];
 
 const LIST_VERBS_CJK: &[&str] = &["完成", "补齐", "补完", "生成", "设计", "画", "绘", "做"];
 const SCREEN_NOUNS_CJK: &[&str] = &["界面", "页面", "屏幕", "页", "屏"];
@@ -266,7 +270,7 @@ pub fn listed_whole_screen_names(prompt: &str) -> Vec<String> {
     listed_whole_screen_names_en(prompt).unwrap_or_default()
 }
 
-pub(super) fn requests_listed_whole_screens(prompt: &str) -> bool {
+pub fn requests_listed_whole_screens(prompt: &str) -> bool {
     !listed_whole_screen_names(prompt).is_empty()
 }
 

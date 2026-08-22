@@ -108,6 +108,12 @@ export "CFLAGS_${env_target}=--target=$clang_target --sysroot=$ndk_root/sysroot"
 # escaped quotes survive cc's whitespace-split env parsing.
 sk_font_prefix_define='-DSK_FONT_FILE_PREFIX="/system/fonts/"'
 export "CXXFLAGS_${env_target}=--target=$clang_target --sysroot=$ndk_root/sysroot $sk_font_prefix_define"
+# rquickjs-sys (QuickJS behind op-mcp's `script` feature, pulled in by the
+# editor's design pipeline) generates its FFI bindings at build time on OHOS
+# (`bindgen` feature — no pregenerated bindings exist for these triples).
+# bindgen's libclang does not read CC/CFLAGS, so hand it the target + sysroot
+# explicitly or it parses quickjs headers against the HOST sysroot.
+export "BINDGEN_EXTRA_CLANG_ARGS_${env_target}=--target=$clang_target --sysroot=$ndk_root/sysroot"
 
 # skia's vendored chromium-zlib wrapper asserts on unknown ARM OSes; OHOS has
 # a Linux kernel with getauxval, so the ARMV8_OS_LINUX path is correct.

@@ -15,15 +15,15 @@ use op_orchestrator::{resolve_model_profile, ModelTier};
 use serde_json::{json, Value};
 use skia_safe::{surfaces, CubicResampler, Data, EncodedImageFormat, Image, Paint, Rect};
 
-pub(crate) const ELIDED_SCREENSHOT_TEXT: &str =
+pub const ELIDED_SCREENSHOT_TEXT: &str =
     "[Earlier design screenshot elided from context; a newer render supersedes it.]";
-pub(crate) const OMITTED_SCREENSHOT_TEXT: &str =
+pub const OMITTED_SCREENSHOT_TEXT: &str =
     "[Current design screenshot omitted because even the downscaled PNG exceeded the model context budget. Use snapshot_layout or batch_get for a compact structural check.]";
-pub(crate) const TEXT_ONLY_SCREENSHOT_TEXT: &str =
+pub const TEXT_ONLY_SCREENSHOT_TEXT: &str =
     "[Screenshot not attached because the selected model only supports text input. Inspect the current design with snapshot_layout or batch_get instead.]";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum PreparedScreenshot {
+pub enum PreparedScreenshot {
     Inline(String),
     TextOnly,
     OverBudget,
@@ -36,7 +36,7 @@ pub(crate) enum PreparedScreenshot {
 /// vision variants are named `glm-<version>v-*` (for example
 /// `glm-5v-turbo`). DeepSeek V4 is explicitly text-only. MiniMax M3 is
 /// explicitly multimodal and therefore stays enabled.
-pub(crate) fn model_supports_inline_images(model: &str) -> bool {
+pub fn model_supports_inline_images(model: &str) -> bool {
     let leaf = model
         .rsplit('/')
         .next()
@@ -65,7 +65,7 @@ pub(crate) fn model_supports_inline_images(model: &str) -> bool {
 /// built, and over-budget images carry a separate explicit outcome. `None`
 /// means this was not a valid successful screenshot result and the ordinary
 /// tool-result path should handle it.
-pub(crate) fn prepare_screenshot_for_context(
+pub fn prepare_screenshot_for_context(
     model: &str,
     max_output_tokens: u32,
     tool_name: &str,
@@ -105,7 +105,7 @@ fn inline_screenshot_char_budget(model: &str, max_output_tokens: u32) -> usize {
 /// than truncating base64 into an invalid image. `None` means decoding or
 /// bounded re-encoding failed; callers must send [`OMITTED_SCREENSHOT_TEXT`]
 /// instead of replaying the original giant tool result.
-pub(crate) fn fit_screenshot_to_context(
+pub fn fit_screenshot_to_context(
     model: &str,
     max_output_tokens: u32,
     base64_png: &str,
@@ -167,7 +167,7 @@ pub(crate) fn fit_screenshot_to_context(
 /// may still provide the unwrapped `{image_base64,format}` object.  Supporting
 /// both prevents the wrapped base64 from falling through as a giant opaque
 /// text tool result.
-pub(crate) fn screenshot_image_base64(tool_name: &str, result: &ChatToolResult) -> Option<String> {
+pub fn screenshot_image_base64(tool_name: &str, result: &ChatToolResult) -> Option<String> {
     if tool_name != "get_screenshot" || result.is_error {
         return None;
     }
@@ -184,7 +184,7 @@ pub(crate) fn screenshot_image_base64(tool_name: &str, result: &ChatToolResult) 
 /// explicit marker.  The replacement block uses the same multimodal `text`
 /// shape accepted by both Anthropic content arrays and OpenAI content parts.
 /// Returns the number of images elided.
-pub(crate) fn elide_inline_screenshots(value: &mut Value) -> usize {
+pub fn elide_inline_screenshots(value: &mut Value) -> usize {
     match value {
         Value::Array(items) => items.iter_mut().map(elide_inline_screenshots).sum(),
         Value::Object(object) => {

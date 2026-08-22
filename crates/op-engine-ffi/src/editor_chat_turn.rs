@@ -110,18 +110,24 @@ pub(crate) async fn run_builtin_turn(turn: BuiltinChatTurn, tx: Sender<ChatDelta
     }
 }
 
-async fn run_streaming_request(
-    turn: &BuiltinChatTurn,
-    tx: &Sender<ChatDelta>,
-) -> Result<bool, MobileChatTurnError> {
-    let client = reqwest::Client::builder()
+/// Provider HTTP client with the shared mobile timeouts. Used by the plain
+/// chat turn and the design loop so both dial with identical posture.
+pub(crate) fn build_mobile_chat_client() -> Result<reqwest::Client, MobileChatTurnError> {
+    reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(CONNECT_TIMEOUT)
         .timeout(REQUEST_TIMEOUT)
         .build()
         .map_err(|error| MobileChatTurnError::ClientBuild {
             message: error.to_string(),
-        })?;
+        })
+}
+
+async fn run_streaming_request(
+    turn: &BuiltinChatTurn,
+    tx: &Sender<ChatDelta>,
+) -> Result<bool, MobileChatTurnError> {
+    let client = build_mobile_chat_client()?;
     let (label, request, parse): (_, _, fn(&str) -> Option<ChatDelta>) = match turn.kind {
         BuiltinAgentKind::OpenAiCompat => {
             let url = provider_endpoint(&turn.base_url, "/chat/completions");

@@ -2,7 +2,7 @@
 
 use op_ai::chat_provider::ChatToolResult;
 
-pub(crate) fn rolled_back_transaction_message(data: &serde_json::Value) -> Option<String> {
+pub fn rolled_back_transaction_message(data: &serde_json::Value) -> Option<String> {
     let object = data.as_object()?;
     if object.get("applied") != Some(&serde_json::Value::Bool(false)) {
         return None;
@@ -22,7 +22,7 @@ pub(crate) fn rolled_back_transaction_message(data: &serde_json::Value) -> Optio
     )
 }
 
-pub(crate) fn structured_error_result(message: String, data: serde_json::Value) -> ChatToolResult {
+pub fn structured_error_result(message: String, data: serde_json::Value) -> ChatToolResult {
     let envelope = serde_json::json!({
         "success": false,
         "error": message,

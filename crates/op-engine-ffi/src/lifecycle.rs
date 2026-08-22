@@ -737,3 +737,7 @@ mod lifecycle_mobile_focus_tests;
 #[cfg(all(test, feature = "editor"))]
 #[path = "lifecycle_canvas_touch_tests.rs"]
 mod lifecycle_canvas_touch_tests;
+
+#[cfg(all(test, feature = "editor"))]
+#[path = "editor_chat_scroll_tests.rs"]
+mod editor_chat_scroll_tests;

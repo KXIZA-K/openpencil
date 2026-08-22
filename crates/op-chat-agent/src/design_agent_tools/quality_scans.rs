@@ -26,7 +26,7 @@ pub(super) const CONTRAST_ICON_TARGET: f64 = 3.0;
 /// empty AppContent and built everything in a second `Explore` — the user
 /// sees a blank artboard mid-run). Finalize's duplicate-root pass repairs
 /// the END state, but the in-loop model should merge NOW.
-pub(crate) fn scan_duplicate_root_issues(nodes: &[PenNode]) -> Vec<String> {
+pub fn scan_duplicate_root_issues(nodes: &[PenNode]) -> Vec<String> {
     use std::collections::HashMap;
     let mut by_name: HashMap<&str, Vec<&PenNode>> = HashMap::new();
     for node in nodes {
@@ -76,7 +76,7 @@ pub(crate) fn scan_duplicate_root_issues(nodes: &[PenNode]) -> Vec<String> {
 /// as a SIBLING — the bell floats alone in a full-width strip above the
 /// greeting (measured: "Header Row" = [bell], "Good evening" outside it,
 /// test0711-22). Which text belongs in the row is intent, so this echoes.
-pub(crate) fn scan_header_icon_row_issues(nodes: &[PenNode]) -> Vec<String> {
+pub fn scan_header_icon_row_issues(nodes: &[PenNode]) -> Vec<String> {
     let mut out = Vec::new();
     fn walk(nodes: &[PenNode], out: &mut Vec<String>) {
         for node in nodes {
@@ -114,7 +114,7 @@ pub(crate) fn scan_header_icon_row_issues(nodes: &[PenNode]) -> Vec<String> {
     out
 }
 
-pub(crate) fn scan_empty_shells(nodes: &[PenNode]) -> Vec<String> {
+pub fn scan_empty_shells(nodes: &[PenNode]) -> Vec<String> {
     let mut out = Vec::new();
     fn walk(nodes: &[PenNode], parent_layout_is_none: bool, out: &mut Vec<String>) {
         for (index, node) in nodes.iter().enumerate() {
@@ -234,7 +234,7 @@ pub(super) fn rects_near_same_size(a: (f64, f64, f64, f64), b: (f64, f64, f64, f
     w_diff <= 0.2 && h_diff <= 0.2
 }
 
-pub(crate) fn scan_ring_issues(nodes: &[PenNode]) -> Vec<String> {
+pub fn scan_ring_issues(nodes: &[PenNode]) -> Vec<String> {
     const MIN_RING_SIZE: f64 = 48.0;
     const HAIRLINE: f32 = 2.5;
     let mut out = op_design_lint::detect_missing_progress_rings(nodes)
@@ -517,7 +517,7 @@ pub(super) fn contrast_hint(issues: &[ContrastIssue]) -> String {
 
 /// `pub(crate)` — reused by the live-MCP indicator hook (`mcp_live.rs`)
 /// for the same "reveal_started_ms" clock read.
-pub(crate) fn reveal_now_millis() -> u64 {
+pub fn reveal_now_millis() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis().min(u128::from(u64::MAX)) as u64)

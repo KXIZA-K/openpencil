@@ -18,6 +18,16 @@ Studio's bundled JBR works):
 export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 export ANDROID_NDK_HOME="$HOME/Library/Android/sdk/ndk/<version>"
 
+# rquickjs-sys (QuickJS behind op-mcp's `script` feature, pulled in by the
+# editor's design pipeline) generates its FFI bindings at build time on
+# Android (no pregenerated bindings for these triples). cargo-ndk exports
+# CC/CFLAGS, but bindgen's own libclang reads neither — without these it
+# parses the QuickJS headers against the HOST sysroot and fails with
+# "stdio.h not found". Adjust the prebuilt dir for a Linux host.
+NDK_SYSROOT="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/darwin-x86_64/sysroot"
+export BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android="--target=aarch64-linux-android26 --sysroot=$NDK_SYSROOT"
+export BINDGEN_EXTRA_CLANG_ARGS_x86_64_linux_android="--target=x86_64-linux-android26 --sysroot=$NDK_SYSROOT"
+
 # Build the cdylib into the Debug-only jniLibs source set (arm64-v8a + x86_64),
 # then install. Release has a separate empty source set by default:
 # `editor` forwards to op-engine-ffi/editor (full desktop chrome).

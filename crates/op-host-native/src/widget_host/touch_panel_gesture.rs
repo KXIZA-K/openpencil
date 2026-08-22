@@ -25,6 +25,7 @@ pub(in crate::widget_host) enum TouchPanelTarget {
     FontPicker,
     Layers,
     Slides,
+    ChatTranscript,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -234,6 +235,34 @@ impl WidgetHostNative {
         true
     }
 
+    /// Defer a press inside the AI chat sheet's transcript body so a finger
+    /// drag scrolls the conversation instead of painting a text selection,
+    /// while a stationary tap still replays through the ordinary press
+    /// ladder (link taps, text-selection anchors, tool-card toggles).
+    /// Header, composer, and footer chips are outside `body_rect` and keep
+    /// their immediate press path.
+    pub(in crate::widget_host) fn begin_chat_transcript_touch_gesture(
+        &mut self,
+        ctx: &PressCtx,
+    ) -> bool {
+        let ui = &self.editor_state.editor_ui;
+        if !ui.touch_chrome() || ui.mobile_sheet != Some(MobileSheetKind::Ai) {
+            return false;
+        }
+        let Some(chat_rect) = self.ai_chat_rect(ctx.viewport_width, ctx.viewport_height) else {
+            return false;
+        };
+        let point = Point2D::new(ctx.x, ctx.y);
+        let body = op_editor_ui::widgets::AIChatPlaceholder::from_editor(&self.editor_state)
+            .owned_by(self.chat_panel_owner)
+            .body_rect(chat_rect);
+        if !body.contains(point) {
+            return false;
+        }
+        self.arm_touch_panel_gesture(ctx, TouchPanelTarget::ChatTranscript);
+        true
+    }
+
     /// Arm after the Slides sub-surface has declined and before ordinary
     /// LayerPanel code can seed its mouse reorder candidate.
     pub(in crate::widget_host) fn begin_layers_touch_gesture(&mut self, ctx: &PressCtx) -> bool {
@@ -408,6 +437,16 @@ impl WidgetHostNative {
                 }
                 dirty.is_some()
             }
+            // Same clamp + pin-to-bottom path the wheel uses; the raw finger
+            // delta makes the conversation track the finger (see the shared
+            // negation note above).
+            TouchPanelTarget::ChatTranscript => self.try_scroll_chat_transcript(
+                gesture.start.x,
+                gesture.start.y,
+                scroll_dy,
+                gesture.viewport_w,
+                gesture.viewport_h,
+            ),
         };
         // Crossing slop owns the event even when the panel has no remaining
         // overflow in this direction; never leak the move into canvas drags.
@@ -648,6 +687,7 @@ impl WidgetHostNative {
                         &self.editor_state,
                     )
             }
+            TouchPanelTarget::ChatTranscript => ui.mobile_sheet == Some(MobileSheetKind::Ai),
         }
     }
 

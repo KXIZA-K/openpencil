@@ -328,7 +328,7 @@ impl WidgetHostNative {
             return consumed;
         }
         // Tier 9 — floating Git panel, then the AI chat panel.
-        if let Some(consumed) = self.press_git_and_chat_tiers(&ctx) {
+        if let Some(consumed) = self.press_git_and_chat_tiers(&ctx, allow_touch_panel_defer) {
             return consumed;
         }
         // Tier 9a — selected-node actions paint above the canvas and own

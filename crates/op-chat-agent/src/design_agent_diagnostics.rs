@@ -17,14 +17,14 @@ use op_editor_core::EditorState;
 const LIMIT: usize = 8;
 
 #[derive(Debug, Default)]
-pub(crate) struct BatchDesignDiagnostics {
-    pub(crate) layout_issues: Vec<String>,
-    pub(crate) intent_questions: Vec<String>,
-    pub(crate) variable_issues: Vec<String>,
-    pub(crate) image_slot_candidates: Vec<String>,
+pub struct BatchDesignDiagnostics {
+    pub layout_issues: Vec<String>,
+    pub intent_questions: Vec<String>,
+    pub variable_issues: Vec<String>,
+    pub image_slot_candidates: Vec<String>,
 }
 
-pub(crate) fn collect_batch_design_diagnostics(state: &EditorState) -> BatchDesignDiagnostics {
+pub fn collect_batch_design_diagnostics(state: &EditorState) -> BatchDesignDiagnostics {
     let rects = resolved_sizes(state);
     let effective_theme = op_editor_core::variables_resolve::effective_theme(
         &state.doc,

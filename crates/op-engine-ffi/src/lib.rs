@@ -40,6 +40,10 @@ mod editor_auth_window_tests;
 #[cfg(feature = "editor")]
 mod editor_chat;
 #[cfg(feature = "editor")]
+mod editor_chat_design;
+#[cfg(feature = "editor")]
+mod editor_chat_design_tools;
+#[cfg(feature = "editor")]
 mod editor_chat_turn;
 #[cfg(feature = "editor")]
 mod editor_collab;
@@ -99,6 +103,7 @@ pub use editor_export::{
 #[cfg(feature = "editor")]
 pub use editor_ime::{
     op_editor_ime_commit, op_editor_ime_focused, op_editor_ime_preedit, op_editor_paste_text,
+    op_editor_take_copy_text,
 };
 #[cfg(feature = "editor")]
 pub use editor_transform::{op_editor_begin_transform, op_editor_hover, op_editor_wheel};

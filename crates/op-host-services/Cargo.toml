@@ -13,7 +13,7 @@ path = "src/lib.rs"
 [features]
 default = []
 # Mirrors op-host-desktop's debug-tools toggle for the MCP server.
-mcp-debug-tools = ["op-mcp/debug-tools"]
+mcp-debug-tools = ["op-mcp/debug-tools", "op-chat-agent/mcp-debug-tools"]
 # Production release lane; forwarded by op-host-web-server.
 pinned-skia-binaries = ["skia-safe/no-compile"]
 # Dev-only collaboration tickets for the serve-web daemon, mirroring
@@ -43,6 +43,9 @@ op-editor-host-core = { path = "../op-editor-host-core", features = [
 ] }
 op-mcp = { path = "../op-mcp", features = ["script"] }
 op-ai = { path = "../op-ai" }
+# The builtin-provider agent loop + canvas/design tool surface, factored out
+# so mobile hosts share it; this crate re-exports it under the original paths.
+op-chat-agent = { path = "../op-chat-agent" }
 op-ai-skills = { path = "../op-ai-skills" }
 op-orchestrator = { path = "../op-orchestrator" }
 op-design-lint = { path = "../op-design-lint" }

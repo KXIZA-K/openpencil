@@ -254,6 +254,11 @@ jobs:
               echo "CXX_aarch64_linux_android=$CXX" >> "$GITHUB_ENV"
               echo "AR_aarch64_linux_android=$TOOLCHAIN/llvm-ar" >> "$GITHUB_ENV"
               echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$CC" >> "$GITHUB_ENV"
+              # rquickjs-sys (op-mcp `script`, via the editor design pipeline)
+              # runs bindgen at build time on Android; bindgen's libclang
+              # reads neither CC nor CFLAGS, so hand it target + sysroot or it
+              # parses QuickJS headers against the host sysroot.
+              echo "BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android=--target=aarch64-linux-android${API_LEVEL} --sysroot=$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot" >> "$GITHUB_ENV"
               ;;
             x86_64-linux-android)
               CC="$TOOLCHAIN/x86_64-linux-android${API_LEVEL}-clang"
@@ -262,6 +267,8 @@ jobs:
               echo "CXX_x86_64_linux_android=$CXX" >> "$GITHUB_ENV"
               echo "AR_x86_64_linux_android=$TOOLCHAIN/llvm-ar" >> "$GITHUB_ENV"
               echo "CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER=$CC" >> "$GITHUB_ENV"
+              # Same bindgen story as the aarch64 arm above.
+              echo "BINDGEN_EXTRA_CLANG_ARGS_x86_64_linux_android=--target=x86_64-linux-android${API_LEVEL} --sysroot=$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot" >> "$GITHUB_ENV"
               ;;
           esac
           test -x "$CC"

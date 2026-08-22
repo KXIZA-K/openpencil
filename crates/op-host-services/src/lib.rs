@@ -22,7 +22,6 @@ pub mod acp_agent_probe_host;
 pub mod ai_proxy;
 pub mod ai_proxy_error;
 pub mod builtin_model_discovery;
-mod chat_agent_context;
 pub mod chat_agent_loop;
 pub mod chat_attachment;
 #[cfg(test)]
@@ -35,7 +34,6 @@ pub mod chat_copilot;
 pub mod chat_grok_stream;
 pub mod chat_http_server;
 pub mod chat_intent;
-mod chat_modify_sanitize;
 pub mod chat_provider_llm;
 pub mod chat_runtime;
 pub mod chat_spawn;
@@ -46,7 +44,6 @@ mod chat_subprocess_parse;
 pub mod chat_subprocess_quirks;
 mod chat_subprocess_safety;
 pub mod chat_system_prompt;
-mod chat_tool_result;
 pub mod cli_model_discovery;
 pub mod cli_modes;
 pub mod cli_probe_error;
@@ -55,7 +52,6 @@ pub mod cli_provider_probe;
 mod cli_resolver_windows;
 pub(crate) mod collab_avatar_proxy;
 pub mod collab_blocking;
-mod design_agent_diagnostics;
 #[cfg(test)]
 mod design_agent_reflow_tests;
 #[cfg(test)]

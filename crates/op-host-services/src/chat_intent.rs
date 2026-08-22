@@ -55,8 +55,10 @@ use crate::chat_canvas_tools::UiChatToolExecutor;
 use crate::chat_provider_llm::ChatProviderLlmClient;
 use crate::design_session::{run_design_worker, DesignCmdReq, DesignDelta};
 
-#[path = "chat_intent_screen_sets.rs"]
-mod screen_sets;
+// The pure listed-screen parser moved to `op_chat_agent::screen_sets`
+// (with `EXISTING_SCREEN_CTX_CJK`, which it owns now); the LLM intent
+// pipeline itself stays here.
+use op_chat_agent::screen_sets;
 pub use screen_sets::listed_whole_screen_names;
 use screen_sets::requests_listed_whole_screens;
 
@@ -508,7 +510,7 @@ const DRAW_VERB_EN: &[&str] = &[
 ];
 /// Markers that the request points at the CURRENT screen, so it is an edit of
 /// the existing frame, not a new one.
-const EXISTING_SCREEN_CTX_CJK: &[&str] = &["这个", "这一", "当前", "现有", "此页", "这页", "这屏"];
+use op_chat_agent::screen_sets::EXISTING_SCREEN_CTX_CJK;
 
 /// True when the unit being drawn is a whole *page / screen* — "继续画一下
 /// search 页面", "再来一个登录页", "continue, add a settings screen". The named

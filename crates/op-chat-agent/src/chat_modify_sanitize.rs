@@ -1,7 +1,4 @@
-pub(crate) fn sanitize_modify_replacement(
-    incoming: &mut serde_json::Value,
-    existing: &serde_json::Value,
-) {
+pub fn sanitize_modify_replacement(incoming: &mut serde_json::Value, existing: &serde_json::Value) {
     strip_unrequested_avatar_image_border(incoming, existing);
 }
 

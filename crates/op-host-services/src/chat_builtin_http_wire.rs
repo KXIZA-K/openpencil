@@ -13,7 +13,6 @@
 
 use futures::StreamExt;
 use op_ai::chat_provider::{ChatDelta, StopReason};
-use serde_json::Value;
 use tokio::sync::mpsc;
 
 pub use op_ai::chat_sse::{map_anthropic_stop_reason, map_openai_stop_reason};
@@ -23,29 +22,10 @@ pub(crate) use op_ai::chat_sse::{
 
 use crate::chat_builtin_http::BuiltinHttpError;
 
-/// Apply the provider-specific low-reasoning control for structured design
-/// turns. The two supported wire shapes are deliberately centralized here so
-/// classic streaming and the tool-executing agent loop cannot drift or send
-/// mutually-exclusive fields together.
-pub fn apply_reasoning_wire_control(body: &mut Value, model: &str, reduce_reasoning: bool) {
-    if !reduce_reasoning {
-        return;
-    }
-    let Some(obj) = body.as_object_mut() else {
-        return;
-    };
-    match op_orchestrator::reasoning_wire_control(model) {
-        Some(op_orchestrator::ReasoningWireControl::ThinkingDisabled) => {
-            obj.remove("reasoning_effort");
-            obj.insert("thinking".into(), serde_json::json!({ "type": "disabled" }));
-        }
-        Some(op_orchestrator::ReasoningWireControl::ReasoningEffortLow) => {
-            obj.remove("thinking");
-            obj.insert("reasoning_effort".into(), Value::String("low".into()));
-        }
-        None => {}
-    }
-}
+// `apply_reasoning_wire_control` moved to `op_chat_agent::backoff` (pure
+// code motion) so the shared agent loop and mobile hosts build request
+// bodies through one entry point; re-exported unchanged.
+pub use op_chat_agent::backoff::apply_reasoning_wire_control;
 
 pub(crate) async fn pump_sse_response(
     resp: reqwest::Response,

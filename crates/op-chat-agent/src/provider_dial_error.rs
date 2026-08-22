@@ -32,7 +32,7 @@
 use std::fmt;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum ProviderDialError {
+pub enum ProviderDialError {
     /// The configured endpoint is not a parseable URL.
     NotAUrl,
     /// The URL parsed but names no host, so there is nothing to resolve or

@@ -27,7 +27,11 @@ impl WidgetHostNative {
     /// the model-picker's clamp: the offset rides `[0, max]`, and
     /// reaching the bottom re-pins the transcript to auto-follow new
     /// streamed content.
-    fn try_scroll_chat_transcript(
+    ///
+    /// `pub(in crate::widget_host)` so the mobile one-finger transcript
+    /// gesture (`touch_panel_gesture.rs`) drives the exact same
+    /// clamp + pin-to-bottom implementation the wheel path uses.
+    pub(in crate::widget_host) fn try_scroll_chat_transcript(
         &mut self,
         x: f32,
         y: f32,

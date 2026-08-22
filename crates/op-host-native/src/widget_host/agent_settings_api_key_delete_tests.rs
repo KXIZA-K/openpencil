@@ -295,15 +295,17 @@ fn touch_delete_provider_row_removes_the_agent() {
         "Provider".into(),
         0,
     );
-    // Locate the delete row inside the expanded card through the real
-    // hit-test: probe every y inside the card until the hit resolves to
-    // RemoveBuiltinAgent, then press there.
+    // Locate the delete affordance inside the expanded card through the
+    // real hit-test. The action row is Save-primary with a trailing
+    // destructive square, so probe near the row's right edge for
+    // RemoveBuiltinAgent — and assert the centre of the same row resolves
+    // to the Save action, guarding the primary/secondary split.
     let point = {
         let (panel, panel_rect) = host.agent_settings_geometry(TOUCH_VIEWPORT_W, TOUCH_VIEWPORT_H);
         let content = panel.resolved_content_viewport(panel_rect);
         let scroll = panel.effective_scroll(panel_rect);
         let mut found = None;
-        let x = content.origin.x + content.size.x / 2.0;
+        let x = content.origin.x + content.size.x - 40.0;
         let mut y = content.origin.y;
         while y < content.origin.y + content.size.y {
             let hit = panel.hit_test(panel_rect, op_editor_ui::Point2D::new(x, y));
@@ -312,6 +314,15 @@ fn touch_delete_provider_row_removes_the_agent() {
                     0,
                 )
             {
+                let centre_hit = panel.hit_test(
+                    panel_rect,
+                    op_editor_ui::Point2D::new(content.origin.x + content.size.x / 2.0, y),
+                );
+                assert_eq!(
+                    centre_hit,
+                    op_editor_ui::widgets::agent_settings_panel::AgentSettingsHit::SaveBuiltinAgentEditing(0),
+                    "the action row's centre must be the primary Save button"
+                );
                 found = Some(op_editor_ui::Point2D::new(x, y));
                 break;
             }
