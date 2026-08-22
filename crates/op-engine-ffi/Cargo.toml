@@ -29,10 +29,14 @@ gl = ["jian-skia/gl"]
 editor = [
   "op-host-native/widget-host",
   "op-host-native/collab-host",
+  "dep:op-ai",
   "dep:op-builtin-model-discovery",
   "dep:op-collab-host",
   "dep:op-collab-transport",
+  "dep:op-editor-host-core",
   "dep:op-render-export",
+  "dep:futures",
+  "dep:reqwest",
   "dep:tokio",
   "dep:zeroize",
 ]
@@ -63,6 +67,21 @@ op-builtin-model-discovery = { path = "../op-builtin-model-discovery", optional 
 op-collab-host = { path = "../op-collab-host", optional = true }
 op-collab-transport = { path = "../op-collab-transport", optional = true }
 op-config-store = { path = "../op-config-store" }
+# Shared desktop settings persistence (`settings.json` load / save /
+# fingerprint) — the mobile editor persists agent/provider settings into
+# the shell's private storage root through the exact desktop code path.
+# `default-features = false` keeps the chat/codegen/design closures out of
+# the mobile build; only the file-IO slice is linked.
+op-editor-host-core = { path = "../op-editor-host-core", default-features = false, features = [
+  "settings-io",
+  # The transport-free chat turn worker (`ChatSession` poll/fold) behind the
+  # mobile chat pump. Pulls only op-ai + serde_json — none of the
+  # codegen/design closures.
+  "chat",
+], optional = true }
+# Transport-free chat shapes + the shared SSE payload parsers the mobile
+# chat pump streams through (`op_ai::chat_sse`).
+op-ai = { path = "../op-ai", optional = true }
 # Mobile-safe raster/SVG/PDF export core. This intentionally stays separate
 # from op-host-services so player builds never pull daemon/QuickJS/process IO.
 op-render-export = { path = "../op-render-export", optional = true }
@@ -84,6 +103,18 @@ serde_json = { workspace = true }
 tokio = { version = "1", default-features = false, features = [
   "rt-multi-thread",
   "time",
+], optional = true }
+# Mobile chat turns stream over HTTPS. `rustls-tls` bundles the webpki
+# roots — mobile OSes expose no /etc/ssl/certs, so a native-cert root
+# store would be empty and every provider dial would fail TLS verification
+# (the same failure mode fixed for collaboration in op-collab-relay-client).
+reqwest = { version = "0.12", default-features = false, features = [
+  "rustls-tls",
+  "json",
+  "stream",
+], optional = true }
+futures = { version = "0.3", default-features = false, features = [
+  "std",
 ], optional = true }
 zeroize = { version = "1", optional = true }
 

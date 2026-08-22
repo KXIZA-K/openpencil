@@ -3766,6 +3766,9 @@ dependencies = [
 [[package]]
 name = "op-ai"
 version = "0.8.5"
+dependencies = [
+ "serde_json",
+]
 
 [[package]]
 name = "op-ai-skills"
@@ -4100,12 +4103,15 @@ dependencies = [
 name = "op-editor-host-core"
 version = "0.8.5"
 dependencies = [
+ "dirs 5.0.1",
  "jian-ops-schema",
  "op-ai",
  "op-ai-skills",
  "op-codegen",
  "op-collab",
+ "op-config-store",
  "op-editor-core",
+ "op-i18n",
  "op-orchestrator",
  "serde",
  "serde_json",
@@ -4138,18 +4144,22 @@ dependencies = [
 name = "op-engine-ffi"
 version = "0.8.5"
 dependencies = [
+ "futures",
  "jian-core",
  "jian-ops-schema",
  "jian-skia",
+ "op-ai",
  "op-builtin-model-discovery",
  "op-collab-host",
  "op-collab-transport",
  "op-config-store",
  "op-editor-core",
+ "op-editor-host-core",
  "op-editor-ui",
  "op-host-native",
  "op-pen-loader",
  "op-render-export",
+ "reqwest 0.12.28",
  "serde_json",
  "skia-safe",
  "tokio",
