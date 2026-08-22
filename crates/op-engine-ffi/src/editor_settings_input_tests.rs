@@ -8,6 +8,7 @@ use crate::desc::{Callbacks, CreateOptions};
 use crate::editor::{
     op_editor_key, op_editor_press, op_editor_release, op_editor_text, KEY_BACKSPACE, KEY_DELETE,
 };
+use crate::editor_ime::{op_editor_ime_commit, op_editor_ime_preedit};
 use crate::lifecycle::{OpEngine, Session};
 use crate::OpStatus;
 use op_editor_core::agent_settings::{BuiltinAgentField, SettingsFocus};
@@ -200,4 +201,126 @@ fn mobile_key_delete_edits_settings_field_and_never_deletes_nodes() {
         node_count,
         "KEY_DELETE in a settings field must never remove canvas nodes"
     );
+}
+
+/// Focus a settings field with `text` seeded into the shared draft, the
+/// way the modal's edit press does it on device.
+fn focus_settings_field(engine: &mut OpEngine, field: BuiltinAgentField, text: &str) {
+    let host = engine.session_mut_for_test().editor_mut().unwrap();
+    let state = host.editor_state_mut();
+    state.editor_ui.agent_settings_open = true;
+    state
+        .editor_ui
+        .agent_settings
+        .add_builtin_agent_with_defaults("Provider", "sk-old", "model-0");
+    state.editor_ui.agent_settings.focus = Some(SettingsFocus::BuiltinAgent { index: 0, field });
+    op_editor_core::host_ui_transitions::set_settings_input_text(
+        &mut state.editor_ui,
+        text.into(),
+        0,
+    );
+}
+
+fn ime_preedit(pointer: *mut OpEngine, text: &str) {
+    let sel = text.len();
+    assert_eq!(
+        unsafe { op_editor_ime_preedit(pointer, text.as_ptr(), text.len(), sel, sel) },
+        OpStatus::Ok
+    );
+}
+
+fn ime_commit(pointer: *mut OpEngine, text: &str) {
+    assert_eq!(
+        unsafe { op_editor_ime_commit(pointer, text.as_ptr(), text.len()) },
+        OpStatus::Ok
+    );
+}
+
+/// The exact iOS Chinese-IME sequence: preedit updates stream while the
+/// user types pinyin, the chosen candidate lands as an IME commit, and a
+/// following backspace key must delete exactly the committed character.
+/// Green here means the engine's IME path into settings inputs is healthy
+/// and the on-device "cannot delete" defect lives in the platform bridge.
+#[test]
+fn mobile_ime_preedit_commit_then_backspace_deletes_in_settings_field() {
+    let mut engine = phone_engine();
+    let pointer = &mut engine as *mut OpEngine;
+    focus_settings_field(&mut engine, BuiltinAgentField::DisplayName, "Provider");
+
+    ime_preedit(pointer, "s");
+    ime_preedit(pointer, "si");
+    assert_eq!(
+        settings_input_text(&mut engine),
+        "Provider",
+        "preedit must not mutate the settings draft"
+    );
+
+    ime_commit(pointer, "四");
+    assert_eq!(settings_input_text(&mut engine), "Provider四");
+
+    assert_eq!(
+        unsafe { op_editor_key(pointer, KEY_BACKSPACE) },
+        OpStatus::Ok
+    );
+    assert_eq!(
+        settings_input_text(&mut engine),
+        "Provider",
+        "one backspace after an IME commit must delete exactly one char"
+    );
+}
+
+/// Interleaved shell-text and IME-commit input into the API-key field —
+/// the way a Chinese keyboard mixes its ASCII passthrough with candidate
+/// commits — followed by a full backspace teardown.
+#[test]
+fn mobile_interleaved_text_and_ime_commit_backspace_teardown() {
+    let mut engine = phone_engine();
+    let pointer = &mut engine as *mut OpEngine;
+    focus_settings_field(&mut engine, BuiltinAgentField::ApiKey, "");
+
+    let typed = "sk";
+    assert_eq!(
+        unsafe { op_editor_text(pointer, typed.as_ptr(), typed.len()) },
+        OpStatus::Ok
+    );
+    ime_preedit(pointer, "si");
+    ime_commit(pointer, "四");
+    let typed = "x";
+    assert_eq!(
+        unsafe { op_editor_text(pointer, typed.as_ptr(), typed.len()) },
+        OpStatus::Ok
+    );
+    assert_eq!(settings_input_text(&mut engine), "sk四x");
+
+    for expected in ["sk四", "sk", "s", "", ""] {
+        assert_eq!(
+            unsafe { op_editor_key(pointer, KEY_BACKSPACE) },
+            OpStatus::Ok
+        );
+        assert_eq!(settings_input_text(&mut engine), expected);
+    }
+}
+
+/// A cancelled composition arrives as an empty IME commit (iOS) or an
+/// empty preedit (Android). Neither may disturb the draft, and backspace
+/// must keep working afterwards.
+#[test]
+fn mobile_cancelled_composition_leaves_settings_backspace_healthy() {
+    let mut engine = phone_engine();
+    let pointer = &mut engine as *mut OpEngine;
+    focus_settings_field(&mut engine, BuiltinAgentField::DisplayName, "Provider");
+
+    ime_preedit(pointer, "si");
+    ime_commit(pointer, "");
+    assert_eq!(settings_input_text(&mut engine), "Provider");
+
+    ime_preedit(pointer, "si");
+    ime_preedit(pointer, "");
+    assert_eq!(settings_input_text(&mut engine), "Provider");
+
+    assert_eq!(
+        unsafe { op_editor_key(pointer, KEY_BACKSPACE) },
+        OpStatus::Ok
+    );
+    assert_eq!(settings_input_text(&mut engine), "Provide");
 }

@@ -62,6 +62,13 @@ pub unsafe extern "C" fn op_editor_take_shell_action(
     }
 }
 
+/// Apply a UI locale by BCP-47 tag ("zh-CN", "en-US", …). Unsupported tags
+/// are rejected so the shell's picker cannot silently fall back.
+///
+/// # Safety
+///
+/// `engine` must be live and called on its owner thread; a non-empty byte
+/// range must cover readable UTF-8 for its declared length.
 #[no_mangle]
 pub unsafe extern "C" fn op_editor_set_locale(
     engine: *mut crate::OpEngine,

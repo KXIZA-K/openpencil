@@ -37,10 +37,9 @@ final class OpPlayerView: UIView, UITextViewDelegate, UIDocumentPickerDelegate {
     private var lastMidpoint = CGPoint.zero
     private var lastPinchDistance: CGFloat = 0
 
-    // ---- IME bridge ----------------------------------------------------
+    // ---- IME bridge (delegate methods in OpPlayerView+ImeBridge.swift) --
     let imeTextView = ImeConduitTextView()
-    private var wasComposing = false
-    private var composingSelection = NSRange(location: 0, length: 0)
+    var wasComposing = false
 
     private var metalLayer: CAMetalLayer {
         guard let layer = layer as? CAMetalLayer else {
@@ -129,76 +128,6 @@ final class OpPlayerView: UIView, UITextViewDelegate, UIDocumentPickerDelegate {
         imeTextView.isHidden = false
         imeTextView.isUserInteractionEnabled = false
         addSubview(imeTextView)
-    }
-
-    /// The engine's IME focus flipped; show or hide the system keyboard.
-    func imeFocusChanged(_ focused: Bool) {
-        if focused {
-            if !imeTextView.isFirstResponder {
-                imeTextView.becomeFirstResponder()
-            }
-        } else {
-            if imeTextView.isFirstResponder {
-                imeTextView.resignFirstResponder()
-            }
-        }
-    }
-
-    func textViewDidChange(_ textView: UITextView) {
-        guard host.editorMode else { return }
-        let marked = markedText(of: textView)
-        if let marked {
-            // Composition update: forward the marked text + caret.
-            wasComposing = true
-            let markedRange = textView.markedTextRange
-            let selection = textView.selectedTextRange
-            var selStart = 0
-            var selEnd = 0
-            if let markedRange, let selection {
-                let startOffset = textView.offset(from: textView.beginningOfDocument, to: selection.start)
-                let endOffset = textView.offset(from: textView.beginningOfDocument, to: selection.end)
-                let markedStartOffset = textView.offset(from: textView.beginningOfDocument, to: markedRange.start)
-                selStart = max(0, startOffset - markedStartOffset)
-                selEnd = max(0, endOffset - markedStartOffset)
-            }
-            composingSelection = NSRange(location: selStart, length: selEnd - selStart)
-            host.editorImePreedit(marked, selection: selStart..<selEnd)
-        } else if wasComposing {
-            // The composition committed: send the marked text that just
-            // landed as the commit payload.
-            wasComposing = false
-            let committed = (textView.text as NSString).substring(with: composingSelection)
-            host.editorImeCommit(committed.isEmpty ? textView.text : committed)
-        }
-        host.requestImmediateFrame()
-    }
-
-    func textView(
-        _ textView: UITextView,
-        shouldChangeTextIn range: NSRange,
-        replacementText text: String
-    ) -> Bool {
-        guard host.editorMode else { return true }
-        // While composing, the system owns the edit (preedit updates flow
-        // through textViewDidChange).
-        if markedText(of: textView) != nil {
-            return true
-        }
-        if text == "\n" {
-            host.editorKey(Int32(OpKey_Enter))
-            host.requestImmediateFrame()
-            return false
-        }
-        if range.length == 0 {
-            // Plain insertion (typing / paste).
-            host.editorText(text)
-        } else {
-            // Deletion at the caret.
-            let atEnd = range.location + range.length >= (textView.text as NSString).length
-            host.editorKey(Int32(atEnd ? OpKey_Backspace : OpKey_Delete))
-        }
-        host.requestImmediateFrame()
-        return false
     }
 
     // MARK: - Page overlay
@@ -731,11 +660,6 @@ final class OpPlayerView: UIView, UITextViewDelegate, UIDocumentPickerDelegate {
         lastKnownPoint = lastMidpoint
     }
 
-    private func markedText(of textView: UITextView) -> String? {
-        guard let range = textView.markedTextRange else { return nil }
-        return textView.text(in: range)
-    }
-
     private func keyboardFrameDidChange(_ notification: Notification) {
         // The notification only schedules convergence. Its frame is in screen
         // coordinates and is easy to mis-convert for Stage Manager windows;
@@ -772,15 +696,27 @@ final class OpPlayerView: UIView, UITextViewDelegate, UIDocumentPickerDelegate {
 /// IME conduit: a 1×1 offscreen text view whose only job is forwarding
 /// keyboard/IME events to the engine. `deleteBackward` fires even when the
 /// conduit is empty — the delegate path does not — so plain backspace is
-/// forwarded from here.
+/// forwarded from here. Chinese IMEs (讯飞/百度-style) delete through this
+/// UIKeyInput entry without consulting shouldChangeTextIn at all, so this
+/// override is the ONLY reliable delete path outside a composition.
 final class ImeConduitTextView: UITextView {
     var onEmptyDeleteBackward: (() -> Void)?
 
     override func deleteBackward() {
-        if markedTextRange == nil, text.isEmpty {
-            onEmptyDeleteBackward?()
+        // While composing, the IME owns the edit: shrinking the marked
+        // text flows back through textViewDidChange as a preedit update.
+        if markedTextRange != nil {
+            super.deleteBackward()
             return
         }
-        super.deleteBackward()
+        // Outside a composition the conduit is kept empty and every
+        // backspace belongs to the engine. Defensively drop any residual
+        // conduit text first — an accumulated conduit would otherwise
+        // swallow deletes into invisible text and the engine would never
+        // hear the key.
+        if !text.isEmpty {
+            text = ""
+        }
+        onEmptyDeleteBackward?()
     }
 }

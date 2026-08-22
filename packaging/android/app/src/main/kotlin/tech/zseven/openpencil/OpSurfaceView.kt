@@ -313,6 +313,11 @@ class OpSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Call
         // UI replaces nearly the entire app with a full-screen text surface.
         outAttrs.imeOptions =
             EditorInfo.IME_ACTION_DONE or EditorInfo.IME_FLAG_NO_EXTRACT_UI
+        // The connection's editable is a constant sentinel (see
+        // OpInputConnection); report a matching cursor so IMEs see a
+        // consistent "one char before the caret" and always emit deletes.
+        outAttrs.initialSelStart = OpInputConnection.SENTINEL.length
+        outAttrs.initialSelEnd = OpInputConnection.SENTINEL.length
         return OpInputConnection(this, engine)
     }
 
