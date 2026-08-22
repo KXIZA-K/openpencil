@@ -5,7 +5,10 @@
 //! with leftovers reports them in the same line, and a turn whose executor
 //! checked nothing gets no credential at all.
 
-use super::tests::{run_loop_collect, serve_sse_script, update_node_tool_def, ScriptedExecutor};
+use super::tests::{
+    anthropic_tool_use_turn, run_loop_collect, serve_sse_script, update_node_tool_def,
+    ScriptedExecutor,
+};
 use super::*;
 
 fn anthropic_text_turn() -> String {
@@ -54,7 +57,7 @@ fn credential_line(deltas: &[ChatDelta]) -> Option<String> {
 
 #[test]
 fn clean_run_still_earns_a_visible_credential() {
-    let (base, _req_rx) = serve_sse_script(vec![anthropic_text_turn()]);
+    let (base, _req_rx) = serve_sse_script(vec![anthropic_tool_use_turn(), anthropic_text_turn()]);
     let executor = ScriptedExecutor::ok(r#"{"success":true,"data":{}}"#)
         .with_quality_finalize(&["layout", "overflow", "hierarchy"], &[]);
     let (outcome, deltas) = run_loop_collect(base_cfg(&base, executor, true), true);
@@ -73,7 +76,7 @@ fn clean_run_still_earns_a_visible_credential() {
 
 #[test]
 fn repairs_are_reported_with_their_real_count() {
-    let (base, _req_rx) = serve_sse_script(vec![anthropic_text_turn()]);
+    let (base, _req_rx) = serve_sse_script(vec![anthropic_tool_use_turn(), anthropic_text_turn()]);
     let executor = ScriptedExecutor::ok(r#"{"success":true,"data":{}}"#).with_quality_finalize(
         &["layout", "overflow", "structure"],
         &[("layout", 2), ("structure", 4)],
@@ -94,7 +97,11 @@ fn repairs_are_reported_with_their_real_count() {
 
 #[test]
 fn leftover_blockers_are_counted_into_the_credential() {
-    let (base, _req_rx) = serve_sse_script(vec![anthropic_text_turn(); 4]);
+    let (base, _req_rx) = serve_sse_script(
+        std::iter::once(anthropic_tool_use_turn())
+            .chain(std::iter::repeat_with(anthropic_text_turn).take(4))
+            .collect(),
+    );
     // Blockers persist past the nudge budget, so the loop reaches its honest
     // report tier with two issues still open. The credential must agree with
     // the report lines above it instead of softening them.
@@ -122,7 +129,11 @@ fn leftover_blockers_are_counted_into_the_credential() {
 
 #[test]
 fn credential_lands_after_the_problem_lines_it_summarizes() {
-    let (base, _req_rx) = serve_sse_script(vec![anthropic_text_turn(); 4]);
+    let (base, _req_rx) = serve_sse_script(
+        std::iter::once(anthropic_tool_use_turn())
+            .chain(std::iter::repeat_with(anthropic_text_turn).take(4))
+            .collect(),
+    );
     let executor = ScriptedExecutor::ok(r#"{"success":true,"data":{}}"#)
         .with_blocker_check(&[("nav", "unbound tab: Home")])
         .with_blocker_check(&[("nav", "unbound tab: Home")])
@@ -155,7 +166,7 @@ fn credential_lands_after_the_problem_lines_it_summarizes() {
 fn executor_that_checked_nothing_gets_no_credential() {
     // Default scripted executor: `finalize` returns an empty quality summary,
     // exactly like a host that owns no live document.
-    let (base, _req_rx) = serve_sse_script(vec![anthropic_text_turn()]);
+    let (base, _req_rx) = serve_sse_script(vec![anthropic_tool_use_turn(), anthropic_text_turn()]);
     let executor = ScriptedExecutor::ok(r#"{"success":true,"data":{}}"#);
     let (outcome, deltas) = run_loop_collect(base_cfg(&base, executor, true), true);
     assert_eq!(outcome, Ok(true));

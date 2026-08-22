@@ -263,18 +263,63 @@ async fn finalize_and_report(
     tx: &mpsc::Sender<ChatDelta>,
     executor: &Arc<dyn ChatToolExecutor>,
     enabled: bool,
+    zero_write: Option<&str>,
 ) -> UnfilledScreensReport {
     let finalized = run_loop_finalize(executor, enabled).await;
     report_unfilled_if_any(tx, &finalized.screens.unfilled).await;
     let blocker_report = blockers::check_blockers(executor, enabled).await;
     report_blockers_if_any(tx, &blocker_report).await;
+    // Zero-write honesty (the empty-canvas postmortem): a design run that
+    // never landed a write must never read, in the transcript, like a clean
+    // success — and the stop/finish reason rides along so the NEXT such
+    // field failure is diagnosable from the transcript alone (a truncated
+    // reasoning budget, a voluntary stop, and a spent turn cap all look
+    // identical without it).
+    if let Some(stop_detail) = zero_write {
+        let _ = tx
+            .send(ChatDelta::TextDelta(format!(
+                "\n\n• The run ended without applying any design write — \
+                 the canvas is unchanged (stop reason: {stop_detail})."
+            )))
+            .await;
+    }
     // The positive half of the same tail: what the deterministic passes
     // checked and repaired. Emitted LAST so it reads as the closing receipt
     // over whatever problem lines precede it, and its leftover count is the
     // sum of exactly those lines — never a separate, softer number.
-    let remaining = finalized.screens.unfilled.len() + blocker_report.blockers.len();
+    let remaining = finalized.screens.unfilled.len()
+        + blocker_report.blockers.len()
+        + usize::from(zero_write.is_some());
     report_quality_credential(tx, &finalized.quality, remaining).await;
     finalized.screens
+}
+
+/// One dedicated corrective round for a design run that has not applied a
+/// single successful write-level tool call ("zero-write") — the postmortem
+/// shape where a starved or distracted model reads the canvas, narrates,
+/// and stops, leaving the canvas empty while the transcript looks clean.
+/// Like the fill/salvage/blocker pools this is a SEPARATE budget: the
+/// nudge round does not count against `max_turns`, and one round is enough
+/// — a model that ignores an explicit "the canvas is EMPTY, build now"
+/// contract will not do better on a second copy of it.
+const ZERO_WRITE_MAX_ROUNDS: usize = 1;
+
+/// The zero-write contract nudge. Script-first on purpose: this fires on
+/// exactly the weak-model runs where the build protocol needs restating.
+const ZERO_WRITE_NUDGE: &str = "You have not created any nodes — the canvas is EMPTY and \
+nothing you described exists yet. Build the design NOW by calling batch_design with a \
+`script` argument containing a JavaScript program of I(parent, node) calls. Do not stop \
+again before the design is on the canvas.";
+
+/// Whether the zero-write corrective round is owed at a voluntary stop.
+fn zero_write_round_owed(finalize_on_exit: bool, wrote: bool, rounds_used: usize) -> bool {
+    finalize_on_exit && !wrote && rounds_used < ZERO_WRITE_MAX_ROUNDS
+}
+
+/// The `zero_write` argument for [`finalize_and_report`]: `Some(stop
+/// detail)` when this design run never applied a successful write.
+fn zero_write_detail(finalize_on_exit: bool, wrote: bool, stop_detail: &str) -> Option<String> {
+    (finalize_on_exit && !wrote).then(|| stop_detail.to_string())
 }
 
 /// Append the user-visible quality credential. Silent when the executor
@@ -447,6 +492,13 @@ mod quality_tests;
 #[cfg(test)]
 #[path = "chat_agent_loop_retry_tests.rs"]
 mod retry_tests;
+
+// Zero-write completion-gate tests (the empty-canvas postmortem) — same
+// split rationale and shared scripted-executor + loopback-SSE infra as the
+// blocker tests above.
+#[cfg(test)]
+#[path = "chat_agent_loop_zero_write_tests.rs"]
+mod zero_write_tests;
 
 #[cfg(test)]
 #[path = "chat_agent_loop_wire_tests.rs"]

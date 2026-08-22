@@ -246,3 +246,42 @@ pub fn apply_reasoning_wire_control(body: &mut Value, model: &str, reduce_reason
         None => {}
     }
 }
+
+/// Anthropic-wire twin of [`apply_reasoning_wire_control`].
+///
+/// The empty-canvas postmortem: the OpenAI-compat agent loop applied the
+/// low-reasoning control and the Anthropic loop silently did not, so a
+/// reasoning model driven over its Anthropic-compatible endpoint (the
+/// DeepSeek preset's alternate API format) burned the whole 6144-token turn
+/// budget on hidden thinking — `{}`-sized read tools still fit in the
+/// leftovers, `batch_design` never did, and every design run ended as a row
+/// of green read cards over an empty canvas.
+///
+/// Wire shapes differ from the OpenAI-compat body, hence a separate entry
+/// point rather than a blind reuse:
+/// - `ThinkingDisabled` families (DeepSeek / GLM / MiniMax / Kimi K2.5-2.6)
+///   accept the Anthropic-shape `thinking: {"type": "disabled"}` — the same
+///   field the native Anthropic API documents, verified against
+///   `api.deepseek.com/anthropic`.
+/// - `ReasoningEffortLow` (Kimi K3) is an OpenAI-wire-only top-level field;
+///   no equivalent Anthropic-wire control is documented, and K3's reasoning
+///   cannot be disabled at all — so it is deliberately a no-op here rather
+///   than a guessed field that would 400 the whole run.
+pub fn apply_reasoning_wire_control_anthropic(
+    body: &mut Value,
+    model: &str,
+    reduce_reasoning: bool,
+) {
+    if !reduce_reasoning {
+        return;
+    }
+    let Some(obj) = body.as_object_mut() else {
+        return;
+    };
+    if matches!(
+        op_orchestrator::reasoning_wire_control(model),
+        Some(op_orchestrator::ReasoningWireControl::ThinkingDisabled)
+    ) {
+        obj.insert("thinking".into(), serde_json::json!({ "type": "disabled" }));
+    }
+}

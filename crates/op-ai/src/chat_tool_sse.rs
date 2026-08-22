@@ -283,16 +283,23 @@ impl AnthropicToolCollector {
         }
     }
 
-    /// The accumulated tool calls in block order.
+    /// The accumulated tool calls in block order. Blocks that never
+    /// received a name (a malformed / truncated `content_block_start`)
+    /// are dropped — same discipline as
+    /// [`OpenAiToolCollector::pending_calls`], so a nameless call can
+    /// never reach the executor as `""` and burn a turn on a guaranteed
+    /// "tool not available" error.
     pub fn tool_calls(&self) -> Vec<PendingToolCall> {
         self.blocks
             .values()
             .filter_map(|b| match b {
-                AnthropicBlock::ToolUse { id, name, json } => Some(PendingToolCall {
-                    id: id.clone(),
-                    name: name.clone(),
-                    args_json: normalized_args(json),
-                }),
+                AnthropicBlock::ToolUse { id, name, json } if !name.is_empty() => {
+                    Some(PendingToolCall {
+                        id: id.clone(),
+                        name: name.clone(),
+                        args_json: normalized_args(json),
+                    })
+                }
                 _ => None,
             })
             .collect()
@@ -321,5 +328,41 @@ impl AnthropicToolCollector {
                 _ => None,
             })
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn anthropic_collector_drops_nameless_tool_blocks() {
+        // A malformed / truncated `content_block_start` can open a tool_use
+        // block with no name; it must never reach the executor as "" (same
+        // discipline as the OpenAI collector's pending_calls filter).
+        let mut collector = AnthropicToolCollector::default();
+        collector.handle(
+            r#"{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1"}}"#,
+        );
+        collector.handle(
+            r#"{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_2","name":"update_node"}}"#,
+        );
+        let calls = collector.tool_calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "update_node");
+    }
+
+    #[test]
+    fn openai_collector_drops_nameless_tool_calls() {
+        let mut collector = OpenAiToolCollector::default();
+        collector.handle(
+            r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c0","function":{"arguments":"{}"}}]}}]}"#,
+        );
+        collector.handle(
+            r#"{"choices":[{"delta":{"tool_calls":[{"index":1,"id":"c1","function":{"name":"update_node","arguments":"{}"}}]}}]}"#,
+        );
+        let calls = collector.pending_calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].1.name, "update_node");
     }
 }

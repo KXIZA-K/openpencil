@@ -53,9 +53,9 @@ pub mod chat_builtin_http {
     pub use crate::builtin_http_error::BuiltinHttpError;
 
     pub use crate::backoff::{
-        apply_reasoning_wire_control, builtin_http_client, builtin_http_client_builder,
-        default_backoff_knobs, send_with_backoff, DESIGN_LOOP_MAX_OUTPUT_TOKENS,
-        DESIGN_LOOP_MAX_TURNS,
+        apply_reasoning_wire_control, apply_reasoning_wire_control_anthropic, builtin_http_client,
+        builtin_http_client_builder, default_backoff_knobs, send_with_backoff,
+        DESIGN_LOOP_MAX_OUTPUT_TOKENS, DESIGN_LOOP_MAX_TURNS,
     };
     pub use op_ai::chat_sse::{map_anthropic_stop_reason, map_openai_stop_reason};
 }

@@ -62,6 +62,21 @@ pub async fn run_anthropic_agent_loop(
 /// Run the Anthropic agent loop to completion. Returns `Ok(true)` when
 /// a terminal `Done` was emitted; `Err` for transport / in-stream
 /// errors (caller surfaces them as `Error + Done{Aborted}`).
+/// Assistant `content[]` for the follow-up request. A thinking-only turn
+/// accumulates NO replayable blocks (thinking is deliberately not replayed
+/// — see `AnthropicToolCollector::assistant_content`), and Anthropic
+/// rejects `content: []` with a 400 — which would poison the exact
+/// corrective rounds that exist to rescue such a turn. Synthesize a
+/// minimal text block instead.
+fn assistant_turn_content(collector: &AnthropicCollector) -> Value {
+    let content = collector.assistant_content();
+    if content.is_empty() {
+        json!([{ "type": "text", "text": "(no visible output this turn)" }])
+    } else {
+        json!(content)
+    }
+}
+
 pub(super) async fn run_anthropic_agent_loop_inner(
     cfg: AgentLoopConfig,
     tx: &mpsc::Sender<ChatDelta>,
@@ -97,6 +112,10 @@ pub(super) async fn run_anthropic_agent_loop_inner(
     // BLOCKER_NUDGE_MAX_ROUNDS`'s doc comment): blockers and unfilled
     // screens are different failure modes with independent budgets.
     let mut blocker_rounds_used = 0usize;
+    // Tier 2d — zero-write corrective-round budget; `wrote` flips on the
+    // first successful write-level tool call (see `ZERO_WRITE_MAX_ROUNDS`).
+    let mut wrote = false;
+    let mut zero_write_rounds_used = 0usize;
     let mut write_retry = CorrectiveWriteRetry::default();
     let turn_cap = cfg.max_turns.max(1);
     let mut turn = 0usize;
@@ -111,7 +130,8 @@ pub(super) async fn run_anthropic_agent_loop_inner(
         // against `turn`; it draws from `SALVAGE_MAX_ROUNDS` instead.
         if turn >= turn_cap && !corrective_write_round {
             if salvage_rounds_used >= SALVAGE_MAX_ROUNDS {
-                finalize_and_report(tx, &cfg.executor, cfg.finalize_on_exit).await;
+                let zero = zero_write_detail(cfg.finalize_on_exit, wrote, "turn budget exhausted");
+                finalize_and_report(tx, &cfg.executor, cfg.finalize_on_exit, zero.as_deref()).await;
                 let _ = tx
                     .send(ChatDelta::Done {
                         stop_reason: StopReason::MaxTokens,
@@ -127,7 +147,8 @@ pub(super) async fn run_anthropic_agent_loop_inner(
                 // unfilled screen already spent its one salvage round. Still
                 // run the Step-4 structural backstop once over whatever the
                 // run assembled, and report unconditionally.
-                finalize_and_report(tx, &cfg.executor, cfg.finalize_on_exit).await;
+                let zero = zero_write_detail(cfg.finalize_on_exit, wrote, "turn budget exhausted");
+                finalize_and_report(tx, &cfg.executor, cfg.finalize_on_exit, zero.as_deref()).await;
                 let _ = tx
                     .send(ChatDelta::Done {
                         stop_reason: StopReason::MaxTokens,
@@ -160,6 +181,17 @@ pub(super) async fn run_anthropic_agent_loop_inner(
                 .expect("anthropic request body is object")
                 .insert("system".into(), json!(cfg.system_prompt));
         }
+        // Turn OFF hidden reasoning for the families that can express it on
+        // this wire — the empty-canvas postmortem: the OpenAI-compat loop
+        // applied this control and the Anthropic loop did not, so a
+        // reasoning model on its Anthropic-compatible endpoint burned the
+        // whole turn budget on thinking and never emitted `batch_design`
+        // (see `apply_reasoning_wire_control_anthropic`'s doc).
+        crate::chat_builtin_http::apply_reasoning_wire_control_anthropic(
+            &mut body,
+            &cfg.model,
+            cfg.disable_thinking,
+        );
         let client = crate::provider_dial::client_for(cfg.dial_policy, &cfg.url).await?;
         let (max_retries, min_gap) = crate::chat_builtin_http::default_backoff_knobs();
         let resp = crate::chat_builtin_http::send_with_backoff(
@@ -206,8 +238,9 @@ pub(super) async fn run_anthropic_agent_loop_inner(
                 // / `salvage_rounds_used`). Record this turn's reply in
                 // history and defer, rather than deciding again here —
                 // deciding in both places would double-nudge.
-                messages
-                    .push(json!({ "role": "assistant", "content": collector.assistant_content() }));
+                messages.push(
+                    json!({ "role": "assistant", "content": assistant_turn_content(&collector) }),
+                );
                 continue;
             }
             // Model voluntarily stopped, still within ordinary budget. Try
@@ -219,8 +252,9 @@ pub(super) async fn run_anthropic_agent_loop_inner(
             let eligible = eligible_for_fill_round(&report.unfilled, &fill_attempts);
             if !eligible.is_empty() {
                 spend_fill_round(&mut fill_attempts, &eligible);
-                messages
-                    .push(json!({ "role": "assistant", "content": collector.assistant_content() }));
+                messages.push(
+                    json!({ "role": "assistant", "content": assistant_turn_content(&collector) }),
+                );
                 messages.push(
                     json!({ "role": "user", "content": contract_nudge_text(&report.committed, &eligible) }),
                 );
@@ -239,9 +273,23 @@ pub(super) async fn run_anthropic_agent_loop_inner(
             )
             .await
             {
-                messages
-                    .push(json!({ "role": "assistant", "content": collector.assistant_content() }));
+                messages.push(
+                    json!({ "role": "assistant", "content": assistant_turn_content(&collector) }),
+                );
                 messages.push(json!({ "role": "user", "content": nudge }));
+                continue; // Does not count against `turn`.
+            }
+            // Zero-write guard (Tier 2d): the model stopped without ever
+            // applying a write — the empty-canvas shape (see the OpenAI
+            // loop's twin comment). The retry round re-applies the
+            // Anthropic-wire reasoning control, so a thinking-starved model
+            // has real budget for the write this time.
+            if zero_write_round_owed(cfg.finalize_on_exit, wrote, zero_write_rounds_used) {
+                zero_write_rounds_used += 1;
+                messages.push(
+                    json!({ "role": "assistant", "content": assistant_turn_content(&collector) }),
+                );
+                messages.push(json!({ "role": "user", "content": ZERO_WRITE_NUDGE }));
                 continue; // Does not count against `turn`.
             }
             // Nothing committed is left worth trying for: run the Step-4
@@ -251,7 +299,12 @@ pub(super) async fn run_anthropic_agent_loop_inner(
             // fires unconditionally if anything is still unfilled/blocked (a
             // screen outside this run's committed set, a blocker whose
             // round budget ran out, or the executor being a no-op).
-            finalize_and_report(tx, &cfg.executor, cfg.finalize_on_exit).await;
+            let stop_detail = collector
+                .stop_reason
+                .clone()
+                .unwrap_or_else(|| "end_turn".into());
+            let zero = zero_write_detail(cfg.finalize_on_exit, wrote, &stop_detail);
+            finalize_and_report(tx, &cfg.executor, cfg.finalize_on_exit, zero.as_deref()).await;
             let _ = tx
                 .send(ChatDelta::Done {
                     stop_reason: reason,
@@ -263,7 +316,8 @@ pub(super) async fn run_anthropic_agent_loop_inner(
             turn += 1;
         }
 
-        messages.push(json!({ "role": "assistant", "content": collector.assistant_content() }));
+        messages
+            .push(json!({ "role": "assistant", "content": assistant_turn_content(&collector) }));
         let mut results: Vec<Value> = Vec::new();
         let mut failed_write_tools = Vec::new();
         let mut corrective_write_seen = false;
@@ -277,6 +331,9 @@ pub(super) async fn run_anthropic_agent_loop_inner(
                 })
                 .await;
             let result = execute_tool(&cfg.executor, &call.name, &call.args_json).await;
+            if is_write_level(&level) && !result.is_error {
+                wrote = true;
+            }
             if is_write_level(&level) {
                 if corrective_write_round {
                     corrective_write_seen = true;

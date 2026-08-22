@@ -27,7 +27,10 @@ fn openai_loop_replays_screenshot_result_as_image_url_part() {
         "",
     ]
     .join("\n");
-    let (base, req_rx) = serve_sse_script(vec![shot_turn, text_turn]);
+    // Third body: the zero-write guard's corrective round (a screenshot is
+    // a read; this run never writes) — it stops again and the loop exits
+    // with the honest zero-write report.
+    let (base, req_rx) = serve_sse_script(vec![shot_turn, text_turn.clone(), text_turn]);
     let screenshot_result = serde_json::json!({
         "success": true,
         "data": { "image_base64": TINY_PNG_B64, "format": "png" }
@@ -115,6 +118,8 @@ fn openai_loop_keeps_only_latest_screenshot_without_dropping_user_intent() {
     let (base, req_rx) = serve_sse_script(vec![
         shot_turn("call_shot_1"),
         shot_turn("call_shot_2"),
+        text_turn.clone(),
+        // The zero-write guard's corrective round — reads only, no writes.
         text_turn,
     ]);
     let first_screenshot_result = serde_json::json!({
@@ -193,7 +198,13 @@ fn model_stop_with_budget_left_gets_a_fill_round_then_reports_nothing_once_fille
     // immediately. Turn 2: model stops again; this time the check reports
     // nothing left unfilled (the fill round "worked") → straight to
     // finalize, which also finds nothing left.
-    let (base, req_rx) = serve_sse_script(vec![anthropic_text_turn(), anthropic_text_turn()]);
+    // Leading write turn keeps the zero-write guard out of scope — this
+    // test's subject is the fill-round tier alone.
+    let (base, req_rx) = serve_sse_script(vec![
+        anthropic_tool_use_turn(),
+        anthropic_text_turn(),
+        anthropic_text_turn(),
+    ]);
     let executor = ScriptedExecutor::ok(r#"{"success":true,"data":{}}"#)
         .with_unfilled_check(&["Trips", "Destination", "Saved"], &["Saved"])
         .with_unfilled_check(&["Trips", "Destination", "Saved"], &[]);
@@ -227,14 +238,15 @@ fn model_stop_with_budget_left_gets_a_fill_round_then_reports_nothing_once_fille
     // The fill round's contract line — the FULL commitment, not just the
     // gap — actually rode the follow-up request as a real turn.
     let _first = req_rx.recv().expect("first request captured");
-    let second = req_rx
+    let _second = req_rx.recv().expect("post-write request captured");
+    let third = req_rx
         .recv()
         .expect("fill-round follow-up request captured");
     assert!(
-        second.contains("You committed 3 screens (Trips/Destination/Saved)")
-            && second.contains("Saved is still empty")
-            && second.contains("Complete it before finishing"),
-        "the fill round's contract line must state the full commitment, got: {second}"
+        third.contains("You committed 3 screens (Trips/Destination/Saved)")
+            && third.contains("Saved is still empty")
+            && third.contains("Complete it before finishing"),
+        "the fill round's contract line must state the full commitment, got: {third}"
     );
 
     // Nothing left unfilled after the fill round → no tier-3 report line.
@@ -261,6 +273,7 @@ fn model_stop_repeatedly_failing_the_same_screen_is_capped_then_honestly_reporte
     // deliberately generous so ONLY the per-screen cap — not the ordinary
     // turn budget — is what ends the retrying.
     let (base, _req_rx) = serve_sse_script(vec![
+        anthropic_tool_use_turn(),
         anthropic_text_turn(),
         anthropic_text_turn(),
         anthropic_text_turn(),

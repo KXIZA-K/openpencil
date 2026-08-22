@@ -69,7 +69,7 @@ impl ScriptedExecutor {
         })
     }
 
-    fn calls(&self) -> Vec<(String, String)> {
+    pub(super) fn calls(&self) -> Vec<(String, String)> {
         self.calls.lock().unwrap().clone()
     }
 
@@ -309,7 +309,7 @@ const TINY_PNG_B64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lE
 const SECOND_TINY_PNG_B64: &str =
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Zl9sAAAAASUVORK5CYII=";
 
-fn anthropic_tool_use_turn() -> String {
+pub(super) fn anthropic_tool_use_turn() -> String {
     [
         r#"data: {"type":"message_start"}"#,
         "",
@@ -666,8 +666,12 @@ fn screenshot_image_base64_extracts_from_png_result_only() {
 
 #[test]
 fn anthropic_loop_replays_screenshot_result_as_image_content_block() {
-    let (base, req_rx) =
-        serve_sse_script(vec![anthropic_get_screenshot_turn(), anthropic_text_turn()]);
+    let (base, req_rx) = serve_sse_script(vec![
+        anthropic_get_screenshot_turn(),
+        anthropic_text_turn(),
+        // The zero-write guard's corrective round (screenshot is a read).
+        anthropic_text_turn(),
+    ]);
     // The executor returns exactly what the real get_screenshot MCP tool returns.
     // Match the real MCP dispatch envelope, not the old bare-payload test
     // double that hid the production extraction bug.

@@ -75,6 +75,10 @@ pub(super) async fn run_openai_agent_loop_inner(
     // BLOCKER_NUDGE_MAX_ROUNDS`'s doc comment): blockers and unfilled
     // screens are different failure modes with independent budgets.
     let mut blocker_rounds_used = 0usize;
+    // Tier 2d — zero-write corrective-round budget; `wrote` flips on the
+    // first successful write-level tool call (see `ZERO_WRITE_MAX_ROUNDS`).
+    let mut wrote = false;
+    let mut zero_write_rounds_used = 0usize;
     let mut write_retry = CorrectiveWriteRetry::default();
     let turn_cap = cfg.max_turns.max(1);
     let mut turn = 0usize;
@@ -84,7 +88,8 @@ pub(super) async fn run_openai_agent_loop_inner(
         let corrective_write_round = write_retry.begin_round();
         if turn >= turn_cap && !corrective_write_round {
             if salvage_rounds_used >= SALVAGE_MAX_ROUNDS {
-                finalize_and_report(tx, &cfg.executor, cfg.finalize_on_exit).await;
+                let zero = zero_write_detail(cfg.finalize_on_exit, wrote, "turn budget exhausted");
+                finalize_and_report(tx, &cfg.executor, cfg.finalize_on_exit, zero.as_deref()).await;
                 let _ = tx
                     .send(ChatDelta::Done {
                         stop_reason: StopReason::MaxTokens,
@@ -95,7 +100,8 @@ pub(super) async fn run_openai_agent_loop_inner(
             let report = check_unfilled(&cfg.executor, cfg.finalize_on_exit).await;
             let eligible = salvage_eligible(&report.unfilled, &salvaged_screens);
             if eligible.is_empty() {
-                finalize_and_report(tx, &cfg.executor, cfg.finalize_on_exit).await;
+                let zero = zero_write_detail(cfg.finalize_on_exit, wrote, "turn budget exhausted");
+                finalize_and_report(tx, &cfg.executor, cfg.finalize_on_exit, zero.as_deref()).await;
                 let _ = tx
                     .send(ChatDelta::Done {
                         stop_reason: StopReason::MaxTokens,
@@ -217,11 +223,29 @@ pub(super) async fn run_openai_agent_loop_inner(
                 messages.push(json!({ "role": "user", "content": nudge }));
                 continue; // Does not count against `turn`.
             }
+            // Zero-write guard (Tier 2d): the model stopped without ever
+            // applying a write — the exact empty-canvas shape where a
+            // starved/distracted model reads, narrates, and quits. One
+            // dedicated contract round restates the build protocol; the
+            // retry request re-applies the reasoning wire control like
+            // every round, so a thinking-starved model actually has budget
+            // to emit the write this time.
+            if zero_write_round_owed(cfg.finalize_on_exit, wrote, zero_write_rounds_used) {
+                zero_write_rounds_used += 1;
+                messages.push(json!({ "role": "assistant", "content": stop_content() }));
+                messages.push(json!({ "role": "user", "content": ZERO_WRITE_NUDGE }));
+                continue; // Does not count against `turn`.
+            }
             // Normal model-stop exit: run the Step-4 structural backstop ONCE
             // over the assembled doc BEFORE the Done delta. Tier 3 — honest
             // report — fires unconditionally if anything is still
             // unfilled/blocked.
-            finalize_and_report(tx, &cfg.executor, cfg.finalize_on_exit).await;
+            let stop_detail = collector
+                .finish_reason
+                .clone()
+                .unwrap_or_else(|| "stop".into());
+            let zero = zero_write_detail(cfg.finalize_on_exit, wrote, &stop_detail);
+            finalize_and_report(tx, &cfg.executor, cfg.finalize_on_exit, zero.as_deref()).await;
             let _ = tx
                 .send(ChatDelta::Done {
                     stop_reason: reason,
@@ -265,6 +289,9 @@ pub(super) async fn run_openai_agent_loop_inner(
                 })
                 .await;
             let result = execute_tool(&cfg.executor, &call.name, &call.args_json).await;
+            if is_write_level(&level) && !result.is_error {
+                wrote = true;
+            }
             if is_write_level(&level) {
                 if corrective_write_round {
                     corrective_write_seen = true;
