@@ -73,6 +73,11 @@ pub(crate) struct Session {
     /// streamed deltas land on the engine thread during `op_frame`.
     #[cfg(feature = "editor")]
     pub(crate) chat: crate::editor_chat::MobileChatHost,
+    /// Background image-search enrichment for generated image slots. Same
+    /// worker discipline as `chat`: jobs run on their own threads, results
+    /// land on the engine thread during `op_frame`.
+    #[cfg(feature = "editor")]
+    pub(crate) image_search: crate::editor_image_search::MobileImageSearch,
     /// Shell-provided media root (APK-extracted assets / bundle
     /// resources). Reserved for future local-media resolution.
     #[allow(dead_code)]
@@ -189,6 +194,8 @@ impl Session {
             model_discovery: Default::default(),
             #[cfg(feature = "editor")]
             chat: Default::default(),
+            #[cfg(feature = "editor")]
+            image_search: Default::default(),
         };
         session.fit_content_to_viewports();
         Ok(session)
@@ -520,6 +527,8 @@ impl Session {
         #[cfg(feature = "editor")]
         let chat_wake = self.pump_editor_chat(now_ms);
         #[cfg(feature = "editor")]
+        let image_search_wake = self.pump_editor_image_search(now_ms);
+        #[cfg(feature = "editor")]
         let collab_wake = self.pump_editor_collab();
         let slot = std::mem::replace(&mut self.surface, SurfaceSlot::None);
         let (restored, outcome) = match slot {
@@ -560,7 +569,7 @@ impl Session {
                 if let Some(deadline) = earliest_wake(
                     earliest_wake(earliest_wake(auth_wake, model_discovery_wake), chat_wake),
                     earliest_wake(
-                        collab_wake,
+                        earliest_wake(collab_wake, image_search_wake),
                         self.editor
                             .as_ref()
                             .and_then(|host| host.next_animation_deadline_ms()),
@@ -610,6 +619,8 @@ impl Session {
         #[cfg(feature = "editor")]
         let chat_wake = self.pump_editor_chat(now_ms);
         #[cfg(feature = "editor")]
+        let image_search_wake = self.pump_editor_image_search(now_ms);
+        #[cfg(feature = "editor")]
         let collab_wake = self.pump_editor_collab();
         let width = ((self.logical.0 * self.dpr).round() as i32).max(1);
         let height = ((self.logical.1 * self.dpr).round() as i32).max(1);
@@ -640,7 +651,7 @@ impl Session {
             if let Some(deadline) = earliest_wake(
                 earliest_wake(earliest_wake(auth_wake, model_discovery_wake), chat_wake),
                 earliest_wake(
-                    collab_wake,
+                    earliest_wake(collab_wake, image_search_wake),
                     self.editor
                         .as_ref()
                         .and_then(|host| host.next_animation_deadline_ms()),

@@ -144,6 +144,10 @@ impl MobileChatHost {
         }
         let mut changed = false;
         if job.session.is_design_loop() {
+            eprintln!(
+                "openpencil-mobile: design turn retired (finalized={})",
+                job.session.loop_finalized()
+            );
             if !job.session.loop_finalized() && allow_ai_bulk_write(host) {
                 let state = host.editor_state_mut();
                 op_orchestrator::apply_loop_finalize(state);
@@ -425,6 +429,15 @@ fn execute_tool_requests(
         let state = host.editor_state_mut();
         let (result, mutated) =
             op_chat_agent::design_agent_tools::execute_agent_tool(state, &req.name, &req.args_json);
+        // Same diagnosability rationale as the turn-start line: one line per
+        // executed design tool names the call, its outcome, and whether the
+        // document changed.
+        eprintln!(
+            "openpencil-mobile: design tool {} -> {} (mutated={})",
+            req.name,
+            if result.is_error { "ERROR" } else { "ok" },
+            mutated
+        );
         if mutated {
             changed = true;
         }
@@ -496,6 +509,15 @@ fn start_design_turn(
         // desktop settings modal.
         dial_policy: EndpointDialPolicy::Trusted,
     };
+    // Low-frequency lifecycle line: release mobile builds emit no logs at
+    // all, which turned the first field failure of this path into an
+    // hours-long blind diagnosis. One line per design turn is cheap and
+    // makes "did the loop even start, on which wire" answerable from the
+    // device console.
+    eprintln!(
+        "openpencil-mobile: design turn start (model={}, wire={:?}, disable_thinking={})",
+        cfg.model, kind, disable_thinking
+    );
     // Indicator epoch BEFORE the worker can apply its first batch (desktop
     // parity): badges, frame glows, and entrance reveals adopt it.
     let epoch = op_editor_core::agent_indicators::begin_with_root_seed_hint(

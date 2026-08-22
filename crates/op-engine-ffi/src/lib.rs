@@ -50,6 +50,8 @@ mod editor_collab;
 #[cfg(feature = "editor")]
 mod editor_export;
 #[cfg(feature = "editor")]
+mod editor_image_search;
+#[cfg(feature = "editor")]
 mod editor_ime;
 #[cfg(feature = "editor")]
 mod editor_model_discovery;

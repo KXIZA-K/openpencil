@@ -151,8 +151,101 @@ pub fn guideline_topics() -> Vec<&'static str> {
 }
 
 const JIAN_COMPONENTS_PLACEHOLDER: &str = "{{jianComponents}}";
+const TOOL_SELECT_PLACEHOLDER: &str = "{{toolSelect}}";
+const VERIFY_STEP_PLACEHOLDER: &str = "{{verifyStep}}";
+const FINISH_CONDITION_PLACEHOLDER: &str = "{{finishCondition}}";
 
-/// Return the system prompt for the design agentic tool-loop.
+/// How the executing host verifies visual output — the one part of the
+/// design-agent protocol that is host-capability-dependent. The empty-canvas
+/// postmortem: the prompt made the screenshot check "mandatory, not
+/// optional" and made it the END condition, while the mobile host cannot
+/// render screenshots at all — a trailing capability note was not enough for
+/// a weak model on a starved budget, so the protocol text itself must be
+/// host-aware.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DesignVerifyProtocol {
+    /// Desktop / daemon: `get_screenshot` renders, the screenshot check is
+    /// mandatory, and finishing is gated on it (the historical text).
+    Screenshot,
+    /// Hosts without a render arm (the mobile FFI): verification runs on
+    /// `snapshot_layout` + per-batch `layoutIssues`, and finishing is gated
+    /// on those instead. `get_screenshot` is not mentioned as available.
+    LayoutSnapshot,
+}
+
+const SCREENSHOT_TOOL_SELECT: &str = "select:get_editor_state,get_guidelines,get_style_guide_tags,get_style_guide,get_variables,batch_get,snapshot_layout,batch_design,get_screenshot,find_empty_space,spawn_agents";
+const LAYOUT_TOOL_SELECT: &str = "select:get_editor_state,get_guidelines,get_style_guide_tags,get_style_guide,get_variables,batch_get,snapshot_layout,batch_design,find_empty_space";
+
+const LAYOUT_VERIFY_STEP: &str = "### Step 8 — Verify with `snapshot_layout`\n\n\
+This host cannot render screenshots — `get_screenshot` does not exist here and its absence is \
+never a reason to stop or skip building. Verify with `snapshot_layout` and each `batch_design` \
+result's `layoutIssues` list instead: those are the REAL resolved layout's measured facts \
+(collapsed containers, overflowing rows, clipped text). Iterate until no layout issue remains \
+and every section shell is filled. Do not declare the design done while a known defect stands.";
+
+const LAYOUT_FINISH_CONDITION: &str = "End the turn when `snapshot_layout` confirms every \
+section is present and filled and the last `batch_design` results carry no unresolved \
+`layoutIssues`.";
+
+const SCREENSHOT_FINISH_CONDITION: &str = "End the turn when the `get_screenshot` output \
+verifies the design is complete and visually polished.";
+
+/// The design-agent template with the shared `jian-components` contract
+/// mounted and the host-dependent placeholders still in place.
+fn design_agent_template() -> &'static str {
+    static TEMPLATE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    TEMPLATE.get_or_init(|| {
+        let template = SKILLS
+            .get_file("phases/agent/design-agent.md")
+            .and_then(|f| f.contents_utf8())
+            .expect(
+                "skills/phases/agent/design-agent.md must be embedded in the op-ai-skills corpus",
+            );
+        for placeholder in [
+            JIAN_COMPONENTS_PLACEHOLDER,
+            TOOL_SELECT_PLACEHOLDER,
+            VERIFY_STEP_PLACEHOLDER,
+            FINISH_CONDITION_PLACEHOLDER,
+        ] {
+            assert!(
+                template.contains(placeholder),
+                "design-agent.md must carry the {placeholder} mount point"
+            );
+        }
+        let widgets = get_skill_by_name("jian-components")
+            .expect("jian-components must be registered for the design-agent prompt");
+        template.replace(JIAN_COMPONENTS_PLACEHOLDER, widgets.content.trim())
+    })
+}
+
+/// The screenshot-verification Step 8 text (historical wording, embedded in
+/// its own corpus file so the two variants stay reviewable side by side).
+const SCREENSHOT_VERIFY_STEP: &str = include_str!("design_agent_verify_screenshot.md");
+
+/// Return the design-agent tool-loop system prompt for a given host
+/// verification protocol.
+pub fn design_agent_system_prompt_for(verify: DesignVerifyProtocol) -> String {
+    let (tool_select, verify_step, finish) = match verify {
+        DesignVerifyProtocol::Screenshot => (
+            SCREENSHOT_TOOL_SELECT,
+            SCREENSHOT_VERIFY_STEP.trim(),
+            SCREENSHOT_FINISH_CONDITION,
+        ),
+        DesignVerifyProtocol::LayoutSnapshot => (
+            LAYOUT_TOOL_SELECT,
+            LAYOUT_VERIFY_STEP,
+            LAYOUT_FINISH_CONDITION,
+        ),
+    };
+    design_agent_template()
+        .replace(TOOL_SELECT_PLACEHOLDER, tool_select)
+        .replace(VERIFY_STEP_PLACEHOLDER, verify_step)
+        .replace(FINISH_CONDITION_PLACEHOLDER, finish)
+}
+
+/// Return the system prompt for the design agentic tool-loop (desktop
+/// screenshot protocol — the historical text, byte-stable for existing
+/// callers).
 ///
 /// The protocol template is embedded from
 /// `skills/phases/agent/design-agent.md`. Its native-widget placeholder is
@@ -164,21 +257,7 @@ const JIAN_COMPONENTS_PLACEHOLDER: &str = "{{jianComponents}}";
 /// (a build-time invariant: the file is checked in alongside this crate).
 pub fn design_agent_system_prompt() -> &'static str {
     static PROMPT: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    PROMPT.get_or_init(|| {
-        let template = SKILLS
-            .get_file("phases/agent/design-agent.md")
-            .and_then(|f| f.contents_utf8())
-            .expect(
-                "skills/phases/agent/design-agent.md must be embedded in the op-ai-skills corpus",
-            );
-        assert!(
-            template.contains(JIAN_COMPONENTS_PLACEHOLDER),
-            "design-agent.md must mount the shared jian-components contract"
-        );
-        let widgets = get_skill_by_name("jian-components")
-            .expect("jian-components must be registered for the design-agent prompt");
-        template.replace(JIAN_COMPONENTS_PLACEHOLDER, widgets.content.trim())
-    })
+    PROMPT.get_or_init(|| design_agent_system_prompt_for(DesignVerifyProtocol::Screenshot))
 }
 
 /// Return the design-agent tool-loop system prompt with the prompt-matched
@@ -205,7 +284,17 @@ pub fn design_agent_system_prompt() -> &'static str {
 /// resolver's (per-skill budgets + phase cap), so a keyword-rich prompt cannot
 /// balloon the system prompt.
 pub fn design_agent_system_prompt_with_skills(user_message: &str) -> String {
-    let base = design_agent_system_prompt();
+    design_agent_system_prompt_with_skills_for(user_message, DesignVerifyProtocol::Screenshot)
+}
+
+/// Host-aware variant of [`design_agent_system_prompt_with_skills`]: same
+/// depth-skill assembly over the protocol for the given verification
+/// protocol (mobile passes [`DesignVerifyProtocol::LayoutSnapshot`]).
+pub fn design_agent_system_prompt_with_skills_for(
+    user_message: &str,
+    verify: DesignVerifyProtocol,
+) -> String {
+    let base = design_agent_system_prompt_for(verify);
     let ctx = resolve::resolve_skills(
         types::Phase::Generation,
         user_message,
@@ -224,7 +313,7 @@ pub fn design_agent_system_prompt_with_skills(user_message: &str) -> String {
         .map(|s| s.content.trim())
         .filter(|c| !c.is_empty())
         .collect();
-    let mut prompt = base.to_string();
+    let mut prompt = base;
     if !depth.is_empty() {
         prompt.push_str("\n\n---\n\n## Product-Design Depth (applies to this task)\n\n");
         prompt.push_str(&depth.join("\n\n"));

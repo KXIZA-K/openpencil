@@ -35,7 +35,7 @@ const THUMB_JPEG_QUALITIES: [u32; 6] = [60, 50, 40, 30, 20, 10];
 /// Results produced from one decode of a Figma import bitmap. The resolver
 /// decides the final data-URL MIME after the optional replacement lands.
 #[derive(Default)]
-pub(crate) struct PreparedImportImage {
+pub struct PreparedImportImage {
     pub replacement: Option<Vec<u8>>,
     pub thumbnail: Option<Vec<u8>>,
 }
@@ -61,7 +61,7 @@ pub fn maybe_downscale(bytes: &[u8]) -> Option<(&'static str, Vec<u8>)> {
 /// Decode an imported Figma bitmap once, producing both its optional
 /// full-size replacement and its blur-up JPEG. The callback runs before the
 /// resolver creates the final data URL, so callers bind the thumbnail later.
-pub(crate) fn prepare_figma_import_image(bytes: &[u8]) -> PreparedImportImage {
+pub fn prepare_figma_import_image(bytes: &[u8]) -> PreparedImportImage {
     let Some(src) = Image::from_encoded(Data::new_copy(bytes)) else {
         return PreparedImportImage::default();
     };
@@ -78,7 +78,7 @@ pub(crate) fn prepare_figma_import_image(bytes: &[u8]) -> PreparedImportImage {
 
 /// Generate a blur-up JPEG from an already-decoded raster. This keeps the
 /// fallback path on the decode worker without decoding the payload twice.
-pub(crate) fn make_blur_thumbnail_from_image(src: &Image) -> Option<Vec<u8>> {
+pub fn make_blur_thumbnail_from_image(src: &Image) -> Option<Vec<u8>> {
     let (w, h) = (src.width(), src.height());
     if w <= 0 || h <= 0 {
         return None;

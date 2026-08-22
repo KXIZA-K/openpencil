@@ -40,9 +40,7 @@ pub(crate) fn design_turn_disable_thinking(model: Option<&str>) -> bool {
 const MOBILE_CAPABILITY_NOTE: &str = "\n\n---\n\n\
 ## Host capability note (this device)\n\n\
 Unavailable on this host: `get_screenshot`, `export_nodes`, and \
-`spawn_agents` (design every screen yourself, sequentially). Use \
-`snapshot_layout` and each `batch_design` result's `layoutIssues` feedback \
-for visual verification.\n\n\
+`spawn_agents` (design every screen yourself, sequentially).\n\n\
 NEVER answer a design request by writing HTML, CSS, or any other code as \
 chat text — designs exist ONLY as canvas nodes created through \
 `batch_design` tool calls. If you have not called `batch_design`, you have \
@@ -53,7 +51,10 @@ not designed anything.";
 /// canvas consistency brief when the canvas already holds work, then the
 /// mobile capability note.
 pub(crate) fn mobile_design_system_prompt(state: &EditorState, user_text: &str) -> String {
-    let mut prompt = op_ai_skills::design_agent_system_prompt_with_skills(user_text);
+    let mut prompt = op_ai_skills::design_agent_system_prompt_with_skills_for(
+        user_text,
+        op_ai_skills::DesignVerifyProtocol::LayoutSnapshot,
+    );
     if let Some(brief) = op_chat_agent::design_context::design_context_brief(state) {
         prompt.push_str("\n\n---\n\n");
         prompt.push_str(&brief);
@@ -167,6 +168,11 @@ mod tests {
         assert!(prompt.contains("`batch_design`'s `script` mode"));
         assert!(prompt.contains("NEVER answer a design request by writing HTML"));
         assert!(prompt.contains("`spawn_agents`"));
+        // Host-aware protocol: mobile's Step 8 verifies via snapshot_layout;
+        // the screenshot check text must be absent entirely.
+        assert!(prompt.contains("Verify with `snapshot_layout`"));
+        assert!(!prompt.contains("The screenshot check is mandatory"));
+        assert!(!prompt.contains("select:get_editor_state,get_guidelines,get_style_guide_tags,get_style_guide,get_variables,batch_get,snapshot_layout,batch_design,get_screenshot"));
     }
 
     #[test]

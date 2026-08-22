@@ -150,6 +150,7 @@ dependencies = [
  "lru",
  "rand 0.8.6",
  "reqwest 0.13.3",
+ "rustix 1.1.4",
  "schemars 1.2.1",
  "serde",
  "serde_json",
@@ -4182,6 +4183,7 @@ dependencies = [
  "op-editor-host-core",
  "op-editor-ui",
  "op-host-native",
+ "op-image-enrich",
  "op-orchestrator",
  "op-pen-loader",
  "op-render-export",
@@ -4460,10 +4462,15 @@ dependencies = [
 name = "op-image-enrich"
 version = "0.8.5"
 dependencies = [
+ "base64",
  "jian-ops-schema",
  "op-editor-core",
  "op-editor-ui",
  "op-pen-loader",
+ "reqwest 0.12.28",
+ "serde_json",
+ "skia-safe",
+ "tokio",
 ]
 
 [[package]]

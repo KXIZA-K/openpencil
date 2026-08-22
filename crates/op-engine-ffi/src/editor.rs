@@ -207,6 +207,10 @@ pub unsafe extern "C" fn op_editor_open_document(
             session.state = next_state;
             session.scene = next_scene;
             session.selected = None;
+            // Whole-document replacement: forget in-flight image-search jobs
+            // bound to the outgoing document's node ids (id aliasing — see
+            // MobileImageSearch::reset).
+            session.image_search.reset();
             session.gesture.reset();
             session.user_interacted = false;
             session.fit_content_to_viewports();

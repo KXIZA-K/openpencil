@@ -7,15 +7,16 @@ use std::hash::{Hash, Hasher};
 use std::sync::Mutex;
 use std::time::Duration;
 
-use super::{
-    fetch_openverse_token, normalize_image_mime_header, simplify_search_query, ImageAspectRatio,
-    OpenverseCredentials, MAX_EMBEDDED_IMAGE_BYTES,
+use crate::net::providers::{
+    fetch_openverse_token, normalize_image_mime_header, simplify_search_query,
+    WebOpenverseCredentials, MAX_EMBEDDED_IMAGE_BYTES,
 };
+use crate::ImageAspectRatio;
 
-pub(super) fn fetch_first_image_url_blocking(
+pub fn fetch_first_image_url_blocking(
     query: &str,
     aspect_ratio: Option<ImageAspectRatio>,
-    credentials: Option<&OpenverseCredentials>,
+    credentials: Option<&WebOpenverseCredentials>,
     used_urls: &Mutex<HashSet<String>>,
 ) -> Option<String> {
     let query = query.trim();
@@ -25,7 +26,7 @@ pub(super) fn fetch_first_image_url_blocking(
     // Shared runtime bridge: a private per-call runtime aborts with "Cannot
     // start a runtime from within a runtime" once this search is reached from
     // a tokio worker (design-loop / MCP driven runs).
-    op_host_services::chat_runtime::block_on_anywhere(fetch_first_image_url(
+    crate::net::block_on_image_runtime(fetch_first_image_url(
         query,
         aspect_ratio,
         credentials,
@@ -33,10 +34,10 @@ pub(super) fn fetch_first_image_url_blocking(
     ))
 }
 
-pub(super) async fn fetch_first_image_url(
+pub async fn fetch_first_image_url(
     query: &str,
     aspect_ratio: Option<ImageAspectRatio>,
-    credentials: Option<&OpenverseCredentials>,
+    credentials: Option<&WebOpenverseCredentials>,
     used_urls: &Mutex<HashSet<String>>,
 ) -> Option<String> {
     let client = reqwest::Client::builder()
@@ -68,13 +69,13 @@ async fn fetch_openverse(
     client: &reqwest::Client,
     query: &str,
     aspect_ratio: Option<ImageAspectRatio>,
-    credentials: Option<&OpenverseCredentials>,
+    credentials: Option<&WebOpenverseCredentials>,
     used_urls: &Mutex<HashSet<String>>,
 ) -> Option<String> {
     let url = openverse_search_url(query, aspect_ratio)?;
     let mut request = client.get(url);
     if let Some(credentials) = credentials {
-        if let Some(token) = fetch_openverse_token(client, credentials.as_web()).await {
+        if let Some(token) = fetch_openverse_token(client, credentials).await {
             request = request.bearer_auth(token);
         }
     }
@@ -135,7 +136,7 @@ fn meaningful_tokens(value: &str) -> HashSet<String> {
 /// drop junk/used entries, then rank by complete query-token overlap. Equal
 /// scores preserve provider order, and an all-zero set falls back to the first
 /// usable result.
-pub(crate) fn select_openverse_result<'results>(
+pub fn select_openverse_result<'results>(
     results: &'results [serde_json::Value],
     query: &str,
     used_urls: &HashSet<String>,
@@ -194,7 +195,7 @@ fn openverse_result_identity(result: &serde_json::Value) -> Option<String> {
     })
 }
 
-pub(super) fn claim_openverse_result<'results>(
+pub fn claim_openverse_result<'results>(
     results: &'results [serde_json::Value],
     query: &str,
     used_images: &Mutex<HashSet<String>>,
@@ -205,7 +206,7 @@ pub(super) fn claim_openverse_result<'results>(
     used.insert(identity.clone()).then_some((result, identity))
 }
 
-pub(super) fn openverse_search_url(
+pub fn openverse_search_url(
     query: &str,
     aspect_ratio: Option<ImageAspectRatio>,
 ) -> Option<reqwest::Url> {
@@ -267,7 +268,7 @@ async fn fetch_wikimedia(
     None
 }
 
-pub(super) fn wikimedia_page_identity(page: &serde_json::Value) -> Option<String> {
+pub fn wikimedia_page_identity(page: &serde_json::Value) -> Option<String> {
     if let Some(page_id) = page.get("pageid") {
         if page_id.is_number() || page_id.is_string() {
             return Some(format!("wikimedia:{page_id}"));
@@ -280,7 +281,7 @@ pub(super) fn wikimedia_page_identity(page: &serde_json::Value) -> Option<String
         .map(|title| format!("wikimedia-title:{title}"))
 }
 
-pub(super) fn wikimedia_image_candidates(page: &serde_json::Value) -> Vec<String> {
+pub fn wikimedia_image_candidates(page: &serde_json::Value) -> Vec<String> {
     let mut candidates = Vec::new();
     if let Some(info) = page
         .get("imageinfo")
@@ -309,7 +310,7 @@ fn push_candidate_url(candidates: &mut Vec<String>, url: Option<&str>) {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub(super) enum ImageCandidateClaim {
+pub enum ImageCandidateClaim {
     /// A renderable image won the session-wide content claim.
     Claimed(String),
     /// A renderable download matched content another provider result already
@@ -321,7 +322,7 @@ pub(super) enum ImageCandidateClaim {
     Unavailable,
 }
 
-pub(super) fn settle_provider_identity(
+pub fn settle_provider_identity(
     used_urls: &Mutex<HashSet<String>>,
     identity: &str,
     outcome: ImageCandidateClaim,
@@ -336,7 +337,7 @@ pub(super) fn settle_provider_identity(
     }
 }
 
-pub(super) async fn first_unused_renderable_image_src(
+pub async fn first_unused_renderable_image_src(
     client: &reqwest::Client,
     candidates: Vec<String>,
     used_urls: &Mutex<HashSet<String>>,
@@ -361,7 +362,7 @@ pub(super) async fn first_unused_renderable_image_src(
     }
 }
 
-pub(super) fn claim_unused_image_src(used_urls: &Mutex<HashSet<String>>, src: &str) -> bool {
+pub fn claim_unused_image_src(used_urls: &Mutex<HashSet<String>>, src: &str) -> bool {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     src.hash(&mut hasher);
     used_urls
@@ -370,17 +371,13 @@ pub(super) fn claim_unused_image_src(used_urls: &Mutex<HashSet<String>>, src: &s
         .insert(format!("content:{:016x}", hasher.finish()))
 }
 
-pub(crate) async fn fetch_image_data_url(client: &reqwest::Client, url: &str) -> Option<String> {
-    let (mime, bytes) = op_host_services::web_image_search::fetch_image_bytes(
-        client,
-        url,
-        MAX_EMBEDDED_IMAGE_BYTES,
-    )
-    .await?;
+pub async fn fetch_image_data_url(client: &reqwest::Client, url: &str) -> Option<String> {
+    let (mime, bytes) =
+        crate::net::providers::fetch_image_bytes(client, url, MAX_EMBEDDED_IMAGE_BYTES).await?;
     image_bytes_to_data_url(&mime, &bytes)
 }
 
-pub(super) fn image_bytes_to_data_url(mime: &str, bytes: &[u8]) -> Option<String> {
+pub fn image_bytes_to_data_url(mime: &str, bytes: &[u8]) -> Option<String> {
     if bytes.is_empty() {
         return None;
     }
@@ -389,7 +386,7 @@ pub(super) fn image_bytes_to_data_url(mime: &str, bytes: &[u8]) -> Option<String
     use base64::Engine as _;
     // Shrink an oversized fetched image before it enters the document —
     // same rationale as the file-pick path (see `image_downscale`).
-    if let Some((scaled_mime, scaled)) = crate::image_downscale::maybe_downscale(bytes) {
+    if let Some((scaled_mime, scaled)) = crate::net::downscale::maybe_downscale(bytes) {
         return Some(format!("data:{scaled_mime};base64,{}", B64.encode(&scaled)));
     }
     Some(format!("data:{mime};base64,{}", B64.encode(bytes)))

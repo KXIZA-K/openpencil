@@ -84,6 +84,8 @@ pub(crate) fn drain_pending_scene_template(session: &mut Session) -> FfiResult<b
 
     session.scene = next_scene;
     session.selected = None;
+    // Whole-document replacement (see MobileImageSearch::reset).
+    session.image_search.reset();
     session.gesture.reset();
     session.user_interacted = false;
     session.fit_content_to_viewports();

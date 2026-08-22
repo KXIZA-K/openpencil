@@ -428,6 +428,31 @@ pub fn install_host_tool_registrar(registrar: HostToolRegistrar) {
     let _ = HOST_TOOL_REGISTRAR.set(registrar);
 }
 
+/// The descriptor catalog `ToolSearch` answers from.
+pub type HostToolCatalog = fn() -> &'static [&'static str];
+
+static HOST_TOOL_CATALOG: std::sync::OnceLock<HostToolCatalog> = std::sync::OnceLock::new();
+
+/// Narrow `ToolSearch` to the tools THIS host can actually execute.
+///
+/// A `select:` query returns every matched descriptor regardless of
+/// `max_results`, and the protocol's Step 2 select list names
+/// `get_screenshot` / `spawn_agents` — so a host that does not advertise
+/// those (the mobile FFI) otherwise hands the model descriptors for tools
+/// its executor rejects, teaching it to spend turns on calls that can only
+/// fail. Idempotent; the first installer wins. Uninstalled hosts keep the
+/// full MCP catalog (desktop/daemon behavior unchanged).
+pub fn install_host_tool_catalog(catalog: HostToolCatalog) {
+    let _ = HOST_TOOL_CATALOG.set(catalog);
+}
+
+fn tool_search_catalog() -> &'static [&'static str] {
+    HOST_TOOL_CATALOG
+        .get()
+        .map(|catalog| catalog())
+        .unwrap_or(schemas::TOOL_SCHEMAS)
+}
+
 /// Build a registry carrying only the requested design tool — snapshot
 /// registered against the live state so read tools see prior writes.
 fn design_tool_registry(state: &EditorState, requested: &str) -> ToolRegistry {
@@ -450,9 +475,9 @@ fn design_tool_registry(state: &EditorState, requested: &str) -> ToolRegistry {
             }
         }
         "spawn_agents" => r.register(Box::new(op_mcp::spawn_agents_snapshot())),
-        "ToolSearch" => r.register(Box::new(op_mcp::tool_search_snapshot(
-            schemas::TOOL_SCHEMAS,
-        ))),
+        "ToolSearch" => r.register(Box::new(
+            op_mcp::tool_search_snapshot(tool_search_catalog()),
+        )),
         _ => {}
     }
     r

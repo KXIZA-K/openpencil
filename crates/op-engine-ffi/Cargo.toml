@@ -36,6 +36,7 @@ editor = [
   "dep:op-collab-host",
   "dep:op-collab-transport",
   "dep:op-editor-host-core",
+  "dep:op-image-enrich",
   "dep:op-orchestrator",
   "dep:op-render-export",
   "dep:futures",
@@ -96,6 +97,11 @@ op-ai = { path = "../op-ai", optional = true }
 # tool loop with corrective budgets, 15-tool surface with per-batch quality
 # feedback, loop finalize plumbing.
 op-chat-agent = { path = "../op-chat-agent", optional = true }
+# Shared image-slot detection + write-back, plus (feature `net`) the
+# Openverse/Wikimedia resolution ladder behind the mobile image-search pump.
+op-image-enrich = { path = "../op-image-enrich", features = [
+  "net",
+], optional = true }
 # Loop finalize + unfilled-screen marking + intent/model-profile policy —
 # executed engine-side against the live document (desktop pump parity).
 # Enables op-mcp's `script` feature transitively, so mobile `batch_design`

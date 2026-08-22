@@ -20,6 +20,8 @@
 //! container, gated by the collaboration external-assets rule.
 
 mod apply;
+#[cfg(feature = "net")]
+pub mod net;
 mod targets;
 
 pub use apply::{apply_result, collaboration_image_result_gate, SEARCH_FAILED_PLACEHOLDER_SRC};

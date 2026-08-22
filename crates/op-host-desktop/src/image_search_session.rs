@@ -11,15 +11,12 @@ use op_editor_core::{EditorState, NodeId};
 // op-host-services): keyword simplification, Openverse token exchange, and
 // image mime handling. The desktop keeps its own `fetch_image_data_url`
 // on top of `fetch_image_bytes` so the skia down-scale pass still runs.
-pub(crate) use op_host_services::web_image_search::{
-    fetch_openverse_token, normalize_image_mime_header, simplify_search_query,
-    WebOpenverseCredentials,
-};
-// Only the sibling test file exercises the sniffing directly.
+pub(crate) use op_host_services::web_image_search::WebOpenverseCredentials;
+// The provider fns themselves moved with the fetch ladder into
+// `op_image_enrich::net`; only the sibling test files still reach them
+// through this module's historical paths.
 #[cfg(test)]
-pub(crate) use op_host_services::web_image_search::sniff_image_mime;
-
-const MAX_EMBEDDED_IMAGE_BYTES: usize = 4 * 1024 * 1024;
+pub(crate) use op_host_services::web_image_search::{simplify_search_query, sniff_image_mime};
 
 // Slot detection + result write-back moved to the shared `op-image-enrich`
 // crate (pure code motion) so the headless MCP `enrich_images` tool and this
@@ -431,7 +428,7 @@ fn spawn_job(
         let url = fetch_first_image_url_blocking(
             &target.query,
             aspect_ratio,
-            credentials.as_ref(),
+            credentials.as_ref().map(OpenverseCredentials::as_web),
             &used_urls,
         );
         publish_search_result(&search_memo, key, request_id, url);

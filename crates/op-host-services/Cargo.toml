@@ -53,7 +53,7 @@ op-pen-loader = { path = "../op-pen-loader" }
 op-render-export = { path = "../op-render-export" }
 # Shared image-slot detection + result write-back for the MCP
 # `enrich_images` tool (also used by op-host-desktop's search session).
-op-image-enrich = { path = "../op-image-enrich" }
+op-image-enrich = { path = "../op-image-enrich", features = ["net"] }
 op-process-io = { path = "../op-process-io" }
 op-acp = { path = "../op-acp" }
 op-i18n = { path = "../op-i18n" }

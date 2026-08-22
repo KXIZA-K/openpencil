@@ -29,10 +29,10 @@ static IN_FLIGHT_IMAGE_JOBS: AtomicUsize = AtomicUsize::new(0);
 
 /// RAII slot for one running image job. `acquire` fails once
 /// [`MAX_IN_FLIGHT_IMAGE_JOBS`] jobs are running (route answers 429).
-pub(crate) struct ImageJobSlot(());
+pub struct ImageJobSlot(());
 
 impl ImageJobSlot {
-    pub(crate) fn acquire() -> Option<Self> {
+    pub fn acquire() -> Option<Self> {
         IN_FLIGHT_IMAGE_JOBS
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| {
                 (n < MAX_IN_FLIGHT_IMAGE_JOBS).then_some(n + 1)
@@ -50,7 +50,7 @@ impl Drop for ImageJobSlot {
 
 /// TS popover requests `count: 5` (desktop parity).
 const SEARCH_RESULT_COUNT: usize = 5;
-const MAX_EMBEDDED_IMAGE_BYTES: usize = 4 * 1024 * 1024;
+pub const MAX_EMBEDDED_IMAGE_BYTES: usize = 4 * 1024 * 1024;
 
 /// Design-artifact words that are pure noise against a photo corpus (see
 /// the desktop `image_search_session.rs` for the measurement notes).
@@ -203,7 +203,7 @@ pub struct WebImageSearchOutcome {
 /// made instead of matching on prose, and `Display` reproduces the exact
 /// sentence the JSON reply already carried.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SearchRequestError {
+pub enum SearchRequestError {
     /// The body is not JSON, or is JSON but not an object.
     InvalidBody,
     /// The body is a valid object but carries no non-blank `query`.
@@ -223,7 +223,7 @@ impl std::error::Error for SearchRequestError {}
 
 /// Parse the request body and snapshot the daemon-side credential fallback.
 /// Returns `(query, credentials)` or the reason for the 400 reply.
-pub(crate) fn parse_search_request(
+pub fn parse_search_request(
     body: &str,
     state: &op_editor_core::EditorState,
 ) -> Result<(String, Option<WebOpenverseCredentials>), SearchRequestError> {
@@ -262,7 +262,7 @@ pub(crate) fn parse_search_request(
 }
 
 /// JSON reply body for a finished search.
-pub(crate) fn search_outcome_to_json(outcome: &WebImageSearchOutcome) -> String {
+pub fn search_outcome_to_json(outcome: &WebImageSearchOutcome) -> String {
     let results: Vec<serde_json::Value> = outcome
         .results
         .iter()
@@ -284,7 +284,7 @@ pub(crate) fn search_outcome_to_json(outcome: &WebImageSearchOutcome) -> String 
 
 /// Run the full search ladder on the calling thread (the connection's own
 /// thread — the caller must NOT hold the state lock).
-pub(crate) fn run_search_blocking(
+pub fn run_search_blocking(
     query: &str,
     credentials: Option<&WebOpenverseCredentials>,
 ) -> WebImageSearchOutcome {
@@ -292,7 +292,7 @@ pub(crate) fn run_search_blocking(
     // reached from a tokio worker; `block_on_anywhere` runs the ladder on the
     // shared (enable_all) runtime instead — same IO/timer drivers, no
     // runtime-in-runtime hazard.
-    crate::chat_runtime::block_on_anywhere(run_search(query, credentials))
+    crate::net::block_on_image_runtime(run_search(query, credentials))
 }
 
 async fn run_search(
@@ -372,7 +372,7 @@ fn two_keyword_retry(query: &str) -> Option<String> {
     (words.len() > 2).then(|| words[..2].join(" "))
 }
 
-pub(crate) struct RawHit {
+pub struct RawHit {
     id: String,
     thumb_url: String,
     attribution: String,
@@ -413,7 +413,7 @@ async fn read_json_capped(resp: reqwest::Response) -> Option<serde_json::Value> 
     serde_json::from_slice(&bytes).ok()
 }
 
-pub(crate) fn parse_openverse_results(json: &serde_json::Value) -> Vec<RawHit> {
+pub fn parse_openverse_results(json: &serde_json::Value) -> Vec<RawHit> {
     let Some(results) = json.get("results").and_then(serde_json::Value::as_array) else {
         return Vec::new();
     };
@@ -481,7 +481,7 @@ async fn fetch_wikimedia_list(client: &reqwest::Client, query: &str) -> Vec<RawH
     parse_wikimedia_results(&json)
 }
 
-pub(crate) fn parse_wikimedia_results(json: &serde_json::Value) -> Vec<RawHit> {
+pub fn parse_wikimedia_results(json: &serde_json::Value) -> Vec<RawHit> {
     let Some(pages) = json
         .get("query")
         .and_then(|q| q.get("pages"))
@@ -600,7 +600,7 @@ pub async fn fetch_openverse_token(
 }
 
 /// Download `url` and embed it as a `data:` URL, subject to the 4 MiB cap.
-pub(crate) async fn fetch_image_data_url(client: &reqwest::Client, url: &str) -> Option<String> {
+pub async fn fetch_image_data_url(client: &reqwest::Client, url: &str) -> Option<String> {
     let (mime, bytes) = fetch_image_bytes(client, url, MAX_EMBEDDED_IMAGE_BYTES).await?;
     use base64::engine::general_purpose::STANDARD as B64;
     use base64::Engine as _;
@@ -637,7 +637,7 @@ pub async fn fetch_image_bytes(
 /// hold with or without a Content-Length header, and an over-cap body must
 /// never be fully buffered first (a chunked response could otherwise stream
 /// gigabytes into memory before a post-hoc length check).
-pub(crate) async fn read_capped(mut resp: reqwest::Response, cap: usize) -> Option<Vec<u8>> {
+pub async fn read_capped(mut resp: reqwest::Response, cap: usize) -> Option<Vec<u8>> {
     if resp.content_length().is_some_and(|len| len > cap as u64) {
         return None;
     }
