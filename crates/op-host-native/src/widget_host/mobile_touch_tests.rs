@@ -1,4 +1,6 @@
 use super::WidgetHostNative;
+#[path = "mobile_ai_sheet_tests.rs"]
+mod mobile_ai_sheet_tests;
 #[path = "mobile_auth_collab_tests.rs"]
 mod mobile_auth_collab_tests;
 #[path = "mobile_layer_drag_tests.rs"]

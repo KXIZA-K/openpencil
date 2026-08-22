@@ -238,6 +238,18 @@ pub fn settings_backspace(ui: &mut EditorUiState, now_ms: u64) -> bool {
     true
 }
 
+/// Forward Delete in the focused settings input — removes the pending
+/// selection or the character after the caret. Consumes the key whenever
+/// a settings field owns the keyboard so it can never fall through to
+/// canvas node deletion behind the modal.
+pub fn settings_delete_forward(ui: &mut EditorUiState, now_ms: u64) -> bool {
+    if ui.agent_settings.focus.is_none() {
+        return false;
+    }
+    ui.settings_input.delete_forward(now_ms);
+    true
+}
+
 /// Move the focused settings-input caret left/right.
 pub fn settings_caret(ui: &mut EditorUiState, forward: bool, now_ms: u64) -> bool {
     if ui.agent_settings.focus.is_none() {
@@ -377,5 +389,44 @@ mod settings_text_payload_tests {
             42,
         ));
         assert_eq!(ui.settings_input.text(), "nodeserver--stdio");
+    }
+}
+
+#[cfg(test)]
+mod settings_delete_forward_tests {
+    use super::*;
+    use crate::agent_settings::BuiltinAgentField;
+
+    #[test]
+    fn removes_the_character_after_the_caret_while_focused() {
+        let mut ui = EditorUiState::default();
+        ui.agent_settings.focus = Some(SettingsFocus::BuiltinAgentDraft(BuiltinAgentField::ApiKey));
+        ui.settings_input.set_text("sk-old");
+        ui.settings_input.set_caret(0, 0);
+
+        assert!(settings_delete_forward(&mut ui, 42));
+        assert_eq!(ui.settings_input.text(), "k-old");
+        // At the buffer end the key stays owned (no-op edit).
+        ui.settings_input.set_caret("k-old".len(), 0);
+        assert!(settings_delete_forward(&mut ui, 43));
+        assert_eq!(ui.settings_input.text(), "k-old");
+    }
+
+    #[test]
+    fn ignored_without_a_settings_focus() {
+        let mut ui = EditorUiState::default();
+        ui.settings_input.set_text("sk-old");
+
+        assert!(!settings_delete_forward(&mut ui, 42));
+        assert_eq!(ui.settings_input.text(), "sk-old");
+    }
+
+    #[test]
+    fn chrome_delete_guard_covers_the_settings_focus() {
+        let mut state = crate::EditorState::starter();
+        assert!(!crate::host_keyboard_transitions::delete_owned_by_chrome_input(&state));
+        state.editor_ui.agent_settings.focus =
+            Some(SettingsFocus::BuiltinAgentDraft(BuiltinAgentField::ApiKey));
+        assert!(crate::host_keyboard_transitions::delete_owned_by_chrome_input(&state));
     }
 }

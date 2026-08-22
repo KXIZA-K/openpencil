@@ -124,6 +124,22 @@ pub fn apply_chat_hit(state: &mut EditorState, hit: AIChatHit, now_ms: u64) -> C
         // path bypass.
         AIChatHit::DragHandle | AIChatHit::Resize(_) => ChatClickStep::Unhandled,
         AIChatHit::ToggleCollapse => {
+            // Touch chrome hosts the chat as a modal bottom sheet — there
+            // is no minimized desktop bar to collapse INTO, so the chevron
+            // CLOSES the sheet instead. Blur the input too: `chat.focused`
+            // is what keeps the sheet tracking the software keyboard, so a
+            // stale focus would leave the shell's IME session (and the
+            // keyboard) alive over a sheet that no longer exists.
+            if state.editor_ui.touch_chrome()
+                && state.editor_ui.mobile_sheet
+                    == Some(op_editor_core::size_class::MobileSheetKind::Ai)
+            {
+                state.editor_ui.mobile_sheet = None;
+                state.chat.blur_input(now_ms);
+                state.chat.collapsed = true;
+                state.editor_ui.close_chat_model_picker();
+                return ChatClickStep::Dirty;
+            }
             let expanding = state.chat.is_minimized();
             state.chat.toggle_minimized();
             // Expanding from the bar hands the user straight to the

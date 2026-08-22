@@ -43,6 +43,16 @@ impl DesktopApp {
             Key::Named(NamedKey::Backspace) if !self.zoom_modifier => {
                 consumed = self.host.apply_backspace();
             }
+            // The settings-modal input takes forward deletion; the host
+            // arm consumes the key while any settings field is focused,
+            // so a Delete can never reach the canvas selection behind
+            // the modal. The Git inputs below keep swallowing Delete via
+            // the `!settings_focused` gate on the generic arm.
+            Key::Named(NamedKey::Delete)
+                if !self.zoom_modifier && self.host.settings_focus_active() =>
+            {
+                consumed = self.host.apply_delete();
+            }
             Key::Named(NamedKey::Delete) if !self.zoom_modifier && !settings_focused => {
                 consumed = self.host.apply_delete();
             }

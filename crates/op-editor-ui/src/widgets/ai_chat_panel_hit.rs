@@ -351,12 +351,18 @@ impl<'a> AIChatPlaceholder<'a> {
             // Examples grid hit-test (only rendered when no messages).
             // Clickable regardless of model connection — clicking an example
             // fills the input (sending separately requires a model) (#43).
+            // Pills the shrunk sheet dropped from paint (they would overlap
+            // the composer) are not click targets either.
+            let region = self.empty_state_region(rect);
+            let content_bottom = region.origin.y + region.size.y;
             for (index, (card, ex)) in example_card_rects(rect)
                 .iter()
                 .zip(self.examples.iter())
                 .enumerate()
             {
-                if (*card).contains(point) {
+                if crate::widgets::ai_chat_panel_paint::example_card_fits(card, content_bottom)
+                    && (*card).contains(point)
+                {
                     return Some(AIChatHit::Example {
                         index,
                         prompt: ex.prompt.clone(),
@@ -610,9 +616,14 @@ impl<'a> AIChatPlaceholder<'a> {
         if !self.state.messages.is_empty() || self.is_streaming() || self.state.is_minimized() {
             return None;
         }
-        example_card_rects(rect)
-            .iter()
-            .position(|card| (*card).contains(point))
+        // Same visibility predicate as paint: a pill dropped because it
+        // would overlap the composer is not hoverable either.
+        let region = self.empty_state_region(rect);
+        let content_bottom = region.origin.y + region.size.y;
+        example_card_rects(rect).iter().position(|card| {
+            crate::widgets::ai_chat_panel_paint::example_card_fits(card, content_bottom)
+                && (*card).contains(point)
+        })
     }
 
     /// Return the index of the tab the cursor is over (for the host to

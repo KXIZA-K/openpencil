@@ -47,6 +47,8 @@ mod editor_ime;
 mod editor_model_discovery;
 #[cfg(feature = "editor")]
 mod editor_pointer_release;
+#[cfg(all(feature = "editor", test))]
+mod editor_settings_input_tests;
 #[cfg(feature = "editor")]
 mod editor_template;
 #[cfg(feature = "editor")]

@@ -138,6 +138,14 @@ impl<'a> Widget for AIChatPlaceholder<'a> {
 
         // Body — either messages or examples.
         if self.state.messages.is_empty() {
+            // The empty-state stack is laid out from the top while the
+            // composer block is bottom-anchored; on a keyboard-shrunk
+            // compact sheet the two can meet. Clip to the region between
+            // them and hand the painter its bottom so pills / tips that
+            // don't fit are dropped instead of overlapping the composer.
+            let region = self.empty_state_region(rect);
+            cx.backend.save();
+            cx.backend.clip_rect(region);
             paint_examples(
                 cx,
                 &self.theme,
@@ -150,7 +158,9 @@ impl<'a> Widget for AIChatPlaceholder<'a> {
                 self.is_streaming(),
                 self.example_hover,
                 self.example_pressed,
+                region.origin.y + region.size.y,
             );
+            cx.backend.restore();
         } else {
             let body = self.body_rect(rect);
             // Fingerprint + resolve the transcript ONCE for the whole paint

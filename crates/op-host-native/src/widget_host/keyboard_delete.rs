@@ -303,6 +303,12 @@ impl WidgetHostNative {
         if self.editor_state.editor_ui.font_picker.open {
             return true;
         }
+        // Settings-modal input owns Delete while focused (forward
+        // deletion at the caret) — without this arm the keystroke fell
+        // through and removed the selected node behind the modal.
+        if self.editor_state.editor_ui.agent_settings.focus.is_some() {
+            return self.apply_settings_delete_forward();
+        }
         if self.editor_state.editor_ui.variables_header_rename_active() {
             let changed =
                 shared::variables_header_delete_forward(&mut self.editor_state, self.now_ms);

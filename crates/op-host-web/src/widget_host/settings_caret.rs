@@ -30,6 +30,14 @@ impl WidgetHost {
         false
     }
 
+    pub(in crate::widget_host) fn apply_settings_delete_forward(&mut self) -> bool {
+        if shared::settings_delete_forward(&mut self.editor_state.editor_ui, self.now_ms) {
+            self.mark_dirty();
+            return true;
+        }
+        false
+    }
+
     pub fn apply_settings_caret(&mut self, forward: bool) -> bool {
         if shared::settings_caret(&mut self.editor_state.editor_ui, forward, self.now_ms) {
             self.mark_dirty();

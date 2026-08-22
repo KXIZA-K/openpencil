@@ -434,6 +434,11 @@ impl WidgetHostNative {
                 chat.collapsed = false;
                 chat.focused = true;
             } else {
+                // Closing must also end the input's focus: `chat.focused`
+                // drives both the shell's IME session and the sheet's
+                // keyboard-tracking geometry, so leaving it set with the
+                // sheet gone keeps the software keyboard up over nothing.
+                chat.blur_input(self.now_ms);
                 chat.collapsed = true;
             }
         }

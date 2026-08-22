@@ -786,3 +786,36 @@ fn escape_closes_settings_font_picker_before_settings() {
     assert!(host.apply_escape());
     assert!(!host.editor_state.editor_ui.agent_settings_open);
 }
+
+/// Forward Delete while a settings-modal input is focused must edit the
+/// draft and never fall through to canvas node deletion behind the
+/// modal (the "API key cannot be deleted" report).
+#[test]
+fn delete_edits_focused_settings_input_and_keeps_nodes() {
+    use op_editor_core::agent_settings::BuiltinAgentField;
+    use op_editor_core::PenNodeExt;
+
+    let mut host = WidgetHost::new();
+    let node_count = host.editor_state.active_children().len();
+    assert!(node_count > 0, "starter document must have nodes");
+    let first = host.editor_state.active_children()[0].base().id.clone();
+    host.editor_state.set_single_selection(NodeId::new(first));
+    let ui = &mut host.editor_state.editor_ui;
+    ui.agent_settings_open = true;
+    ui.agent_settings
+        .add_builtin_agent_with_defaults("Provider", "sk-old", "model-0");
+    ui.agent_settings.focus = Some(SettingsFocus::BuiltinAgent {
+        index: 0,
+        field: BuiltinAgentField::ApiKey,
+    });
+    op_editor_core::host_ui_transitions::set_settings_input_text(ui, "sk-old".into(), 0);
+    ui.settings_input.set_caret(0, 0);
+
+    assert!(host.apply_delete());
+    assert_eq!(host.editor_state.editor_ui.settings_input.text(), "k-old");
+    assert_eq!(
+        host.editor_state.active_children().len(),
+        node_count,
+        "Delete in a settings field must never remove canvas nodes"
+    );
+}

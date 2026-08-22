@@ -377,6 +377,21 @@ impl<'a> AIChatPlaceholder<'a> {
         self.state.messages.iter().any(|message| message.streaming)
     }
 
+    /// Region available to the empty-state suggestion stack: everything
+    /// between the header divider and the bottom-anchored composer block.
+    /// Compact touch sheets shrink with the software keyboard, so this is
+    /// what keeps the hint / example pills / tip lines from running into
+    /// the composer — paint clips to it and pills that do not fully fit
+    /// are dropped (see `paint_examples`).
+    pub fn empty_state_region(&self, rect: Rect) -> Rect {
+        let top = rect.origin.y + HEADER_HEIGHT + 1.0;
+        let bottom = rect.origin.y + rect.size.y - self.input_height_for_rect(rect);
+        Rect {
+            origin: Point2D::new(rect.origin.x, top),
+            size: Point2D::new(rect.size.x, (bottom - top).max(0.0)),
+        }
+    }
+
     pub fn body_rect(&self, rect: Rect) -> Rect {
         let body_top = rect.origin.y + HEADER_HEIGHT + 14.0; // gap before first bubble
         let body_bottom =

@@ -584,3 +584,39 @@ fn the_editor_keeps_those_keys_when_no_deck_is_presenting() {
         "Backspace still deletes the selection outside a presentation"
     );
 }
+
+/// The Delete key must forward-delete in a focused settings input and
+/// never delete the canvas selection behind the modal. Before the fix
+/// the dispatcher dropped the key entirely for settings fields, so
+/// select-all + Delete could not clear a saved API key.
+#[test]
+fn delete_key_edits_focused_settings_input_and_keeps_nodes() {
+    let mut app = DesktopApp::new(None);
+    let node_count = app.host.editor_state().active_children().len();
+    app.host
+        .editor_state_mut()
+        .set_single_selection(op_editor_core::NodeId::new("n10"));
+    focus_settings_input(&mut app);
+    {
+        let ui = &mut app.host.editor_state_mut().editor_ui;
+        ui.settings_input.set_text("op-agent");
+        ui.settings_input.set_caret(0, 0);
+    }
+
+    app.handle_key_pressed(&Key::Named(NamedKey::Delete), None);
+    assert_eq!(
+        app.host.editor_state().editor_ui.settings_input.text(),
+        "p-agent"
+    );
+    assert_eq!(
+        app.host.editor_state().active_children().len(),
+        node_count,
+        "Delete in a settings field must never remove canvas nodes"
+    );
+
+    // Select-all + Delete clears the whole draft.
+    assert!(app.host.apply_select_all());
+    app.handle_key_pressed(&Key::Named(NamedKey::Delete), None);
+    assert_eq!(app.host.editor_state().editor_ui.settings_input.text(), "");
+    assert_eq!(app.host.editor_state().active_children().len(), node_count);
+}

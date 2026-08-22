@@ -377,6 +377,12 @@ impl WidgetHost {
         if self.editor_state.editor_ui.font_picker.open {
             return true;
         }
+        // Settings-modal input owns Delete while focused (forward
+        // deletion at the caret) — without this arm the keystroke fell
+        // through and removed the selected node behind the modal.
+        if self.editor_state.editor_ui.agent_settings.focus.is_some() {
+            return self.apply_settings_delete_forward();
+        }
         // The rename draft has no forward deletion — Delete pops the
         // char before the caret, same as Backspace.
         if let Some(changed) = shared::rename_backspace(&mut self.editor_state, self.now_ms) {

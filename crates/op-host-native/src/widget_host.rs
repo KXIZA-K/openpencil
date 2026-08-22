@@ -28,6 +28,8 @@ mod account_press_tests;
 #[cfg(test)]
 mod agent_settings_acp_tests;
 #[cfg(test)]
+mod agent_settings_api_key_delete_tests;
+#[cfg(test)]
 mod agent_settings_compact_press_tests;
 #[cfg(test)]
 mod agent_settings_form_press_tests;
