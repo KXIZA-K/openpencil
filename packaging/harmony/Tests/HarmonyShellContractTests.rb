@@ -574,6 +574,9 @@ raise "douyin card must run the OpenSDK flow" unless login_page.include?(
 raise "alipay card must run the in-app authorization" unless login_page.include?(
   "AlipayNativeSignIn.start(getContext(this) as common.UIAbilityContext, state, done)",
 )
+raise "wechat card must run the OpenSDK flow" unless login_page.include?(
+  "WechatNativeSignIn.start(getContext(this) as common.UIAbilityContext, state, done)",
+)
 raise "native sign-in must obtain a server-issued state first" unless auth_client.include?(
   "/native-login-start",
 ) && login_page.include?("client.nativeLoginStart(providerId)")
@@ -587,15 +590,20 @@ raise "douyin client key drifted" unless douyin_native.include?(
 raise "alipay mobile AppID drifted" unless alipay_native.include?(
   "'2021006190626680'",
 )
+wechat_native = read(ets_dir, "common/WechatNativeSignIn.ets")
+raise "wechat mobile AppID drifted" unless wechat_native.include?(
+  "'wx327d6a759ea9fe62'",
+)
 raise "alipay must use the unsigned PURE_OAUTH_SDK flow" unless alipay_native.include?(
   "https://authweb.alipay.com/auth?auth_type=PURE_OAUTH_SDK",
 )
 raise "douyin must return on the owned App Link" unless douyin_native.include?(
   "DOUYIN_AUTH_APP_LINK",
 )
-raise "returning wants must reach both SDKs" unless entry_ability.include?(
+raise "returning wants must reach every SDK" unless entry_ability.include?(
   "AlipayNativeSignIn.handleWant(want)",
-) && entry_ability.include?("DouyinNativeSignIn.handleWant(this.context, want)") &&
+) && entry_ability.include?("WechatNativeSignIn.handleWant(want)") &&
+  entry_ability.include?("DouyinNativeSignIn.handleWant(this.context, want)") &&
   entry_ability.include?("onNewWant")
 
 puts "HarmonyOS shell contract validates"

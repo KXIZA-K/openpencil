@@ -130,7 +130,7 @@ xcodebuild \
   -derivedDataPath "$PWD/.derived-data-device" \
   HEADER_SEARCH_PATHS="$PWD/../../crates/op-engine-ffi/include" \
   FRAMEWORK_SEARCH_PATHS="$PWD/Vendor" \
-  OTHER_LDFLAGS="$PWD/../../target/aarch64-apple-ios/release/libop_engine_ffi.a -lc++ -ObjC -Wl,-no_compact_unwind -framework DouyinOpenSDK -framework AFServiceSDK -framework WebKit -framework CoreData -framework SystemConfiguration -framework Network -framework CoreFoundation -framework CoreGraphics -framework CoreText -framework ImageIO -framework MobileCoreServices -framework UIKit -framework Foundation -framework Metal -framework QuartzCore -framework Security" \
+  OTHER_LDFLAGS="$PWD/../../target/aarch64-apple-ios/release/libop_engine_ffi.a -lc++ -ObjC -Wl,-no_compact_unwind -framework DouyinOpenSDK -framework AFServiceSDK -framework WechatOpenSDK -framework WebKit -framework CoreData -framework SystemConfiguration -framework Network -lz -lsqlite3.0 -framework CoreFoundation -framework CoreGraphics -framework CoreText -framework ImageIO -framework MobileCoreServices -framework UIKit -framework Foundation -framework Metal -framework QuartzCore -framework Security" \
   build
 ```
 

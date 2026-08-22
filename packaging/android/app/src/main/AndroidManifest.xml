@@ -10,6 +10,7 @@
         <package android:name="com.ss.android.ugc.aweme.lite" />
         <package android:name="com.eg.android.AlipayGphone" />
         <package android:name="hk.alipay.wallet" />
+        <package android:name="com.tencent.mm" />
     </queries>
 
     <application
@@ -45,6 +46,17 @@
                 <data android:scheme="openpencilalipay" />
             </intent-filter>
         </activity>
+
+        <!-- WeChat OpenSDK auth callback. The SDK resolves this activity by
+             the fixed `<applicationId>.wxapi.WXEntryActivity` naming
+             convention; no intent-filter (Android 13+ breaks callbacks with
+             one). It relays the auth response and finishes. -->
+        <activity
+            android:name=".wxapi.WXEntryActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:taskAffinity="tech.zseven.openpencil"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
 
         <!-- Douyin OpenSDK auth callback. The SDK resolves this activity by
              the fixed `<applicationId>.douyinapi.DouYinEntryActivity` naming

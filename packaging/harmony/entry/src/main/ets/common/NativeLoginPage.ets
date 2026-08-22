@@ -7,6 +7,7 @@ import { AuthTheme } from './AuthTheme';
 import { DouyinNativeSignIn } from './DouyinNativeSignIn';
 import { LucideGlyph, LucideIcon } from './LucideIcon';
 import { NativeSignInKind, NativeSignInOutcome } from './NativeSignInOutcome';
+import { WechatNativeSignIn } from './WechatNativeSignIn';
 import { SsoAuthClient, SsoAuthError } from './SsoAuthClient';
 import { SsoProviderEntry, SsoProviderList } from './SsoProviderList';
 import { SsoRegion, SsoRegionStore } from './SsoRegion';
@@ -354,6 +355,12 @@ export struct NativeLoginPage {
     if (providerId === 'alipay') {
       this.startNativeProviderSignIn(providerId, (state, done) => {
         AlipayNativeSignIn.start(getContext(this) as common.UIAbilityContext, state, done);
+      });
+      return;
+    }
+    if (providerId === 'wechat') {
+      this.startNativeProviderSignIn(providerId, (state, done) => {
+        WechatNativeSignIn.start(getContext(this) as common.UIAbilityContext, state, done);
       });
       return;
     }

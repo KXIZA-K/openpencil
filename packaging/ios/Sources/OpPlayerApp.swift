@@ -18,6 +18,15 @@ struct OpenPencilPlayerApp: App {
                     if NativeProviderCallbacks.handle(url) { return }
                     UniversalLinkRouter.handle(url)
                 }
+                // WeChat returns through the app's universal link; hand the
+                // activity to its SDK first, then fall back to the in-app
+                // universal-link router.
+                .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
+                    if WechatNativeSignIn.handleUniversalLink(activity) { return }
+                    if let url = activity.webpageURL {
+                        UniversalLinkRouter.handle(url)
+                    }
+                }
         }
     }
 }

@@ -435,6 +435,8 @@ final class NativeLoginViewController: UIViewController {
             startDouyinNativeSignIn()
         case "alipay":
             startAlipayNativeSignIn()
+        case "wechat":
+            startWechatNativeSignIn()
         case let providerID:
             openProviderLogin(providerID: providerID)
         }
@@ -459,6 +461,15 @@ final class NativeLoginViewController: UIViewController {
     private func startAlipayNativeSignIn() {
         startNativeProviderSignIn(providerID: "alipay") { state, done in
             AlipayNativeSignIn.start(state: state, completion: done)
+        }
+    }
+
+    /// WeChat sign-in runs on the WeChat OpenSDK with the same state-bound
+    /// exchange as Douyin's; the SDK returns through the app's universal
+    /// link.
+    private func startWechatNativeSignIn() {
+        startNativeProviderSignIn(providerID: "wechat") { state, done in
+            WechatNativeSignIn.start(state: state, completion: done)
         }
     }
 

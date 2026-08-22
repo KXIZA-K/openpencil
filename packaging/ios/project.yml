@@ -59,7 +59,7 @@ targets:
         # SDKs' hidden copy contribute four unwind personality routines —
         # one more than the compact-unwind format can encode — so device
         # links fall back to DWARF unwind info.
-        "OTHER_LDFLAGS[sdk=iphoneos*]": "$(inherited) -ObjC -framework DouyinOpenSDK -framework AFServiceSDK -framework WebKit -framework CoreData -framework SystemConfiguration -framework Network -Wl,-no_compact_unwind"
+        "OTHER_LDFLAGS[sdk=iphoneos*]": "$(inherited) -ObjC -framework DouyinOpenSDK -framework AFServiceSDK -framework WechatOpenSDK -framework WebKit -framework CoreData -framework SystemConfiguration -framework Network -lz -lsqlite3.0 -Wl,-no_compact_unwind"
       configs:
         Debug:
           "OP_ENGINE_ARCHIVE[sdk=iphoneos*]": "$(SRCROOT)/../../target/aarch64-apple-ios/debug/libop_engine_ffi.a"
@@ -88,11 +88,16 @@ targets:
           - snssdk1128
           - alipay
           - alipays
+          - weixin
+          - weixinULAPI
+          - weixinURLParamsAPI
         CFBundleURLTypes:
           - CFBundleURLName: tech.zseven.openpencil.douyin
             CFBundleURLSchemes: [awbponwo0ls6cjos]
           - CFBundleURLName: tech.zseven.openpencil.alipay
             CFBundleURLSchemes: [openpencilalipay]
+          - CFBundleURLName: tech.zseven.openpencil.wechat
+            CFBundleURLSchemes: [wx327d6a759ea9fe62]
     preBuildScripts:
       - name: Fetch vendored sign-in SDKs
         script: |

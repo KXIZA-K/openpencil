@@ -82,6 +82,9 @@ raise "douyin card must run the OpenSDK flow" unless login_source.include?(
 raise "alipay card must run the in-app authorization" unless login_source.include?(
   'case "alipay":'
 ) && login_source.include?("AlipayNativeSignIn.start(state: state")
+raise "wechat card must run the OpenSDK flow" unless login_source.include?(
+  'case "wechat":'
+) && login_source.include?("WechatNativeSignIn.start(state: state")
 raise "native sign-in must obtain a server-issued state first" unless login_source.include?(
   "client.nativeLoginStart(providerID: providerID)"
 )
@@ -107,15 +110,26 @@ raise "alipay must use the unsigned PURE_OAUTH_SDK flow" unless alipay_source.in
 raise "alipay callback scheme drifted" unless alipay_source.include?(
   'callbackScheme = "openpencilalipay"'
 )
+wechat_source = File.read(File.expand_path("../Sources/WechatNativeSignIn.swift", __dir__))
+raise "wechat mobile AppID drifted" unless wechat_source.include?(
+  'appID = "wx327d6a759ea9fe62"'
+)
+raise "wechat universal link drifted" unless wechat_source.include?(
+  'universalLink = "https://op.zseven.cn/app-links/wechat/"'
+)
 raise "simulator builds must compile SDK stubs" unless
   douyin_source.include?("#if targetEnvironment(simulator)") &&
   alipay_source.include?("#if targetEnvironment(simulator)")
-raise "scheme callbacks must route into both SDKs" unless
+raise "scheme callbacks must route into every SDK" unless
   callbacks_source.include?("DouyinNativeSignIn.handleOpenURL(url)") &&
-  callbacks_source.include?("AlipayNativeSignIn.handleOpenURL(url)")
+  callbacks_source.include?("AlipayNativeSignIn.handleOpenURL(url)") &&
+  callbacks_source.include?("WechatNativeSignIn.handleOpenURL(url)")
 app_source = File.read(File.expand_path("../Sources/OpPlayerApp.swift", __dir__))
 raise "scene must forward onOpenURL to the provider SDKs" unless app_source.include?(
   "NativeProviderCallbacks.handle(url)"
+)
+raise "scene must forward universal links to the WeChat SDK first" unless app_source.include?(
+  "WechatNativeSignIn.handleUniversalLink(activity)"
 )
 
 # Region codes are literals for standalone-test compilability; pin them to

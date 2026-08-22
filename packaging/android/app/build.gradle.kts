@@ -87,6 +87,7 @@ dependencies {
     implementation("com.bytedance.ies.ugc.aweme:opensdk-china-external:0.2.0.10")
     implementation("com.bytedance.ies.ugc.aweme:opensdk-common:0.2.0.10")
     implementation("com.alipay.sdk:alipaysdk-android:15.8.42")
+    implementation("com.tencent.mm.opensdk:wechat-sdk-android:6.8.40")
     testImplementation("junit:junit:4.13.2")
     // Real org.json for JVM unit tests (the android.jar copy is a stub).
     testImplementation("org.json:json:20240303")

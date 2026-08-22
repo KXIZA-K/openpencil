@@ -133,6 +133,9 @@ raise "douyin card must run the OpenSDK flow" unless overlay.include?(
 raise "alipay card must run the in-app authorization" unless overlay.include?(
   "AlipayNativeSignIn.start(activity, state, completion)",
 )
+raise "wechat card must run the OpenSDK flow" unless overlay.include?(
+  "WechatNativeSignIn.start(activity, state, completion)",
+)
 raise "native sign-in must obtain a server-issued state first" unless client.include?(
   "/native-login-start",
 ) && overlay.include?("client.nativeLoginStart(providerId)")
@@ -158,5 +161,16 @@ raise "manifest must bind the douyin entry activity" unless manifest.include?(
 raise "manifest must bind the alipay return scheme" unless manifest.include?(
   'android:scheme="openpencilalipay"',
 ) && alipay_native.include?('SCHEME = "openpencilalipay"')
+wechat_native = File.read(File.join(root, "WechatNativeSignIn.kt"))
+wx_entry = File.read(File.join(root, "wxapi/WXEntryActivity.kt"))
+raise "wechat mobile AppID drifted" unless wechat_native.include?(
+  'APP_ID = "wx327d6a759ea9fe62"',
+)
+raise "wechat entry activity must relay the auth response" unless wx_entry.include?(
+  "WechatNativeSignIn.deliver(resp)",
+)
+raise "manifest must bind the wechat entry activity without intent filters" unless
+  manifest.include?('android:name=".wxapi.WXEntryActivity"') &&
+  !manifest[/android:name="\.wxapi\.WXEntryActivity".*?\/>/m].to_s.include?("<intent-filter")
 
 puts "Android native login contract validates"

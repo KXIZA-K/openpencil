@@ -4,6 +4,7 @@ import { deviceInfo } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { AlipayNativeSignIn } from '../common/AlipayNativeSignIn';
 import { DouyinNativeSignIn } from '../common/DouyinNativeSignIn';
+import { WechatNativeSignIn } from '../common/WechatNativeSignIn';
 import { WindowBridge } from '../common/WindowBridge';
 
 const DOMAIN = 0x0001;
@@ -38,6 +39,9 @@ export default class EntryAbility extends UIAbility {
    */
   private routeProviderWant(want: Want): void {
     if (AlipayNativeSignIn.handleWant(want)) {
+      return;
+    }
+    if (WechatNativeSignIn.handleWant(want)) {
       return;
     }
     DouyinNativeSignIn.handleWant(this.context, want);

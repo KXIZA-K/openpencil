@@ -15,6 +15,7 @@ enum NativeProviderCallbacks {
     @discardableResult
     static func handle(_ url: URL) -> Bool {
         if DouyinNativeSignIn.handleOpenURL(url) { return true }
-        return AlipayNativeSignIn.handleOpenURL(url)
+        if AlipayNativeSignIn.handleOpenURL(url) { return true }
+        return WechatNativeSignIn.handleOpenURL(url)
     }
 }

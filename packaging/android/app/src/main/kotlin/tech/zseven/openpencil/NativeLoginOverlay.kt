@@ -415,6 +415,9 @@ internal class NativeLoginOverlay(
             "alipay" -> startNativeProviderSignIn(providerId) { state, completion ->
                 AlipayNativeSignIn.start(activity, state, completion)
             }
+            "wechat" -> startNativeProviderSignIn(providerId) { state, completion ->
+                WechatNativeSignIn.start(activity, state, completion)
+            }
             else -> openProviderLogin(providerId)
         }
     }

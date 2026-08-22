@@ -44,4 +44,27 @@ fetch() {
 
 fetch "DouyinOpenSDK" "$douyin_url" "$douyin_sha256" "DouyinOpenSDK.framework"
 fetch "AFServiceSDK" "$alipay_url" "$alipay_sha256" "AFServiceSDK.framework"
+
+# WeChat ships an xcframework; device builds link the ios-arm64 slice like
+# the other vendored frameworks (simulator builds compile the Swift stubs).
+wechat_url="https://dldir1.qq.com/WechatWebDev/opensdk/XCFramework/OpenSDK2.0.7.zip"
+wechat_sha256="5f258a03a91950ed1f0197555aafb2127ad613f8f79413d45751da36eacbf699"
+if [[ ! -d "$vendor_dir/WechatOpenSDK.framework" ]]; then
+  archive="$vendor_dir/WechatOpenSDK.zip"
+  echo "fetching WechatOpenSDK from $wechat_url"
+  curl -fsSL --retry 2 -o "$archive" "$wechat_url"
+  echo "$wechat_sha256  $archive" | shasum -a 256 -c - >/dev/null
+  staging="$vendor_dir/.wechat-staging"
+  rm -rf "$staging"
+  mkdir -p "$staging"
+  unzip -q "$archive" -d "$staging"
+  extracted="$(find "$staging" -type d -path "*ios-arm64/WechatOpenSDK.framework" | head -n 1)"
+  if [[ -z "$extracted" ]]; then
+    echo "error: device WechatOpenSDK.framework not found inside the archive" >&2
+    exit 1
+  fi
+  rm -rf "$vendor_dir/WechatOpenSDK.framework"
+  mv "$extracted" "$vendor_dir/WechatOpenSDK.framework"
+  rm -rf "$staging" "$archive"
+fi
 echo "vendor SDKs ready in $vendor_dir"

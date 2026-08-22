@@ -20,7 +20,9 @@
     "querySchemes": [
       "apmqpdispatch",
       "snssdk1128",
-      "douyinopensdk"
+      "douyinopensdk",
+      "weixin",
+      "wxopensdk"
     ],
     "abilities": [
       {
