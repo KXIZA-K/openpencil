@@ -13,6 +13,8 @@ import UIKit
 extension OpPlayerView {
     /// The engine's IME focus flipped; show or hide the system keyboard.
     func imeFocusChanged(_ focused: Bool) {
+        NSLog("[IME] imeFocusChanged(%d) firstResponder=%d", focused ? 1 : 0,
+              imeTextView.isFirstResponder ? 1 : 0)
         if focused {
             if !imeTextView.isFirstResponder {
                 imeTextView.becomeFirstResponder()
@@ -80,8 +82,20 @@ extension OpPlayerView {
             return false
         }
         if range.length == 0 {
-            // Plain insertion (typing / paste).
-            host.editorText(text)
+            if text.isEmpty {
+                // Backspace on the empty conduit. Because the conduit is
+                // kept empty outside a composition, the caret always sits
+                // at offset 0 with nothing to delete, and iOS (observed on
+                // 26.x, simulator and device) delivers backspace as this
+                // zero-length-range, empty-replacement delegate call and
+                // never invokes `deleteBackward`. Forwarding it as plain
+                // insertion made every backspace a no-op `editorText("")`
+                // — the "typed text cannot be deleted" on-device defect.
+                host.editorKey(Int32(OpKey_Backspace))
+            } else {
+                // Plain insertion (typing / paste).
+                host.editorText(text)
+            }
         } else {
             // Deletion fallback for IME paths that edit through the
             // delegate rather than UIKeyInput. With the empty invariant
