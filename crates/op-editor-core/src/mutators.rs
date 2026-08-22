@@ -322,6 +322,56 @@ impl EditorState {
         self.editor_ui.collapsed_layers.contains(id)
     }
 
+    /// Expand all ancestors of `node_id` in the LayerPanel, revealing
+    /// the node's position in the hierarchy. Returns `true` if the
+    /// collapsed set changed, `false` if all ancestors were already
+    /// expanded or the node is not real.
+    ///
+    /// This is view-only UI state (no undo entry, no document mutation,
+    /// no `mark_document_changed`). Call this before computing a scroll
+    /// offset to ensure the selected node's row exists in the flattened
+    /// row list.
+    pub fn expand_layer_ancestors(&mut self, node_id: &NodeId) -> bool {
+        if !node_id.is_real() {
+            return false;
+        }
+
+        let children = self.active_children();
+
+        // Walk the ancestor chain by repeatedly finding the parent of the
+        // current node, collecting all ancestor ids.
+        let mut ancestors = Vec::new();
+        let mut current = node_id.clone();
+
+        loop {
+            match walkers::find_parent_and_index(children, &current) {
+                Some((None, _)) => {
+                    // current is a top-level child; we've reached the root.
+                    break;
+                }
+                Some((Some(parent_id), _)) => {
+                    // current's parent exists in the tree.
+                    ancestors.push(parent_id.clone());
+                    current = parent_id;
+                }
+                None => {
+                    // current is not in the tree; stop walking.
+                    break;
+                }
+            }
+        }
+
+        // Remove all ancestors from the collapsed set.
+        let mut changed = false;
+        for ancestor in ancestors {
+            if self.editor_ui.collapsed_layers.remove(&ancestor) {
+                changed = true;
+            }
+        }
+
+        changed
+    }
+
     // --- Geometry ----------------------------------------------------
 
     /// Overwrite the anchor node's rotation (radians, clockwise).

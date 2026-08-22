@@ -594,6 +594,7 @@ impl EditorUiState {
         self.layer_pages_h_scroll.offset = 0.0;
         self.layer_layers_h_scroll.offset = 0.0;
         self.collapsed_layers.clear();
+        self.last_revealed_layer_anchor = None;
         self.last_layer_click = None;
         self.last_canvas_click = None;
         self.entered_container = None;

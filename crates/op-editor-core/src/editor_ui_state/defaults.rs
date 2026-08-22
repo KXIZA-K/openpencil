@@ -200,6 +200,7 @@ impl Default for EditorUiState {
             hovered_page_index: None,
             layer_context_menu: None,
             collapsed_layers: HashSet::new(),
+            last_revealed_layer_anchor: None,
             last_layer_click: None,
             last_canvas_click: None,
             last_variable_name_click: None,

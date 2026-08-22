@@ -218,6 +218,32 @@ impl WidgetHost {
                 // that don't touch the layer tree skip the walk + measure.
                 self.layer_panel()
             };
+
+            // Auto-reveal selected node: if the selection changed and differs
+            // from the last-revealed anchor, expand ancestors and reveal.
+            // This covers MCP set_selection, undo/redo, and programmatic
+            // selection changes (not just canvas clicks).
+            if active_drag.is_none() {
+                // Only auto-reveal when not dragging; explicit drag interactions
+                // take precedence and manual collapse should be respected.
+                let should_reveal = match (
+                    &self.editor_state.selection.anchor,
+                    &self.editor_state.editor_ui.last_revealed_layer_anchor,
+                ) {
+                    (anchor, last) if anchor.is_real() => Some(anchor) != last.as_ref(),
+                    _ => false,
+                };
+                if should_reveal {
+                    op_editor_ui::widgets::scroll_flow::reveal_layer_panel_selection(
+                        &mut self.editor_state,
+                        &layer_panel,
+                        layer_panel_rect,
+                    );
+                    // Rebuild the panel after reveal to reflect any expanded ancestors.
+                    layer_panel = self.layer_panel();
+                }
+            }
+
             if let Some(d) = &active_drag {
                 layer_panel.drop_target = layer_panel
                     .drop_target_at(layer_panel_rect, Point2D::new(d.current_x, d.current_y));

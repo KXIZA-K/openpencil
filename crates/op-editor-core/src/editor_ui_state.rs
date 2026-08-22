@@ -690,6 +690,12 @@ pub struct EditorUiState {
     /// rebuilt on load, never serialized, and toggling it never pushes
     /// a history entry.
     pub collapsed_layers: HashSet<NodeId>,
+    /// Last selection anchor that was expanded and revealed in the layers
+    /// panel. Compared each frame to auto-reveal when the user changes the
+    /// selection. Cleared in `clear_document_derived` on document replacement.
+    /// View-only transient state: never serialized, never part of the undo
+    /// snapshot.
+    pub last_revealed_layer_anchor: Option<NodeId>,
     /// Last LayerPanel click target + ms; 400 ms re-press → rename.
     pub last_layer_click: Option<(LayerContextTarget, u64)>,
     /// Deepest canvas hit + ms for the first half of a possible
