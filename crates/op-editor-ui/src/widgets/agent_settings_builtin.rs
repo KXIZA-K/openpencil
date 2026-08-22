@@ -6,7 +6,8 @@ use crate::widgets::agent_settings_builtin_layout::{
     compact_remove_rect, compact_switch_rect, compact_touch_edit_rect, compact_touch_edit_target,
     compact_touch_remove_rect, compact_touch_remove_target, compact_touch_switch_rect,
     compact_touch_switch_target, draft_card_height_for_ui,
-    editing_delete_rect as agent_settings_builtin_layout_delete_rect, expanded_card_height_for_ui,
+    editing_delete_rect as agent_settings_builtin_layout_delete_rect,
+    editing_save_rect as agent_settings_builtin_layout_save_rect, expanded_card_height_for_ui,
     field_input_rect_for_ui, is_editing, sync_error_height, touch_empty_cta_rect, CARD_GAP,
     EMPTY_HEIGHT, HEADER_HEIGHT, SUBTITLE_HEIGHT, TOUCH_EMPTY_CARD_H,
 };
@@ -62,6 +63,9 @@ pub enum BuiltinHit {
     },
     SaveDraft,
     CancelDraft,
+    /// Primary action of the expanded editing form: commit drafts and
+    /// collapse the card.
+    SaveEditing(usize),
     ToggleEnabled(usize),
     Edit(usize),
     Remove(usize),
@@ -207,6 +211,9 @@ fn hit_test_with_touch(
                     }
                 }
                 return BuiltinHit::Focus { index, field };
+            }
+            if agent_settings_builtin_layout_save_rect(card, touch).contains(point) {
+                return BuiltinHit::SaveEditing(index);
             }
             if agent_settings_builtin_layout_delete_rect(card, touch).contains(point) {
                 return BuiltinHit::Remove(index);

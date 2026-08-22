@@ -97,12 +97,33 @@ pub(super) fn delete_row_height(touch: bool) -> f32 {
 }
 
 /// Bottom-of-form "Delete provider" target while editing a saved card.
-pub(super) fn editing_delete_rect(card: Rect, touch: bool) -> Rect {
+/// The expanded editing form's bottom action row: a primary Save button
+/// with a trailing destructive square for deletion. Save is the prominent
+/// action — deletion used to own the whole row, which read as the form's
+/// main affordance.
+fn editing_action_row(card: Rect, touch: bool) -> Rect {
     let row = delete_row_height(touch);
     let pad = if touch { 16.0 } else { 12.0 };
     Rect {
         origin: Point2D::new(card.origin.x + pad, card.origin.y + card.size.y - row),
         size: Point2D::new(card.size.x - pad * 2.0, row - 6.0),
+    }
+}
+
+pub(super) fn editing_save_rect(card: Rect, touch: bool) -> Rect {
+    let row = editing_action_row(card, touch);
+    let gap = if touch { 12.0 } else { 8.0 };
+    Rect {
+        origin: row.origin,
+        size: Point2D::new(row.size.x - row.size.y - gap, row.size.y),
+    }
+}
+
+pub(super) fn editing_delete_rect(card: Rect, touch: bool) -> Rect {
+    let row = editing_action_row(card, touch);
+    Rect {
+        origin: Point2D::new(row.origin.x + row.size.x - row.size.y, row.origin.y),
+        size: Point2D::new(row.size.y, row.size.y),
     }
 }
 

@@ -285,6 +285,8 @@ pub enum AgentSettingsHit {
         row: usize,
     },
     SaveBuiltinAgentDraft,
+    /// Commit the expanded editing form's drafts and collapse the card.
+    SaveBuiltinAgentEditing(usize),
     CancelBuiltinAgentDraft,
     ToggleBuiltinAgentEnabled(usize),
     EditBuiltinAgent(usize),

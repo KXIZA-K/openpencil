@@ -154,6 +154,9 @@ impl AgentSettingsPanel<'_> {
                         return AgentSettingsHit::SelectBuiltinModel { index, row };
                     }
                     BuiltinHit::SaveDraft => return AgentSettingsHit::SaveBuiltinAgentDraft,
+                    BuiltinHit::SaveEditing(index) => {
+                        return AgentSettingsHit::SaveBuiltinAgentEditing(index);
+                    }
                     BuiltinHit::CancelDraft => return AgentSettingsHit::CancelBuiltinAgentDraft,
                     BuiltinHit::ToggleEnabled(index) => {
                         return AgentSettingsHit::ToggleBuiltinAgentEnabled(index);

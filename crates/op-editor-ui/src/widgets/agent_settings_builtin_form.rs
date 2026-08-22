@@ -69,24 +69,39 @@ pub(super) fn paint_builtin_agent_form(
     }
     agent_settings_builtin_parts::paint_preset_menu(cx, theme, settings, agent, index, card, touch);
     model_menu::paint_model_menu(cx, theme, settings, ui, agent, index, card, touch);
-    // Editing an existing provider exposes deletion right in the form —
-    // the collapsed card's trash icon alone left the action undiscoverable
-    // once the card was open.
+    // The expanded editing form ends in an action row: a primary Save
+    // button (commit + collapse) with a small trailing delete square —
+    // deletion stays reachable in the open form, but no longer reads as
+    // the form's main action.
     if index.is_some() {
-        let rect = crate::widgets::agent_settings_builtin_layout::editing_delete_rect(card, touch);
-        let danger = theme.destructive;
-        cx.backend
-            .stroke_round_rect(rect, 10.0, danger.with_alpha(0.55), 1.0);
-        let label = t_settings(ui, "settings.agents.deleteProvider");
+        let save = crate::widgets::agent_settings_builtin_layout::editing_save_rect(card, touch);
+        cx.backend.fill_round_rect(save, 10.0, theme.accent);
+        let label = t_settings(ui, "common.save");
         let font = if touch { 15.0 } else { 12.0 };
         let text_w = crate::widgets::text_metrics::measure_chrome(cx.backend, label, font);
         draw_text(
             cx,
             label,
             font,
+            theme.accent_foreground,
+            save.origin.x + (save.size.x - text_w) / 2.0,
+            jian_widgets::centered_text_baseline_y(save, font),
+        );
+        let rect = crate::widgets::agent_settings_builtin_layout::editing_delete_rect(card, touch);
+        let danger = theme.destructive;
+        cx.backend
+            .stroke_round_rect(rect, 10.0, danger.with_alpha(0.55), 1.0);
+        let icon_size = if touch { 20.0 } else { 14.0 };
+        draw_icon(
+            cx.backend,
+            Icon::Trash,
+            Point2D::new(
+                rect.origin.x + (rect.size.x - icon_size) / 2.0,
+                rect.origin.y + (rect.size.y - icon_size) / 2.0,
+            ),
+            icon_size,
             danger,
-            rect.origin.x + (rect.size.x - text_w) / 2.0,
-            jian_widgets::centered_text_baseline_y(rect, font),
+            1.7,
         );
     }
 }

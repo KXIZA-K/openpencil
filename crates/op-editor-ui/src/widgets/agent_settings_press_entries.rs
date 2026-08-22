@@ -301,6 +301,16 @@ pub(crate) fn apply_entry_hit(
             focus_builtin_agent(state, index, BuiltinAgentField::DisplayName, now_ms);
             SettingsPressOutcome::handled()
         }
+        AgentSettingsHit::SaveBuiltinAgentEditing(index) => {
+            // Commit any focused draft, then drop focus so the expanded
+            // form collapses; a fresh key or base URL warrants a model
+            // catalog refresh, mirroring the draft save.
+            commit(state);
+            queue_builtin_discovery(state, index, now_ms);
+            clear_focus(state);
+            state.rebuild_chat_models();
+            SettingsPressOutcome::handled()
+        }
         AgentSettingsHit::RemoveBuiltinAgent(index) => {
             commit(state);
             if state
@@ -563,6 +573,49 @@ fn queue_builtin_discovery(state: &mut EditorState, index: usize, now_ms: u64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn saving_the_editing_form_commits_the_draft_and_collapses_it() {
+        let mut state = EditorState::new();
+        state.editor_ui.agent_settings.begin_builtin_agent_draft();
+        state
+            .editor_ui
+            .agent_settings
+            .builtin_agent_draft
+            .as_mut()
+            .expect("draft")
+            .api_key = "sk-old".into();
+        let _ = apply_entry_hit(
+            &mut state,
+            AgentSettingsHit::SaveBuiltinAgentDraft,
+            SettingsCommitScope::Browser,
+            55,
+        );
+        // Re-open the saved provider for editing and type a new key.
+        let _ = apply_entry_hit(
+            &mut state,
+            AgentSettingsHit::EditBuiltinAgent(0),
+            SettingsCommitScope::Browser,
+            56,
+        );
+        focus_builtin_agent(&mut state, 0, BuiltinAgentField::ApiKey, 57);
+        state.editor_ui.settings_input.set_text("sk-rotated");
+
+        let outcome = apply_entry_hit(
+            &mut state,
+            AgentSettingsHit::SaveBuiltinAgentEditing(0),
+            SettingsCommitScope::Browser,
+            58,
+        );
+
+        assert_eq!(outcome, SettingsPressOutcome::handled());
+        assert_eq!(
+            state.editor_ui.agent_settings.builtin_agents[0].api_key,
+            "sk-rotated"
+        );
+        // Focus dropped => the expanded editing form collapses.
+        assert!(state.editor_ui.agent_settings.focus.is_none());
+    }
 
     #[test]
     fn saving_a_ready_builtin_draft_queues_its_first_model_discovery() {
