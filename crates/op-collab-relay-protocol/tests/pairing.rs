@@ -285,7 +285,9 @@ fn legacy_v1_seal_round_trips_and_matches_the_v0_8_4_wire_shape() {
     assert_eq!(&raw[1..1 + SEALED_INVITE_V1_NONCE_BYTES], &v1_nonce);
     assert_eq!(
         raw.len(),
-        1 + SEALED_INVITE_V1_NONCE_BYTES + invite().to_fragment().len() + SEALED_INVITE_V1_TAG_BYTES
+        1 + SEALED_INVITE_V1_NONCE_BYTES
+            + invite().to_fragment().len()
+            + SEALED_INVITE_V1_TAG_BYTES
     );
     assert!(raw.len() <= MAX_SEALED_INVITE_BYTES);
 

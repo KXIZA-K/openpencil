@@ -347,7 +347,13 @@ impl PreviewSession {
                 let mut cx = PaintCx {
                     backend: &mut *backend,
                 };
-                op_editor_ui::widgets::paint_scene_subtree(&mut cx, entering_page, &paint.node_id, paint.paint_origin, fit);
+                op_editor_ui::widgets::paint_scene_subtree(
+                    &mut cx,
+                    entering_page,
+                    &paint.node_id,
+                    paint.paint_origin,
+                    fit,
+                );
             }
             backend.restore();
         }
