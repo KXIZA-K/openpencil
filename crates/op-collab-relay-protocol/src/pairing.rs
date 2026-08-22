@@ -51,10 +51,17 @@ pub const PAIRING_CODE_ID_BYTES: usize = 16;
 /// Version of the sealed pairing-invite envelope. This is intentionally
 /// independent from [`crate::RELAY_PROTOCOL_VERSION`].
 pub const SEALED_PAIRING_INVITE_VERSION: u8 = 2;
+/// Version byte of the legacy sealed envelope published by OpenPencil
+/// v0.8.4 (BLAKE3-XOF/XOR stream + keyed-BLAKE3 encrypt-then-MAC).
+pub const SEALED_PAIRING_INVITE_V1_VERSION: u8 = 1;
 /// RFC 8439 ChaCha20-Poly1305 nonce length (96 bits).
 pub const SEALED_INVITE_NONCE_BYTES: usize = 12;
 /// Full RFC 8439 Poly1305 tag length (128 bits; never truncated).
 pub const SEALED_INVITE_TAG_BYTES: usize = 16;
+/// Legacy v1 envelope nonce length (mixed into both BLAKE3 subkeys).
+pub const SEALED_INVITE_V1_NONCE_BYTES: usize = 24;
+/// Legacy v1 envelope MAC tag length (full BLAKE3 output).
+pub const SEALED_INVITE_V1_TAG_BYTES: usize = 32;
 /// Opaque transport/storage ceiling retained from the published v0.8.4
 /// envelope: version + 24-byte nonce + longest fragment + 32-byte tag. Relay
 /// infrastructure must remain able to forward legacy blobs during rollout.
@@ -64,8 +71,11 @@ pub const MAX_SEALED_PAIRING_INVITE_V2_BYTES: usize =
     1 + SEALED_INVITE_NONCE_BYTES + MAX_INVITE_CHARS + SEALED_INVITE_TAG_BYTES;
 
 const SEALED_INVITE_HEADER_BYTES: usize = 1 + SEALED_INVITE_NONCE_BYTES;
+const SEALED_INVITE_V1_HEADER_BYTES: usize = 1 + SEALED_INVITE_V1_NONCE_BYTES;
 const SEALED_INVITE_KEY_BYTES: usize = 32;
 const CODE_ID_CONTEXT: &str = "openpencil/op-collab-relay-protocol/pairing-code-id/v1";
+const V1_ENC_KEY_CONTEXT: &str = "openpencil/op-collab-relay-protocol/pairing-code-enc-key/v1";
+const V1_MAC_KEY_CONTEXT: &str = "openpencil/op-collab-relay-protocol/pairing-code-mac-key/v1";
 const SEALED_INVITE_KEY_INFO: &[u8] =
     b"openpencil/op-collab-relay-protocol/sealed-pairing-invite/chacha20poly1305-key/v2\0";
 const SEALED_INVITE_AAD_DOMAIN: &[u8] =
@@ -168,6 +178,23 @@ impl PairingCode {
         }
         Ok(key)
     }
+
+    /// Legacy v1 subkey derivation: domain-separated BLAKE3 over the
+    /// canonical code bytes and the 24-byte envelope nonce. Retained so a
+    /// mixed-version fleet can keep pairing during the v1→v2 transition.
+    fn legacy_subkey(
+        &self,
+        context: &str,
+        nonce: &[u8; SEALED_INVITE_V1_NONCE_BYTES],
+    ) -> Zeroizing<[u8; SEALED_INVITE_KEY_BYTES]> {
+        Zeroizing::new(
+            *blake3::Hasher::new_derive_key(context)
+                .update(self.0.as_slice())
+                .update(nonce)
+                .finalize()
+                .as_bytes(),
+        )
+    }
 }
 
 impl fmt::Debug for PairingCode {
@@ -234,6 +261,43 @@ impl SealedPairingInvite {
         Self::seal(code, invite, nonce)
     }
 
+    /// Seal in the legacy v1 envelope that every fielded client can open.
+    ///
+    /// Fleet-transition writer: OpenPencil v0.8.4 desktops reject any other
+    /// envelope version at claim time, so an owner that seals v2 mints codes
+    /// those guests can claim but never open ("invalid code"). Publish v1
+    /// until the fielded readers understand v2, then switch the owner back
+    /// to [`Self::seal_random`]. Opening supports both versions either way.
+    pub fn seal_legacy_compat(
+        code: &PairingCode,
+        invite: &RelayInviteV1,
+        nonce: [u8; SEALED_INVITE_V1_NONCE_BYTES],
+    ) -> Self {
+        let fragment = Zeroizing::new(invite.to_fragment());
+        let mut body = Zeroizing::new(fragment.as_bytes().to_vec());
+        legacy_apply_keystream(&code.legacy_subkey(V1_ENC_KEY_CONTEXT, &nonce), &mut body);
+        let mut raw = Vec::with_capacity(
+            SEALED_INVITE_V1_HEADER_BYTES + body.len() + SEALED_INVITE_V1_TAG_BYTES,
+        );
+        raw.push(SEALED_PAIRING_INVITE_V1_VERSION);
+        raw.extend_from_slice(&nonce);
+        raw.extend_from_slice(&body);
+        let tag = legacy_mac_tag(&code.legacy_subkey(V1_MAC_KEY_CONTEXT, &nonce), &raw);
+        raw.extend_from_slice(tag.as_bytes());
+        Self(Zeroizing::new(raw))
+    }
+
+    /// Legacy v1 seal with a fresh random nonce.
+    #[cfg(feature = "random")]
+    pub fn seal_random_legacy_compat(
+        code: &PairingCode,
+        invite: &RelayInviteV1,
+    ) -> Result<Self, RelayProtocolError> {
+        let mut nonce = [0_u8; SEALED_INVITE_V1_NONCE_BYTES];
+        getrandom::fill(&mut nonce).map_err(|_| RelayProtocolError::RandomUnavailable)?;
+        Ok(Self::seal_legacy_compat(code, invite, nonce))
+    }
+
     /// Accept an untrusted blob from the wire, checking envelope version,
     /// bounds, and nonce shape. The authenticity check happens in
     /// [`Self::open`].
@@ -248,10 +312,14 @@ impl SealedPairingInvite {
 
     /// Authenticate and decrypt with `code`, returning the parsed invite.
     /// A wrong code fails the constant-time tag comparison before any
-    /// plaintext is interpreted.
+    /// plaintext is interpreted. Both the current v2 AEAD envelope and the
+    /// legacy v1 envelope published by v0.8.4 owners are accepted.
     pub fn open(&self, code: &PairingCode) -> Result<RelayInviteV1, RelayProtocolError> {
         let raw = &self.0;
         validate_sealed_invite_bytes(raw)?;
+        if raw[0] == SEALED_PAIRING_INVITE_V1_VERSION {
+            return self.open_v1(code);
+        }
         let tag_offset = raw.len() - SEALED_INVITE_TAG_BYTES;
         let mut nonce = [0_u8; SEALED_INVITE_NONCE_BYTES];
         nonce.copy_from_slice(&raw[1..SEALED_INVITE_HEADER_BYTES]);
@@ -267,6 +335,34 @@ impl SealedPairingInvite {
                 Tag::from_slice(&raw[tag_offset..]),
             )
             .map_err(|_| RelayProtocolError::InvalidPairingCode)?;
+        let fragment =
+            core::str::from_utf8(&body).map_err(|_| RelayProtocolError::InvalidSealedInvite)?;
+        RelayInviteV1::from_fragment(fragment).map_err(|_| RelayProtocolError::InvalidSealedInvite)
+    }
+
+    /// Legacy v1 open: keyed-BLAKE3 encrypt-then-MAC over
+    /// `[version=1][nonce:24][ciphertext]`, byte-compatible with the sealed
+    /// envelope shipped in OpenPencil v0.8.4.
+    fn open_v1(&self, code: &PairingCode) -> Result<RelayInviteV1, RelayProtocolError> {
+        let raw = &self.0;
+        let tag_offset = raw.len() - SEALED_INVITE_V1_TAG_BYTES;
+        let mut nonce = [0_u8; SEALED_INVITE_V1_NONCE_BYTES];
+        nonce.copy_from_slice(&raw[1..SEALED_INVITE_V1_HEADER_BYTES]);
+        let expected = legacy_mac_tag(
+            &code.legacy_subkey(V1_MAC_KEY_CONTEXT, &nonce),
+            &raw[..tag_offset],
+        );
+        let presented = blake3::Hash::from_bytes(
+            raw[tag_offset..]
+                .try_into()
+                .expect("v1 tag range is fixed width"),
+        );
+        // `blake3::Hash` equality is constant-time.
+        if expected != presented {
+            return Err(RelayProtocolError::InvalidPairingCode);
+        }
+        let mut body = Zeroizing::new(raw[SEALED_INVITE_V1_HEADER_BYTES..tag_offset].to_vec());
+        legacy_apply_keystream(&code.legacy_subkey(V1_ENC_KEY_CONTEXT, &nonce), &mut body);
         let fragment =
             core::str::from_utf8(&body).map_err(|_| RelayProtocolError::InvalidSealedInvite)?;
         RelayInviteV1::from_fragment(fragment).map_err(|_| RelayProtocolError::InvalidSealedInvite)
@@ -287,23 +383,36 @@ fn validate_nonce(nonce: &[u8; SEALED_INVITE_NONCE_BYTES]) -> Result<(), RelayPr
 }
 
 fn validate_sealed_invite_bytes(raw: &[u8]) -> Result<(), RelayProtocolError> {
-    let minimum = SEALED_INVITE_HEADER_BYTES + SEALED_INVITE_TAG_BYTES + 1;
-    if raw.len() < minimum || raw.len() > MAX_SEALED_INVITE_BYTES {
+    // The one-byte minimum admits the version dispatch below; per-version
+    // bounds are checked once the envelope version is known.
+    if raw.is_empty() || raw.len() > MAX_SEALED_INVITE_BYTES {
         return Err(RelayProtocolError::InvalidSealedInvite);
     }
-    if raw[0] != SEALED_PAIRING_INVITE_VERSION {
-        return Err(RelayProtocolError::UnsupportedSealedInviteVersion {
-            actual: raw[0],
+    match raw[0] {
+        SEALED_PAIRING_INVITE_VERSION => {
+            let minimum = SEALED_INVITE_HEADER_BYTES + SEALED_INVITE_TAG_BYTES + 1;
+            if raw.len() < minimum || raw.len() > MAX_SEALED_PAIRING_INVITE_V2_BYTES {
+                return Err(RelayProtocolError::InvalidSealedInvite);
+            }
+            let nonce: &[u8; SEALED_INVITE_NONCE_BYTES] = raw[1..SEALED_INVITE_HEADER_BYTES]
+                .try_into()
+                .expect("sealed invite nonce range is fixed width");
+            validate_nonce(nonce)
+        }
+        // Legacy v1 blobs carry no nonce-shape rule beyond bounds; v0.8.4
+        // published CSPRNG nonces and its parser accepted any value.
+        SEALED_PAIRING_INVITE_V1_VERSION => {
+            let minimum = SEALED_INVITE_V1_HEADER_BYTES + SEALED_INVITE_V1_TAG_BYTES + 1;
+            if raw.len() < minimum {
+                return Err(RelayProtocolError::InvalidSealedInvite);
+            }
+            Ok(())
+        }
+        other => Err(RelayProtocolError::UnsupportedSealedInviteVersion {
+            actual: other,
             expected: SEALED_PAIRING_INVITE_VERSION,
-        });
+        }),
     }
-    if raw.len() > MAX_SEALED_PAIRING_INVITE_V2_BYTES {
-        return Err(RelayProtocolError::InvalidSealedInvite);
-    }
-    let nonce: &[u8; SEALED_INVITE_NONCE_BYTES] = raw[1..SEALED_INVITE_HEADER_BYTES]
-        .try_into()
-        .expect("sealed invite nonce range is fixed width");
-    validate_nonce(nonce)
 }
 
 fn sealed_invite_header(
@@ -313,6 +422,21 @@ fn sealed_invite_header(
     header[0] = SEALED_PAIRING_INVITE_VERSION;
     header[1..].copy_from_slice(nonce);
     header
+}
+
+/// Legacy v1 stream cipher: XOR with a keyed-BLAKE3 XOF keystream.
+fn legacy_apply_keystream(key: &[u8; SEALED_INVITE_KEY_BYTES], body: &mut [u8]) {
+    let mut reader = blake3::Hasher::new_keyed(key).finalize_xof();
+    let mut stream = Zeroizing::new(vec![0_u8; body.len()]);
+    reader.fill(stream.as_mut_slice());
+    for (byte, mask) in body.iter_mut().zip(stream.iter()) {
+        *byte ^= mask;
+    }
+}
+
+/// Legacy v1 MAC: keyed BLAKE3 over `[version][nonce][ciphertext]`.
+fn legacy_mac_tag(key: &[u8; SEALED_INVITE_KEY_BYTES], bytes: &[u8]) -> blake3::Hash {
+    blake3::Hasher::new_keyed(key).update(bytes).finalize()
 }
 
 fn sealed_invite_aad(header: &[u8]) -> Vec<u8> {

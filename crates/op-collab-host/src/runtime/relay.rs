@@ -707,7 +707,12 @@ fn publish_owner_pairing_code(
         let Ok(code) = PairingCode::generate_for(region.region) else {
             return None;
         };
-        let Ok(sealed) = SealedPairingInvite::seal_random(&code, &invite) else {
+        // Seal the legacy v1 envelope during the v1→v2 transition: fielded
+        // v0.8.4 desktops reject any other envelope version when they claim,
+        // so a v2-sealed publish mints codes those guests can never open.
+        // Opening accepts both versions; move back to `seal_random` (v2)
+        // once the fielded readers understand the v2 envelope.
+        let Ok(sealed) = SealedPairingInvite::seal_random_legacy_compat(&code, &invite) else {
             return None;
         };
         let Ok(request) = PairingPublishRequest::new(

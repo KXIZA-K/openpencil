@@ -8,6 +8,7 @@ use op_collab_relay_protocol::{
     SealedPairingInvite, UnsignedRelayLocatorV1, VerifiedRelayRoute, MAX_SEALED_INVITE_BYTES,
     MAX_SEALED_PAIRING_INVITE_V2_BYTES, PAIRING_CODE_CHARS, PAIRING_CODE_ID_BYTES,
     RELAY_PROTOCOL_VERSION, SEALED_INVITE_NONCE_BYTES, SEALED_INVITE_TAG_BYTES,
+    SEALED_INVITE_V1_NONCE_BYTES, SEALED_INVITE_V1_TAG_BYTES, SEALED_PAIRING_INVITE_V1_VERSION,
     SEALED_PAIRING_INVITE_VERSION,
 };
 use sha2::{Digest as _, Sha256};
@@ -221,12 +222,24 @@ fn sealed_invite_rejects_truncation_trailing_and_bit_flips() {
     oversized_transport.resize(MAX_SEALED_INVITE_BYTES + 1, 0);
     assert!(SealedPairingInvite::from_bytes(&oversized_transport).is_err());
 
+    // A v2 blob relabeled as legacy v1 parses (v1 is a supported reader
+    // path) but must fail the v1 MAC, which covers the version byte.
     let mut wrong_version = raw.clone();
     wrong_version[0] = 1;
     assert!(matches!(
-        SealedPairingInvite::from_bytes(&wrong_version),
+        SealedPairingInvite::from_bytes(&wrong_version)
+            .unwrap()
+            .open(&code()),
+        Err(RelayProtocolError::InvalidPairingCode)
+    ));
+
+    // An unknown future version stays a version error, not a MAC error.
+    let mut unknown_version = raw.clone();
+    unknown_version[0] = 3;
+    assert!(matches!(
+        SealedPairingInvite::from_bytes(&unknown_version),
         Err(RelayProtocolError::UnsupportedSealedInviteVersion {
-            actual: 1,
+            actual: 3,
             expected: SEALED_PAIRING_INVITE_VERSION,
         })
     ));
@@ -260,21 +273,97 @@ fn sealed_invite_rejects_truncation_trailing_and_bit_flips() {
 }
 
 #[test]
-fn published_v0_8_4_sealed_v1_is_rejected_without_fallback() {
-    // Keeping the v0.8.4 code id lets both versions address the same opaque
-    // slot, but does not make their cipher envelopes interoperable. Pairing
-    // therefore requires a same-version peer or a product-exposed manual path.
-    let mut legacy = vec![0_u8; 1 + 24 + invite().to_fragment().len() + 32];
-    legacy[0] = 1;
-    assert_eq!(legacy.len(), 560);
-    assert!(legacy.len() <= MAX_SEALED_INVITE_BYTES);
+fn legacy_v1_seal_round_trips_and_matches_the_v0_8_4_wire_shape() {
+    // Fleet transition: owners seal the legacy v1 envelope so fielded
+    // v0.8.4 guests can open what they claim, and readers accept both
+    // versions. The wire shape must stay byte-compatible with v0.8.4:
+    // [version=1][nonce:24][ciphertext][tag:32].
+    let v1_nonce = [7_u8; SEALED_INVITE_V1_NONCE_BYTES];
+    let sealed = SealedPairingInvite::seal_legacy_compat(&code(), &invite(), v1_nonce);
+    let raw = sealed.as_bytes();
+    assert_eq!(raw[0], SEALED_PAIRING_INVITE_V1_VERSION);
+    assert_eq!(&raw[1..1 + SEALED_INVITE_V1_NONCE_BYTES], &v1_nonce);
+    assert_eq!(
+        raw.len(),
+        1 + SEALED_INVITE_V1_NONCE_BYTES + invite().to_fragment().len() + SEALED_INVITE_V1_TAG_BYTES
+    );
+    assert!(raw.len() <= MAX_SEALED_INVITE_BYTES);
+
+    let reopened = SealedPairingInvite::from_bytes(raw).unwrap().open(&code());
+    assert_eq!(reopened.unwrap(), invite());
+
+    let wrong = PairingCode::parse("ZZZZZZZZZZ").unwrap();
     assert!(matches!(
-        SealedPairingInvite::from_bytes(&legacy),
-        Err(RelayProtocolError::UnsupportedSealedInviteVersion {
-            actual: 1,
-            expected: SEALED_PAIRING_INVITE_VERSION,
-        })
+        sealed.open(&wrong),
+        Err(RelayProtocolError::InvalidPairingCode)
     ));
+
+    // Every byte of the v1 envelope is authenticated too.
+    let raw = sealed.as_bytes().to_vec();
+    for index in 0..raw.len() {
+        let mut corrupted = raw.clone();
+        corrupted[index] ^= 0x01;
+        let Ok(parsed) = SealedPairingInvite::from_bytes(&corrupted) else {
+            // Flipping the version byte low bit yields version 0 → rejected
+            // at parse; anything that parses must fail authentication.
+            continue;
+        };
+        assert!(
+            matches!(
+                parsed.open(&code()),
+                Err(RelayProtocolError::InvalidPairingCode)
+            ),
+            "v1 flip at {index} must not open"
+        );
+    }
+}
+
+#[test]
+fn legacy_v1_seal_matches_an_independent_v0_8_4_transcription() {
+    // Independent transcription of the v0.8.4 sealing math (derive-key
+    // subkeys over code||nonce, BLAKE3-XOF XOR keystream, keyed-BLAKE3 MAC
+    // over version||nonce||ciphertext) — guards the production compat sealer
+    // against transcription drift.
+    let v1_nonce = [0xA5_u8; SEALED_INVITE_V1_NONCE_BYTES];
+    let sealed = SealedPairingInvite::seal_legacy_compat(&code(), &invite(), v1_nonce);
+
+    let code_bytes = code().expose_str().as_bytes().to_vec();
+    let subkey = |context: &str| -> [u8; 32] {
+        *blake3::Hasher::new_derive_key(context)
+            .update(&code_bytes)
+            .update(&v1_nonce)
+            .finalize()
+            .as_bytes()
+    };
+    let fragment = invite().to_fragment();
+    let mut body = fragment.into_bytes();
+    let mut stream = vec![0_u8; body.len()];
+    blake3::Hasher::new_keyed(&subkey(
+        "openpencil/op-collab-relay-protocol/pairing-code-enc-key/v1",
+    ))
+    .finalize_xof()
+    .fill(&mut stream);
+    for (byte, mask) in body.iter_mut().zip(stream.iter()) {
+        *byte ^= mask;
+    }
+    let mut expected = vec![1_u8];
+    expected.extend_from_slice(&v1_nonce);
+    expected.extend_from_slice(&body);
+    let tag = blake3::Hasher::new_keyed(&subkey(
+        "openpencil/op-collab-relay-protocol/pairing-code-mac-key/v1",
+    ))
+    .update(&expected)
+    .finalize();
+    expected.extend_from_slice(tag.as_bytes());
+
+    assert_eq!(sealed.as_bytes(), expected.as_slice());
+}
+
+#[test]
+fn legacy_v1_random_seal_round_trips() {
+    let sealed = SealedPairingInvite::seal_random_legacy_compat(&code(), &invite()).unwrap();
+    assert_eq!(sealed.as_bytes()[0], SEALED_PAIRING_INVITE_V1_VERSION);
+    assert_eq!(sealed.open(&code()).unwrap(), invite());
 }
 
 #[test]

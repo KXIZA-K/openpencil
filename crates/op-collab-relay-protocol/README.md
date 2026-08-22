@@ -54,18 +54,22 @@ The v2 parser ceiling is 541 bytes. The public opaque transport/storage ceiling
 remains the v0.8.4 value of 569 bytes so a rolling control-plane upgrade can
 continue storing and forwarding legacy blobs without understanding them.
 
-Version 2 intentionally does not open the BLAKE3-XOF/XOR/MAC sealed v1
-envelope published in OpenPencil v0.8.4. The outer opaque transport media type remains
+The outer opaque transport media type remains
 `application/vnd.openpencil.relay-sealed-invite-v1`; its schema is only a
 bounded byte string, while the first byte inside that string selects this
 independently versioned cryptographic envelope. Existing control planes and
-edges can forward v2 without learning or deploying its cipher, but that does
-not make mixed clients compatible: a v0.8.4 short code opens only on a v0.8.4
-peer, and a sealed v2 short code opens only on a sealed-v2 peer. Same-version
-pairing is required; the LAN/manual endpoint path remains an alternative where
-the product exposes it. The current host collapses an unsupported sealed
-version to the generic invalid-invite UI error rather than surfacing a
-version-specific message.
+edges can forward v2 without learning or deploying its cipher.
+
+Client compatibility is two-phase (readers first, writers later): `open`
+accepts both the legacy BLAKE3-XOF/XOR/MAC v1 envelope published in
+OpenPencil v0.8.4 and the v2 AEAD envelope, while owners continue to *seal*
+v1 (`seal_legacy_compat`) because fielded v0.8.4 guests reject any other
+version byte at claim time — a v2-sealed publish would mint codes such a
+guest can claim but never open, surfacing as the generic invalid-invite UI
+error. Once the fielded readers all understand v2, the owner publish path
+switches to `seal` / `seal_random` (v2) and v1 sealing can be retired. The
+current host still collapses an unsupported sealed version to the generic
+invalid-invite UI error rather than surfacing a version-specific message.
 
 ## Challenge-bound proof v2
 
