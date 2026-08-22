@@ -329,7 +329,12 @@ OP_AUTH_TARGET=$ios_target \
 cd "$repo_root"
 rustup target add --toolchain 1.94 aarch64-apple-ios
 cargo clean -p skia-bindings --target aarch64-apple-ios --release
+# The crate also emits a cdylib, and rustc's default iOS minimum (10.0)
+# predates ___chkstk_darwin, which QuickJS's stack probes reference — the
+# dylib link fails even though only the staticlib ships. Pin the app's
+# actual deployment target (project.yml IPHONEOS_DEPLOYMENT_TARGET).
 RUSTUP_TOOLCHAIN=1.94 \
+IPHONEOS_DEPLOYMENT_TARGET=15.0 \
 OPENPENCIL_BUILD_COLLAB_BOOTSTRAP_URL_CN=$relay_bootstrap_cn \
 OPENPENCIL_BUILD_COLLAB_BOOTSTRAP_URL_GLOBAL=$relay_bootstrap_global \
     cargo build --locked --release -p op-engine-ffi \
