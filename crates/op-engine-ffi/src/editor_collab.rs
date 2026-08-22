@@ -185,7 +185,12 @@ impl Session {
             }
             changed |= runtime.poll(host);
             let save_as_fork = runtime.take_save_as_fork_request();
-            for _ in runtime.drain_status_events() {}
+            // Mirror the desktop host's status logging: without it a mobile
+            // collaboration failure leaves no diagnosable trace anywhere
+            // (stderr reaches Xcode / logcat consoles).
+            for status in runtime.drain_status_events() {
+                eprintln!("[collab] {status:?}");
+            }
             changed |= runtime.publish_local_presence(host, None);
             let worker_woke = collab.wake_pending.swap(false, Ordering::AcqRel);
             (

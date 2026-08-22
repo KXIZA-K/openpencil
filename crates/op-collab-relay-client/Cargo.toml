@@ -22,6 +22,10 @@ tokio = { version = "1", features = [
 tokio-tungstenite = { version = "0.24", default-features = false, features = [
   "connect",
   "rustls-tls-native-roots",
+  # iOS/Android have no /etc/ssl/certs for rustls-native-certs' generic unix
+  # probe, leaving the root store empty and failing every wss:// relay
+  # connect; the bundled webpki roots make relay TLS work on every target.
+  "rustls-tls-webpki-roots",
 ] }
 url = "2"
 zeroize = "1"
