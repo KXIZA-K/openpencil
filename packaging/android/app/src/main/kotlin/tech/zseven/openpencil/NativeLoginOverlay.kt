@@ -47,6 +47,8 @@ internal class NativeLoginOverlay(
     var client: SsoAuthClient? = null
         private set
     private var cancellationReported = false
+    /** A provider Custom Tab was launched for the active flow. */
+    private var openedProviderTab = false
 
     private lateinit var emailField: EditText
     private lateinit var passwordField: EditText
@@ -97,7 +99,22 @@ internal class NativeLoginOverlay(
 
     /** Engine-terminal close; never reports a cancellation. */
     fun dismissFromNative() {
+        val hadBrowserTab = openedProviderTab
         dismiss(notifyCancellation = false)
+        // A provider sign-in can complete while its Custom Tab is still on
+        // top of this task; relaunching the activity with CLEAR_TOP pops
+        // the tab so the user lands back in the editor without tapping the
+        // tab's close button themselves.
+        if (hadBrowserTab) {
+            val intent = Intent(activity, activity.javaClass)
+            intent.addFlags(
+                Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP,
+            )
+            try {
+                activity.startActivity(intent)
+            } catch (_: ActivityNotFoundException) {
+            }
+        }
     }
 
     /** User close/back — pops a stacked form first. */
@@ -127,6 +144,7 @@ internal class NativeLoginOverlay(
     }
 
     private fun dismiss(notifyCancellation: Boolean) {
+        openedProviderTab = false
         formOverlay?.dismiss()
         formOverlay = null
         val view = container ?: return
@@ -511,6 +529,7 @@ internal class NativeLoginOverlay(
         )
         try {
             activity.startActivity(intent)
+            openedProviderTab = true
         } catch (_: ActivityNotFoundException) {
             openExternal(uri.toString())
         }

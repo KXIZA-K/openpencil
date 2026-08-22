@@ -72,7 +72,14 @@ final class NativeLoginViewController: UIViewController {
     func finishFromHost(animated: Bool) {
         guard !isFinishing else { return }
         isFinishing = true
-        dismiss(animated: animated)
+        // A provider sign-in can complete while its in-app Safari sheet is
+        // still on top; dismissing from the presenting side below the
+        // navigation stack tears the whole stack down in one call, whereas
+        // `self.dismiss` would only pop the Safari sheet and strand this
+        // screen behind it.
+        let presenter = navigationController?.presentingViewController
+            ?? presentingViewController
+        (presenter ?? self).dismiss(animated: animated)
     }
 
     func finishForTeardown(animated: Bool) {
@@ -531,11 +538,12 @@ final class NativeLoginViewController: UIViewController {
                     value: "Apple sign-in is unavailable. Sign in to your Apple Account in Settings and try again.",
                     comment: "Native Apple sheet failure"
                 ))
-            case .authorized(let identityToken, let nonce):
+            case .authorized(let identityToken, let nonce, let displayName):
                 self.client.nativeLogin(
                     providerID: "apple",
                     identityToken: identityToken,
-                    nonce: nonce
+                    nonce: nonce,
+                    displayName: displayName
                 ) { [weak self] result in
                     guard let self else { return }
                     switch result {

@@ -78,11 +78,18 @@ final class SsoAuthClient {
         providerID: String,
         identityToken: String,
         nonce: String,
+        displayName: String = "",
         completion: @escaping (Result<Void, SsoAuthError>) -> Void
     ) {
+        var body = ["identity_token": identityToken, "nonce": nonce]
+        // Apple hands the person's name to the app on the first
+        // authorization only; forward it so the account profile has one.
+        if !displayName.isEmpty {
+            body["display_name"] = displayName
+        }
         post(
             path: "/api/v1/auth/providers/\(providerID)/native-login",
-            body: ["identity_token": identityToken, "nonce": nonce],
+            body: body,
             completion: completion
         )
     }

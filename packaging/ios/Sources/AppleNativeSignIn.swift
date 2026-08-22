@@ -12,7 +12,7 @@ import UIKit
 /// running device pairing with the resulting session.
 final class AppleNativeSignIn: NSObject {
     enum Outcome {
-        case authorized(identityToken: String, nonce: String)
+        case authorized(identityToken: String, nonce: String, displayName: String)
         case canceled
         case failed
     }
@@ -39,6 +39,9 @@ final class AppleNativeSignIn: NSObject {
         retainedSelf = self
 
         let request = ASAuthorizationAppleIDProvider().createRequest()
+        // Apple reveals the person's name only here, and only on the FIRST
+        // authorization for this app; the identity token never carries it.
+        request.requestedScopes = [.fullName]
         request.nonce = nonce
         let controller = ASAuthorizationController(authorizationRequests: [request])
         controller.delegate = self
@@ -68,7 +71,10 @@ extension AppleNativeSignIn: ASAuthorizationControllerDelegate {
             finish(.failed)
             return
         }
-        finish(.authorized(identityToken: token, nonce: nonce))
+        let displayName = credential.fullName.map {
+            PersonNameComponentsFormatter.localizedString(from: $0, style: .default)
+        } ?? ""
+        finish(.authorized(identityToken: token, nonce: nonce, displayName: displayName))
     }
 
     func authorizationController(
