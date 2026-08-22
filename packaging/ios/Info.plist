@@ -34,6 +34,14 @@
 				<string>openpencilalipay</string>
 			</array>
 		</dict>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>tech.zseven.openpencil.wechat</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>wx327d6a759ea9fe62</string>
+			</array>
+		</dict>
 	</array>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
@@ -47,6 +55,9 @@
 		<string>snssdk1128</string>
 		<string>alipay</string>
 		<string>alipays</string>
+		<string>weixin</string>
+		<string>weixinULAPI</string>
+		<string>weixinURLParamsAPI</string>
 	</array>
 </dict>
 </plist>
