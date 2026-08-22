@@ -14,9 +14,9 @@ use op_editor_core::{
     ImageGenProfile, ThemeMode,
 };
 // Shared settings payload shapes + conversions — single-sourced in
-// op-editor-host-core so the desktop `settings.json` and the browser
+// this crate so the desktop `settings.json` and the browser
 // `web_settings` snapshots cannot drift field-by-field.
-use op_editor_host_core::settings_payload::{
+use crate::settings_payload::{
     builtin_agent_from_payload, builtin_agent_to_payload, dedupe_builtin_agents,
     image_gen_profile_from_payload, image_gen_profile_to_payload, migrate_mcp_cli_flags,
     next_builtin_agent_id, next_image_gen_profile_id, openverse_oauth_to_payload, str_to_theme,
@@ -152,7 +152,17 @@ struct SettingsPayload {
 
 /// Resolve the platform-specific settings path. `None` when no
 /// usable config base exists — load/save become silent no-ops.
+///
+/// An embedded shell (the mobile FFI hosts) selects its private
+/// app-sandbox directory through `op_config_store::configure_user_root`
+/// before engine construction; `settings.json` then lives next to the
+/// other per-user config files in that root. Desktop never configures an
+/// explicit root and keeps the platform config directory, so existing
+/// installs do not move.
 fn settings_path() -> Option<PathBuf> {
+    if let Some(root) = op_config_store::configured_user_root() {
+        return Some(root.join(FILE_NAME));
+    }
     let base = dirs::config_dir()?;
     Some(base.join(APP_DIR).join(FILE_NAME))
 }

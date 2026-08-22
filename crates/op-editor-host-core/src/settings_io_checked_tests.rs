@@ -463,10 +463,10 @@ fn checked_settings_load_preserves_app_generated_operator_and_browser_duplicates
         .builtin_agents
         .iter()
         .any(|agent| agent.id == "web-credential:builtin:shared"));
-    assert!(crate::web_credentials::remove_browser_owned_credentials(
-        &mut loaded
-    ));
-    assert_eq!(loaded.editor_ui.agent_settings.builtin_agents.len(), 1);
+    // The follow-up — that the browser-owned duplicate is the one a
+    // credential sweep removes — is asserted next to that sweep:
+    // op-host-services `web_credentials_tests::
+    // browser_owned_duplicate_from_a_loaded_snapshot_is_removable`.
     let _ = std::fs::remove_dir_all(root);
 }
 

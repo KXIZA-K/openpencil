@@ -204,9 +204,7 @@ fn validate_credential_entries(payload: &SettingsPayload) -> Result<()> {
             {
                 return Err(lossy());
             }
-            if !op_editor_host_core::settings_payload::builtin_agent_payload_models_are_canonical(
-                agent,
-            ) {
+            if !crate::settings_payload::builtin_agent_payload_models_are_canonical(agent) {
                 return Err(lossy());
             }
             if !matches!(agent.kind.as_str(), "anthropic" | "openai-compat") {

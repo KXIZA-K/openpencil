@@ -13,9 +13,7 @@ use op_editor_core::EditorState;
 use op_editor_ui::layout_scene::LayoutScene;
 use op_editor_ui::Point2D;
 use op_host_native::NativeBackend;
-use std::cell::{Cell, RefCell, UnsafeCell};
 use std::ffi::c_void;
-use std::panic::{catch_unwind, AssertUnwindSafe};
 
 /// GPU surface slot. The shell's borrowed handle (CAMetalLayer /
 /// ANativeWindow) is released only after suspend/destroy returns, so the
@@ -71,6 +69,10 @@ pub(crate) struct Session {
     /// this session; results land from the engine-thread frame pump only.
     #[cfg(feature = "editor")]
     pub(crate) model_discovery: crate::editor_model_discovery::MobileModelDiscoveryHost,
+    /// In-flight AI chat turn. Same worker discipline as `model_discovery`:
+    /// streamed deltas land on the engine thread during `op_frame`.
+    #[cfg(feature = "editor")]
+    pub(crate) chat: crate::editor_chat::MobileChatHost,
     /// Shell-provided media root (APK-extracted assets / bundle
     /// resources). Reserved for future local-media resolution.
     #[allow(dead_code)]
@@ -109,6 +111,17 @@ impl Session {
                 // No collab session gates user edits; fall back to the
                 // document-level replace just in case.
                 host.editor_state_mut().replace_document(state.doc.clone());
+            }
+            // Restore persisted user settings (built-in provider API keys /
+            // display names / base URLs, theme, locale, …) exactly like
+            // desktop startup. `parse_create` configured the shell's
+            // private storage root before this point, so the file lives in
+            // the app sandbox; without a configured root (host-side tests,
+            // viewer shells) persistence stays inert rather than touching
+            // a desktop settings location. Runs BEFORE the mobile UI
+            // overrides below so those always win.
+            if settings_persistence_active() {
+                op_editor_host_core::settings_io::load(host.editor_state_mut());
             }
             // Responsive layout: the size class is computed from the
             // usable rectangle (insets are zero at create time) and
@@ -174,6 +187,8 @@ impl Session {
             export_shell: Default::default(),
             #[cfg(feature = "editor")]
             model_discovery: Default::default(),
+            #[cfg(feature = "editor")]
+            chat: Default::default(),
         };
         session.fit_content_to_viewports();
         Ok(session)
@@ -317,6 +332,15 @@ impl Session {
         #[cfg(feature = "editor")]
         if self.editor.is_some() {
             let _ = self.cancel_editor_collab_gesture();
+        }
+        // Backgrounding is the last reliable moment before the OS may kill
+        // the process without `op_destroy` — persist settings now (mirrors
+        // the desktop's save on focus loss / exit).
+        #[cfg(feature = "editor")]
+        if settings_persistence_active() {
+            if let Some(host) = self.editor.as_ref() {
+                op_editor_host_core::settings_io::save(host.editor_state());
+            }
         }
         self.surface = SurfaceSlot::None;
         self.suspended = true;
@@ -494,6 +518,8 @@ impl Session {
         #[cfg(feature = "editor")]
         let model_discovery_wake = self.pump_editor_model_discovery(now_ms);
         #[cfg(feature = "editor")]
+        let chat_wake = self.pump_editor_chat(now_ms);
+        #[cfg(feature = "editor")]
         let collab_wake = self.pump_editor_collab();
         let slot = std::mem::replace(&mut self.surface, SurfaceSlot::None);
         let (restored, outcome) = match slot {
@@ -532,7 +558,7 @@ impl Session {
                 crate::media::drain_remote_image_requests(self);
                 #[cfg(feature = "editor")]
                 if let Some(deadline) = earliest_wake(
-                    earliest_wake(auth_wake, model_discovery_wake),
+                    earliest_wake(earliest_wake(auth_wake, model_discovery_wake), chat_wake),
                     earliest_wake(
                         collab_wake,
                         self.editor
@@ -582,6 +608,8 @@ impl Session {
         #[cfg(feature = "editor")]
         let model_discovery_wake = self.pump_editor_model_discovery(now_ms);
         #[cfg(feature = "editor")]
+        let chat_wake = self.pump_editor_chat(now_ms);
+        #[cfg(feature = "editor")]
         let collab_wake = self.pump_editor_collab();
         let width = ((self.logical.0 * self.dpr).round() as i32).max(1);
         let height = ((self.logical.1 * self.dpr).round() as i32).max(1);
@@ -610,7 +638,7 @@ impl Session {
         #[cfg(feature = "editor")]
         {
             if let Some(deadline) = earliest_wake(
-                earliest_wake(auth_wake, model_discovery_wake),
+                earliest_wake(earliest_wake(auth_wake, model_discovery_wake), chat_wake),
                 earliest_wake(
                     collab_wake,
                     self.editor
@@ -633,6 +661,16 @@ impl Session {
         }
         Ok(())
     }
+}
+
+/// Whether the shell selected a private storage root at create time.
+/// Settings persistence is gated on it: only that root may back the
+/// mobile `settings.json`, and without one (host-side tests, viewer
+/// shells) load/save must stay inert instead of resolving a desktop
+/// config location.
+#[cfg(feature = "editor")]
+pub(crate) fn settings_persistence_active() -> bool {
+    op_config_store::configured_user_root().is_some()
 }
 
 #[cfg(feature = "editor")]
@@ -681,109 +719,12 @@ fn build_surface(handle: *mut c_void) -> FfiResult<SurfaceSlot> {
     }
 }
 
-/// The engine handle handed across the ABI. Owned by exactly one thread:
-/// every call checks `owner` and refuses to re-enter while a call is in
-/// flight, and any panic crossing the boundary poisons the engine.
-pub struct OpEngine {
-    owner: std::thread::ThreadId,
-    in_call: Cell<bool>,
-    poisoned: Cell<bool>,
-    last_error: RefCell<String>,
-    session: UnsafeCell<Session>,
-}
-
-impl OpEngine {
-    /// Wrap a session as an ABI handle owned by the calling thread.
-    pub(crate) fn new(session: Session) -> OpEngine {
-        OpEngine {
-            owner: std::thread::current().id(),
-            in_call: Cell::new(false),
-            poisoned: Cell::new(false),
-            last_error: RefCell::new(String::new()),
-            session: UnsafeCell::new(session),
-        }
-    }
-
-    /// Clone of the last call error (for `op_last_error`).
-    pub(crate) fn last_error(&self) -> String {
-        self.last_error.borrow().clone()
-    }
-
-    #[cfg(all(test, feature = "editor"))]
-    pub(crate) fn session_mut_for_test(&mut self) -> &mut Session {
-        // Unit tests own the engine on this thread and never overlap an ABI
-        // call with this inspection seam.
-        unsafe { &mut *self.session.get() }
-    }
-}
-
-/// Dispatch one engine call with the thread + re-entrancy + panic
-/// contract. The session's per-call diagnostics are emitted afterwards.
-///
-/// # Safety
-///
-/// `pointer` must be a live `OpEngine` from `op_create` on the calling
-/// thread.
-pub(crate) unsafe fn call_session(
-    pointer: *mut OpEngine,
-    call: impl FnOnce(&mut Session) -> FfiResult<()>,
-) -> OpStatus {
-    if pointer.is_null() {
-        return OpStatus::InvalidArg;
-    }
-    let engine = unsafe { &*pointer };
-    if engine.owner != std::thread::current().id() || engine.in_call.get() {
-        return OpStatus::WrongThread;
-    }
-    if engine.poisoned.get() {
-        return OpStatus::Poisoned;
-    }
-    engine.in_call.set(true);
-    let outcome = catch_unwind(AssertUnwindSafe(|| {
-        let session = unsafe { &mut *engine.session.get() };
-        let result = call(session);
-        if let Err(error) = &result {
-            session.emit_runtime_error(2, &error.message, "op-engine-ffi");
-        }
-        result
-    }));
-    engine.in_call.set(false);
-    match outcome {
-        Ok(Ok(())) => OpStatus::Ok,
-        Ok(Err(error)) => {
-            *engine.last_error.borrow_mut() = error.message;
-            error.status
-        }
-        Err(_) => {
-            engine.poisoned.set(true);
-            *engine.last_error.borrow_mut() =
-                "panic crossed the OpenPencil ABI boundary".to_owned();
-            OpStatus::Poisoned
-        }
-    }
-}
-
-pub(crate) unsafe fn destroy_engine(pointer: *mut OpEngine) -> OpStatus {
-    if pointer.is_null() {
-        return OpStatus::InvalidArg;
-    }
-    let engine = unsafe { &*pointer };
-    if engine.owner != std::thread::current().id() || engine.in_call.get() {
-        return OpStatus::WrongThread;
-    }
-    engine.in_call.set(true);
-    let outcome = catch_unwind(AssertUnwindSafe(|| unsafe {
-        #[cfg(feature = "editor")]
-        (&mut *engine.session.get()).shutdown_editor_collab();
-        #[cfg(feature = "editor")]
-        crate::editor_auth::shutdown(&mut *engine.session.get());
-        drop(Box::from_raw(pointer));
-    }));
-    match outcome {
-        Ok(()) => OpStatus::Ok,
-        Err(_) => OpStatus::Poisoned,
-    }
-}
+// ABI handle + call/destroy dispatch live in a sibling (pure code
+// motion for the 800-line cap); re-exports keep the import paths stable.
+#[path = "lifecycle_engine.rs"]
+mod lifecycle_engine;
+pub use lifecycle_engine::OpEngine;
+pub(crate) use lifecycle_engine::{call_session, destroy_engine};
 
 #[cfg(all(test, feature = "editor"))]
 #[path = "lifecycle_editor_fit_tests.rs"]

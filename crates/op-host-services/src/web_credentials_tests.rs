@@ -407,3 +407,24 @@ fn browser_credential_endpoint_rejects_every_acp_field_without_mutation() {
         assert_eq!(before, crate::settings_io::fingerprint(&state));
     }
 }
+
+#[test]
+fn browser_owned_duplicate_from_a_loaded_snapshot_is_removable() {
+    // Companion to op-editor-host-core's `settings_io_checked_tests::
+    // checked_settings_load_preserves_app_generated_operator_and_browser_duplicates`:
+    // the checked loader keeps both the operator entry and its
+    // browser-owned duplicate, and the credential sweep here removes
+    // exactly the browser-owned one.
+    let mut state = state_with_operator_agent();
+    let mut browser = state.editor_ui.agent_settings.builtin_agents[0].clone();
+    browser.id = "web-credential:builtin:shared".into();
+    state.editor_ui.agent_settings.builtin_agents.push(browser);
+
+    assert!(super::remove_browser_owned_credentials(&mut state));
+
+    assert_eq!(state.editor_ui.agent_settings.builtin_agents.len(), 1);
+    assert_eq!(
+        state.editor_ui.agent_settings.builtin_agents[0].id,
+        "operator-agent"
+    );
+}

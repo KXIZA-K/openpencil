@@ -14,6 +14,10 @@ use std::sync::{Mutex, OnceLock};
 /// reconfiguration cannot split state between HOME and the app sandbox.
 static USER_ROOT_OVERRIDE: OnceLock<PathBuf> = OnceLock::new();
 static USER_ROOT_INIT_LOCK: Mutex<()> = Mutex::new(());
+/// Set only by [`configure_user_root`] — never by the lazy `~/.openpencil`
+/// default — so callers can distinguish "an embedded shell selected its
+/// app sandbox" from "desktop resolved the home-directory default".
+static EXPLICIT_USER_ROOT: OnceLock<PathBuf> = OnceLock::new();
 
 /// Name of the per-user config directory under the home directory
 /// (`~/.openpencil`). Exposed for callers that must resolve the
@@ -94,7 +98,17 @@ pub fn configure_user_root(root: impl Into<PathBuf>) -> std::io::Result<&'static
     let _guard = USER_ROOT_INIT_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    configure_user_root_in(&USER_ROOT_OVERRIDE, root.into())
+    let configured = configure_user_root_in(&USER_ROOT_OVERRIDE, root.into())?;
+    let _ = EXPLICIT_USER_ROOT.set(configured.to_path_buf());
+    Ok(configured)
+}
+
+/// The private app-sandbox root an embedded shell explicitly selected via
+/// [`configure_user_root`], or `None` when the process runs on the desktop
+/// default. Persistence layers that must not touch a desktop config
+/// location from an embedded process (mobile `settings.json`) key off this.
+pub fn configured_user_root() -> Option<PathBuf> {
+    EXPLICIT_USER_ROOT.get().cloned()
 }
 
 fn configure_user_root_in(slot: &OnceLock<PathBuf>, root: PathBuf) -> std::io::Result<&Path> {

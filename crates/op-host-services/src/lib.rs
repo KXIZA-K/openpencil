@@ -99,8 +99,11 @@ pub mod provider_probe_host;
 pub mod provider_probe_models;
 pub mod public_https_client;
 pub mod quality_credential;
-pub mod settings_io;
-pub mod settings_io_error;
+// Settings persistence moved to op-editor-host-core (feature `settings-io`)
+// so the mobile FFI hosts share the exact desktop load/save path; these
+// re-exports keep every `op_host_services::settings_io*` import stable.
+pub use op_editor_host_core::settings_io;
+pub use op_editor_host_core::settings_io_error;
 pub mod user_scene_template_store;
 pub mod validation_providers;
 pub(crate) mod web_auth;
