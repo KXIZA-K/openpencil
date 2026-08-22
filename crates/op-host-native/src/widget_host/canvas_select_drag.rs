@@ -75,6 +75,13 @@ impl WidgetHostNative {
             if resolved.selected_crop_is_deepest && self.enter_selected_image_crop_edit() {
                 return true;
             }
+            if core_drag::jump_to_deepest_text_edit(&mut self.editor_state, &hit_path) {
+                self.editor_state.ui.text_edit_input.touch(self.now_ms);
+                self.last_hover_probe = None;
+                self.scroll_layer_panel_selection_into_view(viewport_width, viewport_height);
+                self.mark_dirty();
+                return true;
+            }
             if let Some(secondary) = resolved.targets.secondary_under_pointer {
                 core_drag::enter_child_scope(
                     &mut self.editor_state,
