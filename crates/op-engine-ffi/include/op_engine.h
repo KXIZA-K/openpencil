@@ -327,6 +327,11 @@ OpStatus op_editor_ime_preedit(OpEngine *engine, const uint8_t *text_ptr, size_t
 /* IME commit into the focused input. */
 OpStatus op_editor_ime_commit(OpEngine *engine, const uint8_t *text_ptr, size_t text_len);
 
+/* Paste clipboard text into whichever text input owns the keyboard
+ * (settings field, chat input, canvas text edit, ...). No-op without a
+ * focused input; the shells call this from their long-press edit menus. */
+OpStatus op_editor_paste_text(OpEngine *engine, const uint8_t *text_ptr, size_t text_len);
+
 /* Whether the editor host currently holds the IME (show/hide keyboard). */
 OpStatus op_editor_ime_focused(OpEngine *engine, bool *out);
 

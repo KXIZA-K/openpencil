@@ -54,7 +54,13 @@ fn api_key_field_point(host: &mut WidgetHostNative, vw: f32, vh: f32) -> Point2D
             .focused_input_rect(panel_rect)
             .expect("expanded card exposes the api-key input");
         input.origin.y -= panel.effective_scroll(panel_rect);
-        Point2D::new(input.origin.x + 10.0, input.origin.y + input.size.y / 2.0)
+        // Press near the right edge: tap-to-caret honors the pressed x, so
+        // this parks the caret at the end and the typing/backspace ladders
+        // below operate on the tail like they used to.
+        Point2D::new(
+            input.origin.x + input.size.x - 10.0,
+            input.origin.y + input.size.y / 2.0,
+        )
     };
     host.editor_state_mut().editor_ui.agent_settings.focus = restore;
     point

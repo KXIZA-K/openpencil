@@ -127,6 +127,17 @@ pub fn editor_ime_preedit(engine: i64, text: String, sel_start: i32, sel_end: i3
     })
 }
 
+/// `editorPasteText` — paste clipboard text into whichever text input owns
+/// the keyboard (long-press paste menu). No-op without a focused input.
+#[napi(js_name = "editorPasteText")]
+pub fn editor_paste_text(engine: i64, text: String) -> i32 {
+    let bytes = text.into_bytes();
+    // SAFETY: `bytes` outlives the call.
+    call_status(engine, move |e| unsafe {
+        op_engine_ffi::op_editor_paste_text(e, bytes.as_ptr(), bytes.len())
+    })
+}
+
 #[napi(js_name = "editorImeCommit")]
 pub fn editor_ime_commit(engine: i64, text: String) -> i32 {
     let bytes = text.into_bytes();

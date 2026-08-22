@@ -80,6 +80,24 @@ impl SettingsPressOutcome {
     }
 }
 
+/// True when `hit` moves keyboard focus into a settings text field —
+/// the presses whose caret should land at the tapped glyph. Both hosts
+/// use this to route the tap through the panel's byte-offset mapping
+/// after the shared focus transition reseeds the draft (which parks the
+/// caret at the end).
+pub fn is_settings_focus_press(hit: AgentSettingsHit) -> bool {
+    matches!(
+        hit,
+        AgentSettingsHit::FocusBuiltinAgent { .. }
+            | AgentSettingsHit::FocusBuiltinAgentDraft(_)
+            | AgentSettingsHit::FocusAcpAgent { .. }
+            | AgentSettingsHit::FocusAcpAgentDraft(_)
+            | AgentSettingsHit::FocusSearchField(_)
+            | AgentSettingsHit::FocusGenConfig { .. }
+            | AgentSettingsHit::FocusMcpPort
+    )
+}
+
 /// Record the press-feedback wash target for `hit`. Split out because
 /// both hosts do it before the match, from the same widget mapping.
 pub fn record_pressed_button(state: &mut EditorState, hit: AgentSettingsHit) {

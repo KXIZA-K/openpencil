@@ -36,19 +36,12 @@ impl WidgetHost {
         let panel_rect = panel.rect(vw, vh);
         let point = Point2D::new(x, y);
         let hit = panel.hit_test(panel_rect, point);
-        let model_focus_press = matches!(
-            hit,
-            op_editor_ui::widgets::agent_settings_panel::AgentSettingsHit::FocusBuiltinAgent {
-                field: op_editor_core::BuiltinAgentField::Model,
-                ..
-            } | op_editor_ui::widgets::agent_settings_panel::AgentSettingsHit::FocusBuiltinAgentDraft(
-                op_editor_core::BuiltinAgentField::Model,
-            )
-        );
-        // Preserve the line window painted for an already-focused editor;
-        // the shared focus transition reseeds the draft and moves its caret.
-        let model_caret_before = if model_focus_press {
-            panel.focused_model_text_byte_offset_at(panel_rect, point)
+        let focus_press = settings_flow::is_settings_focus_press(hit);
+        // Preserve the window painted for an already-focused input (model
+        // line window / single-line scroll shift); the shared focus
+        // transition reseeds the draft and moves its caret to the end.
+        let caret_before = if focus_press {
+            panel.focused_text_byte_offset_at(panel_rect, point)
         } else {
             None
         };
@@ -62,10 +55,12 @@ impl WidgetHost {
             SettingsCommitScope::Browser,
             self.now_ms,
         );
-        if model_focus_press {
-            let offset = model_caret_before.or_else(|| {
+        if focus_press {
+            // A fresh focus has no pre-click mapping; resolve against the
+            // just-seeded draft so the caret still lands at the tapped glyph.
+            let offset = caret_before.or_else(|| {
                 let panel = AgentSettingsPanel::for_web_editor(&self.editor_state);
-                panel.focused_model_text_byte_offset_at(panel_rect, point)
+                panel.focused_text_byte_offset_at(panel_rect, point)
             });
             if let Some(offset) = offset {
                 self.editor_state

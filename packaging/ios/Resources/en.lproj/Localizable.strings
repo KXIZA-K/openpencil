@@ -60,3 +60,4 @@
 "update.availableTitle" = "Version %@ available";
 "update.availableBody" = "A newer version of OpenPencil is available.";
 "update.goToStore" = "Update";
+"editMenu.paste" = "Paste";

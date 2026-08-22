@@ -61,6 +61,26 @@ impl AgentSettingsPanel<'_> {
         )
     }
 
+    /// Resolve a click/tap in the currently focused settings text input —
+    /// multiline provider Model editor or single-line field — to its UTF-8
+    /// byte offset. `None` when no focused input geometry lies under
+    /// `point` (the hosts then keep the seeded caret-at-end behavior).
+    pub fn focused_text_byte_offset_at(&self, panel: Rect, point: Point2D) -> Option<usize> {
+        if let Some(offset) = self.focused_model_text_byte_offset_at(panel, point) {
+            return Some(offset);
+        }
+        let focus = self.settings.focus?;
+        let mut input = self.focused_input_rect(panel)?;
+        input.origin.y -= self.effective_scroll(panel);
+        crate::widgets::agent_settings_caret::single_line_text_byte_offset_at(
+            self.ui,
+            focus,
+            input,
+            point,
+            self.ui.touch_chrome(),
+        )
+    }
+
     pub fn hit_test(&self, panel: Rect, point: Point2D) -> AgentSettingsHit {
         if !panel.contains(point) {
             return AgentSettingsHit::Outside;

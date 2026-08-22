@@ -100,18 +100,13 @@ impl WidgetHostNative {
         let (panel, panel_rect) = self.agent_settings_geometry(vw, vh);
         let point = Point2D::new(x, y);
         let hit = panel.hit_test(panel_rect, point);
-        let model_focus_press = matches!(
-            hit,
-            AgentSettingsHit::FocusBuiltinAgent {
-                field: op_editor_core::BuiltinAgentField::Model,
-                ..
-            } | AgentSettingsHit::FocusBuiltinAgentDraft(op_editor_core::BuiltinAgentField::Model,)
-        );
-        // When an already-focused model editor is clicked, its visible line
-        // window depends on the pre-click caret. Capture that mapping before
-        // the shared focus transition reseeds the draft at the end.
-        let model_caret_before = if model_focus_press {
-            panel.focused_model_text_byte_offset_at(panel_rect, point)
+        let focus_press = settings_flow::is_settings_focus_press(hit);
+        // When an already-focused input is clicked, its visible window
+        // (model line window / single-line scroll shift) depends on the
+        // pre-click caret. Capture that mapping before the shared focus
+        // transition reseeds the draft with the caret at the end.
+        let caret_before = if focus_press {
+            panel.focused_text_byte_offset_at(panel_rect, point)
         } else {
             None
         };
@@ -134,10 +129,12 @@ impl WidgetHostNative {
             SettingsCommitScope::Operator,
             self.now_ms,
         );
-        if model_focus_press {
-            let offset = model_caret_before.or_else(|| {
+        if focus_press {
+            // A fresh focus has no pre-click mapping; resolve against the
+            // just-seeded draft so the caret still lands at the tapped glyph.
+            let offset = caret_before.or_else(|| {
                 let (panel, panel_rect) = self.agent_settings_geometry(vw, vh);
-                panel.focused_model_text_byte_offset_at(panel_rect, point)
+                panel.focused_text_byte_offset_at(panel_rect, point)
             });
             if let Some(offset) = offset {
                 self.editor_state

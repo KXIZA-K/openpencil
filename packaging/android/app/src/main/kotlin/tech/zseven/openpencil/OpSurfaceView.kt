@@ -776,12 +776,37 @@ class OpSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Call
         longPressArmed = false
         longPressFired = true
         val inputDensity = viewportInputState.committedDensity
-        OpNative.nativeEditorRightPress(
-            engine,
-            lastKnownX / inputDensity,
-            lastKnownY / inputDensity,
-        )
+        // The Down at press time already ran the engine's press ladder, so
+        // the engine's IME focus reflects THIS touch: focused means the
+        // finger is holding an editable text field — offer Paste instead of
+        // the right-click context menu.
+        if (showPasteMenuIfEditingText(lastKnownX, lastKnownY)) {
+            // The press capture opened at Down must not leak while the
+            // release is suppressed by longPressFired.
+            OpNative.nativeEditorCancelGesture(engine)
+        } else {
+            OpNative.nativeEditorRightPress(
+                engine,
+                lastKnownX / inputDensity,
+                lastKnownY / inputDensity,
+            )
+        }
         requestFrame()
+    }
+
+    /** Floating "Paste" menu at view coordinates (px) over the focused
+     *  engine text input. Returns false to fall back to the engine's
+     *  long-press (right-click) path. */
+    private fun showPasteMenuIfEditingText(xPx: Float, yPx: Float): Boolean {
+        if (!editorMode || engine == 0L) return false
+        if (!OpNative.nativeEditorImeFocused(engine)) return false
+        return EditorPasteMenu.show(this, xPx, yPx) { text ->
+            val current = engine
+            if (current != 0L && text.isNotEmpty()) {
+                OpNative.nativeEditorPasteText(current, text)
+                requestFrame()
+            }
+        }
     }
 
     private var lastKnownX = 0f

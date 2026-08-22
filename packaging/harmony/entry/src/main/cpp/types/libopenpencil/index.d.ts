@@ -195,6 +195,8 @@ export const editorImePreedit: (
   selEnd: number
 ) => number;
 export const editorImeCommit: (engine: number, text: string) => number;
+/** Paste clipboard text into the focused input (long-press paste menu). */
+export const editorPasteText: (engine: number, text: string) => number;
 export const editorImeFocused: (engine: number) => boolean;
 /** `region` is an OpAuthRegion value: 0 = China, 1 = Global. */
 export const editorConfigureAuth: (

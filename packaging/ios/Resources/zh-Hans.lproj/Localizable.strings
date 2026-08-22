@@ -60,3 +60,4 @@
 "update.availableTitle" = "发现新版本 %@";
 "update.availableBody" = "OpenPencil 有可用的新版本。";
 "update.goToStore" = "去更新";
+"editMenu.paste" = "粘贴";

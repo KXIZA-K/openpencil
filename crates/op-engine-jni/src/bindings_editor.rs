@@ -472,6 +472,23 @@ pub extern "system" fn Java_tech_zseven_openpencil_OpNative_nativeEditorImePreed
     })
 }
 
+/// `OpNative.nativeEditorPasteText` — paste clipboard text into whichever
+/// text input owns the keyboard (long-press paste menu).
+#[no_mangle]
+pub extern "system" fn Java_tech_zseven_openpencil_OpNative_nativeEditorPasteText<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    engine: jlong,
+    text: JString<'local>,
+) -> jint {
+    let Some(bytes) = jstring_bytes(&mut env, &text) else {
+        return STATUS_CLOSING;
+    };
+    call_status(engine, move |e| unsafe {
+        op_engine_ffi::op_editor_paste_text(e, bytes.as_ptr(), bytes.len())
+    })
+}
+
 #[no_mangle]
 pub extern "system" fn Java_tech_zseven_openpencil_OpNative_nativeEditorImeCommit<'local>(
     mut env: JNIEnv<'local>,

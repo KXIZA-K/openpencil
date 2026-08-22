@@ -41,6 +41,10 @@ final class OpPlayerView: UIView, UITextViewDelegate, UIDocumentPickerDelegate {
     let imeTextView = ImeConduitTextView()
     var wasComposing = false
 
+    /// Long-press edit menu over engine text inputs (iOS 16+). Stored as
+    /// the protocol type so the property itself needs no availability.
+    private var editMenuInteraction: UIInteraction?
+
     private var metalLayer: CAMetalLayer {
         guard let layer = layer as? CAMetalLayer else {
             preconditionFailure("OpPlayerView must be backed by CAMetalLayer")
@@ -71,6 +75,11 @@ final class OpPlayerView: UIView, UITextViewDelegate, UIDocumentPickerDelegate {
         contentMode = .redraw
         host.view = self
         setupImeTextView()
+        if host.editorMode, #available(iOS 16.0, *) {
+            let interaction = UIEditMenuInteraction(delegate: self)
+            addInteraction(interaction)
+            editMenuInteraction = interaction
+        }
         // The editor stays laid out against the stable window viewport.
         // Floating and split keyboards are local occluders, not a full-width
         // bottom inset; UIKit's guide treats them as dismissed by default.
@@ -628,11 +637,39 @@ final class OpPlayerView: UIView, UITextViewDelegate, UIDocumentPickerDelegate {
         let work = DispatchWorkItem { [weak self] in
             guard let self, self.longPressWork != nil else { return }
             self.longPressFired = true
-            self.host.editorRightPress(x: self.lastKnownPoint.x, y: self.lastKnownPoint.y)
+            // The Down at press time already ran the engine's press ladder,
+            // so the engine's IME focus reflects THIS touch: focused means
+            // the finger is holding an editable text field — offer Paste
+            // instead of the right-click context menu.
+            if self.presentPasteMenuIfEditingText(at: self.lastKnownPoint) {
+                // The press capture opened at Down must not leak while the
+                // release is suppressed by `longPressFired`.
+                self.host.editorCancelGesture()
+            } else {
+                self.host.editorRightPress(x: self.lastKnownPoint.x, y: self.lastKnownPoint.y)
+            }
             self.host.requestImmediateFrame()
         }
         longPressWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
+    }
+
+    /// Presents the system edit menu (Paste) at `point` when an engine text
+    /// input holds the IME and the pasteboard has text. Returns `false` to
+    /// let the caller fall back to the engine's long-press (right-click)
+    /// path — including on iOS 15, which lacks `UIEditMenuInteraction`.
+    private func presentPasteMenuIfEditingText(at point: CGPoint) -> Bool {
+        guard host.editorMode,
+              host.editorImeFocusedNow(),
+              UIPasteboard.general.hasStrings
+        else { return false }
+        if #available(iOS 16.0, *),
+           let interaction = editMenuInteraction as? UIEditMenuInteraction {
+            let configuration = UIEditMenuConfiguration(identifier: nil, sourcePoint: point)
+            interaction.presentEditMenu(with: configuration)
+            return true
+        }
+        return false
     }
 
     /// UITouch objects are only valid while the touch is live; keep a
@@ -692,6 +729,31 @@ final class OpPlayerView: UIView, UITextViewDelegate, UIDocumentPickerDelegate {
     }
 }
 
+
+/// Long-press edit menu over engine-painted text inputs. The engine owns
+/// the text, so the menu offers exactly the action the shell can deliver
+/// through the ABI: Paste, forwarded via `op_editor_paste_text` into
+/// whichever input holds the IME.
+@available(iOS 16.0, *)
+extension OpPlayerView: UIEditMenuInteractionDelegate {
+    func editMenuInteraction(
+        _ interaction: UIEditMenuInteraction,
+        menuFor configuration: UIEditMenuConfiguration,
+        suggestedActions: [UIMenuElement]
+    ) -> UIMenu? {
+        let paste = UIAction(
+            title: NSLocalizedString("editMenu.paste", comment: "Edit-menu paste action")
+        ) { [weak self] _ in
+            guard let self, !self.didTearDown else { return }
+            // Reading `.string` here is user-initiated (they tapped Paste),
+            // so the system paste transparency notice is expected UX.
+            guard let text = UIPasteboard.general.string, !text.isEmpty else { return }
+            self.host.editorPasteText(text)
+            self.host.requestImmediateFrame()
+        }
+        return UIMenu(children: [paste])
+    }
+}
 
 /// IME conduit: a 1×1 offscreen text view whose only job is forwarding
 /// keyboard/IME events to the engine. `deleteBackward` fires even when the

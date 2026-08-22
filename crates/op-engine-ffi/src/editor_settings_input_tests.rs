@@ -8,7 +8,7 @@ use crate::desc::{Callbacks, CreateOptions};
 use crate::editor::{
     op_editor_key, op_editor_press, op_editor_release, op_editor_text, KEY_BACKSPACE, KEY_DELETE,
 };
-use crate::editor_ime::{op_editor_ime_commit, op_editor_ime_preedit};
+use crate::editor_ime::{op_editor_ime_commit, op_editor_ime_preedit, op_editor_paste_text};
 use crate::lifecycle::{OpEngine, Session};
 use crate::OpStatus;
 use op_editor_core::agent_settings::{BuiltinAgentField, SettingsFocus};
@@ -108,7 +108,12 @@ fn mobile_api_key_field_typing_and_backspace_round_trip() {
             .focused_input_rect(panel_rect)
             .expect("expanded card exposes the api-key input");
         input.origin.y -= panel.effective_scroll(panel_rect);
-        let point = (input.origin.x + 10.0, input.origin.y + input.size.y / 2.0);
+        // Tap near the right edge: the tap-to-caret mapping then parks the
+        // caret at the end, so the typed characters below append.
+        let point = (
+            input.origin.x + input.size.x - 10.0,
+            input.origin.y + input.size.y / 2.0,
+        );
         drop(panel);
         host.editor_state_mut().editor_ui.agent_settings.focus = restore;
         point
@@ -299,6 +304,154 @@ fn mobile_interleaved_text_and_ime_commit_backspace_teardown() {
         );
         assert_eq!(settings_input_text(&mut engine), expected);
     }
+}
+
+/// Screen-space rect of the currently focused settings input, resolved
+/// through the same keyboard-aware panel geometry the press ladder uses.
+fn focused_input_rect(engine: &mut OpEngine) -> op_editor_ui::Rect {
+    let session = engine.session_mut_for_test();
+    let (vw, vh) = session.editor_viewport();
+    let host = session.editor_mut().unwrap();
+    let panel = op_editor_ui::widgets::agent_settings_panel::AgentSettingsPanel::for_editor_at(
+        host.editor_state(),
+        0,
+    );
+    let panel_rect = panel.rect(vw, vh);
+    let mut input = panel
+        .focused_input_rect(panel_rect)
+        .expect("focused settings input has a rect");
+    input.origin.y -= panel.effective_scroll(panel_rect);
+    input
+}
+
+fn settings_caret(engine: &mut OpEngine) -> usize {
+    engine
+        .session_mut_for_test()
+        .editor_mut()
+        .unwrap()
+        .editor_state()
+        .editor_ui
+        .settings_input
+        .caret()
+}
+
+/// The mobile defect: tapping inside a focused single-line settings field
+/// always left the caret at the end. A tap near the field's left edge must
+/// move the caret to the first glyph boundary, and a typed char must land
+/// there — through the exact press/release FFI pair the shells call.
+#[test]
+fn mobile_tap_moves_caret_inside_focused_api_key_field() {
+    let mut engine = phone_engine();
+    let pointer = &mut engine as *mut OpEngine;
+    focus_settings_field(&mut engine, BuiltinAgentField::ApiKey, "sk-old");
+    assert_eq!(settings_caret(&mut engine), "sk-old".len());
+
+    let input = focused_input_rect(&mut engine);
+    let (px, py) = (input.origin.x + 2.0, input.origin.y + input.size.y / 2.0);
+    assert_eq!(unsafe { op_editor_press(pointer, px, py) }, OpStatus::Ok);
+    assert_eq!(unsafe { op_editor_release(pointer, px, py) }, OpStatus::Ok);
+
+    assert_eq!(
+        settings_focus(&mut engine),
+        Some(SettingsFocus::BuiltinAgent {
+            index: 0,
+            field: BuiltinAgentField::ApiKey,
+        }),
+        "the tap must keep the api-key input focused"
+    );
+    assert_eq!(settings_input_text(&mut engine), "sk-old");
+    assert_eq!(
+        settings_caret(&mut engine),
+        0,
+        "a tap at the left edge must move the caret to the start"
+    );
+
+    // A typed char lands at the tapped caret, not at the end.
+    let typed = "X";
+    assert_eq!(
+        unsafe { op_editor_text(pointer, typed.as_ptr(), typed.len()) },
+        OpStatus::Ok
+    );
+    assert_eq!(settings_input_text(&mut engine), "Xsk-old");
+
+    // A tap past the text puts the caret back at the end.
+    let (px, py) = (
+        input.origin.x + input.size.x - 2.0,
+        input.origin.y + input.size.y / 2.0,
+    );
+    assert_eq!(unsafe { op_editor_press(pointer, px, py) }, OpStatus::Ok);
+    assert_eq!(unsafe { op_editor_release(pointer, px, py) }, OpStatus::Ok);
+    assert_eq!(settings_caret(&mut engine), "Xsk-old".len());
+}
+
+/// Long-press paste conduit: `op_editor_paste_text` inserts the platform
+/// clipboard payload into the focused settings field as a unit, honoring
+/// the single-line fields' control-character filtering.
+#[test]
+fn mobile_paste_text_lands_in_focused_settings_field() {
+    let mut engine = phone_engine();
+    let pointer = &mut engine as *mut OpEngine;
+    focus_settings_field(&mut engine, BuiltinAgentField::ApiKey, "sk");
+
+    let pasted = "-abc";
+    assert_eq!(
+        unsafe { op_editor_paste_text(pointer, pasted.as_ptr(), pasted.len()) },
+        OpStatus::Ok
+    );
+    assert_eq!(settings_input_text(&mut engine), "sk-abc");
+
+    // Single-line fields strip newlines/control chars from a pasted blob.
+    let pasted = "\nx\ty\n";
+    assert_eq!(
+        unsafe { op_editor_paste_text(pointer, pasted.as_ptr(), pasted.len()) },
+        OpStatus::Ok
+    );
+    assert_eq!(settings_input_text(&mut engine), "sk-abcxy");
+}
+
+/// Paste with no focused input must be a no-op: node paste stays on the
+/// `KEY_PASTE` path, so clipboard text can never mutate the canvas.
+#[test]
+fn mobile_paste_text_without_focus_is_a_noop() {
+    let mut engine = phone_engine();
+    let pointer = &mut engine as *mut OpEngine;
+    let node_count = {
+        let host = engine.session_mut_for_test().editor_mut().unwrap();
+        host.editor_state().active_children().len()
+    };
+
+    let pasted = "clipboard text";
+    assert_eq!(
+        unsafe { op_editor_paste_text(pointer, pasted.as_ptr(), pasted.len()) },
+        OpStatus::Ok
+    );
+
+    let host = engine.session_mut_for_test().editor_mut().unwrap();
+    assert_eq!(host.editor_state().active_children().len(), node_count);
+    assert_eq!(host.editor_state().editor_ui.settings_input.text(), "");
+    assert_eq!(host.editor_state().chat.input.text(), "");
+}
+
+/// Paste routes to the chat input when it owns the keyboard.
+#[test]
+fn mobile_paste_text_lands_in_focused_chat_input() {
+    let mut engine = phone_engine();
+    let pointer = &mut engine as *mut OpEngine;
+    engine
+        .session_mut_for_test()
+        .editor_mut()
+        .unwrap()
+        .editor_state_mut()
+        .chat
+        .focused = true;
+
+    let pasted = "hello from the clipboard";
+    assert_eq!(
+        unsafe { op_editor_paste_text(pointer, pasted.as_ptr(), pasted.len()) },
+        OpStatus::Ok
+    );
+    let host = engine.session_mut_for_test().editor_mut().unwrap();
+    assert_eq!(host.editor_state().chat.input.text(), pasted);
 }
 
 /// A cancelled composition arrives as an empty IME commit (iOS) or an

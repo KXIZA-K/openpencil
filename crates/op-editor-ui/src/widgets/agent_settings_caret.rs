@@ -59,6 +59,55 @@ pub(super) fn model_text_byte_offset_at(
     )
 }
 
+/// `(font_size, pad_x)` for the focused SINGLE-LINE settings input,
+/// matching each surface's paint site. `None` marks a focus whose text is
+/// not left-aligned single-line (`McpPort` centers its digits) or which
+/// paints without an input-rect geometry (ACP fields) — those keep the
+/// caret-at-end behavior rather than risking a wrong mapping.
+fn single_line_metrics(focus: SettingsFocus, touch: bool) -> Option<(f32, f32)> {
+    use op_editor_core::agent_settings::BuiltinAgentField;
+    match focus {
+        // `settings_form::paint_field_frame_for_ui`.
+        SettingsFocus::BuiltinAgent { field, .. } | SettingsFocus::BuiltinAgentDraft(field) => {
+            (field != BuiltinAgentField::Model).then_some(if touch {
+                (15.0, 12.0)
+            } else {
+                (11.0, 6.0)
+            })
+        }
+        // `agent_settings_images_parts::paint_search_input_row`.
+        SettingsFocus::ImageSearch(_) => Some(if touch { (15.0, 12.0) } else { (13.0, 12.0) }),
+        // `agent_settings_images_parts` gen-profile field paint.
+        SettingsFocus::ImageGenProfile { .. } => {
+            Some(if touch { (15.0, 12.0) } else { (11.0, 6.0) })
+        }
+        SettingsFocus::McpPort
+        | SettingsFocus::AcpAgent { .. }
+        | SettingsFocus::AcpAgentDraft(_) => None,
+    }
+}
+
+/// Map a click/tap in the focused single-line settings input (API key,
+/// display name, base URL, image credentials, …) back to a source byte
+/// offset, mirroring [`model_text_byte_offset_at`] for the fields that the
+/// shared single-line input view paints.
+pub(super) fn single_line_text_byte_offset_at(
+    ui: &EditorUiState,
+    focus: SettingsFocus,
+    input: Rect,
+    point: crate::Point2D,
+    touch: bool,
+) -> Option<usize> {
+    let (font_size, pad_x) = single_line_metrics(focus, touch)?;
+    crate::widgets::text_input::single_line_byte_offset_at(
+        &ui.settings_input,
+        input,
+        point,
+        font_size,
+        pad_x,
+    )
+}
+
 pub(super) fn settings_input_text<'a>(
     settings: &AgentSettings,
     ui: &'a EditorUiState,

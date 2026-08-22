@@ -150,6 +150,7 @@ mod contract_tests {
         "editorKey",
         "editorImePreedit",
         "editorImeCommit",
+        "editorPasteText",
         "editorImeFocused",
         "editorConfigureAuth",
         "editorTakeLoginUrl",
@@ -250,11 +251,11 @@ mod contract_tests {
     fn the_kotlin_derived_prefix_matches_opnative_order() {
         // The first 55 names are `OpNative.kt`'s own order; the additions
         // follow. A new OHOS-only export must be appended, never spliced in.
-        const KOTLIN_DERIVED: usize = 55;
+        const KOTLIN_DERIVED: usize = 56;
         assert_eq!(EXPORTED_NAMES[KOTLIN_DERIVED], "setXcomponentListener");
         assert_eq!(EXPORTED_NAMES[0], "create");
         assert_eq!(EXPORTED_NAMES[KOTLIN_DERIVED - 1], "editorLocaleCode");
-        assert_eq!(EXPORTED_NAMES.len(), 70);
+        assert_eq!(EXPORTED_NAMES.len(), 71);
     }
 
     /// The engine's own C header — the single source of truth for the codes

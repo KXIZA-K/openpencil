@@ -91,6 +91,7 @@ object OpNative {
     external fun nativeEditorKey(engine: Long, key: Int): Int
     external fun nativeEditorImePreedit(engine: Long, text: String, selStart: Int, selEnd: Int): Int
     external fun nativeEditorImeCommit(engine: Long, text: String): Int
+    external fun nativeEditorPasteText(engine: Long, text: String): Int
     external fun nativeEditorImeFocused(engine: Long): Boolean
     external fun nativeEditorConfigureAuth(
         engine: Long,

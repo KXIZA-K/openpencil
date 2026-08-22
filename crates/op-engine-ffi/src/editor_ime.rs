@@ -60,6 +60,46 @@ pub unsafe extern "C" fn op_editor_ime_commit(
     }
 }
 
+/// Paste `text` into whichever text input currently owns the keyboard —
+/// the mobile shells call this from their long-press edit menus with the
+/// platform clipboard's contents. Routing mirrors the desktop Cmd+V text
+/// arm (`op-host-desktop`'s `handle_paste_payload`): non-chat inputs
+/// first (settings / git / rename / canvas text edit, with each field's
+/// own filtering), then the chat input. Without a focused input this is
+/// a no-op — node paste stays on the `KEY_PASTE` path.
+///
+/// # Safety
+///
+/// `engine` must be live and `text` must cover `text_len` readable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn op_editor_paste_text(
+    engine: *mut crate::OpEngine,
+    text_ptr: *const u8,
+    text_len: usize,
+) -> OpStatus {
+    unsafe {
+        call_session(engine, |session| {
+            let text = crate::error::read_utf8(text_ptr, text_len, STRING_CAP, "paste text")?;
+            if text.is_empty() {
+                return Ok(());
+            }
+            let changed = session.with_collab_local_edit(|host| {
+                if host.non_chat_input_owns_keyboard_pub() {
+                    host.apply_input_paste(&text)
+                } else if host.chat_input_owns_keyboard_pub() {
+                    host.chat_input_paste(&text)
+                } else {
+                    false
+                }
+            })?;
+            if changed {
+                session.request_redraw();
+            }
+            Ok(())
+        })
+    }
+}
+
 /// Whether a canvas text edit (or panel input) currently holds the IME —
 /// the shells show/hide the system keyboard accordingly.
 ///

@@ -349,6 +349,29 @@ final class OpEngineHost: NSObject {
         }
     }
 
+    /// Pastes clipboard text into whichever engine text input owns the
+    /// keyboard (the long-press edit menu's Paste action). No-op without
+    /// a focused input.
+    func editorPasteText(_ text: String) {
+        guard let engine, editorMode, !text.isEmpty else { return }
+        let data = Data(text.utf8)
+        let status = data.withUnsafeBytes { bytes in
+            op_editor_paste_text(engine, bytes.bindMemory(to: UInt8.self).baseAddress, bytes.count)
+        }
+        if status != OpStatus_Ok && status != OpStatus_Suspended {
+            reportFailure(status, operation: "op_editor_paste_text", engine: engine)
+        }
+    }
+
+    /// Synchronous IME-focus probe for gesture-time decisions. The polled
+    /// `imeFocused` mirror updates only after frames, so the long-press
+    /// handler asks the engine directly.
+    func editorImeFocusedNow() -> Bool {
+        guard let engine, editorMode else { return false }
+        var focused = false
+        return op_editor_ime_focused(engine, &focused) == OpStatus_Ok && focused
+    }
+
     func editorImeCommit(_ text: String) {
         guard let engine, editorMode else { return }
         let data = Data(text.utf8)

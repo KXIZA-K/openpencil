@@ -17,6 +17,12 @@ export interface PointerRouterHost {
   onPointerActivity(): void;
   /** The current logical (vp) viewport width, 0 before the first layout. */
   viewportVpWidth(): number;
+  /**
+   * A long-press landed while an engine text input holds the IME. The host
+   * may present a paste menu at `(x, y)` vp and return true; false falls
+   * back to the engine's long-press (right-click) path.
+   */
+  onEditorLongPressPasteMenu(x: number, y: number): boolean;
 }
 
 /** One tracked pointer in component-local vp. */
@@ -316,6 +322,17 @@ export class PointerRouter {
     }
     this.longPressArmed = false;
     this.longPressFired = true;
+    // The Down at press time already ran the engine's press ladder, so the
+    // engine's IME focus reflects THIS touch: focused means the finger is
+    // holding an editable text field — offer Paste instead of the
+    // right-click context menu.
+    if (this.host.onEditorLongPressPasteMenu(this.lastKnownX, this.lastKnownY)) {
+      // The press capture opened at Down must not leak while the release
+      // is suppressed by `longPressFired`.
+      napi.editorCancelGesture(engine);
+      this.host.onPointerActivity();
+      return;
+    }
     napi.editorRightPress(engine, this.lastKnownX, this.lastKnownY);
     this.host.onPointerActivity();
   }

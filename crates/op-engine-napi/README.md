@@ -151,6 +151,7 @@ only trust the fields when `status === 0`.
 | `editorKey` | `engine: number, key: number` | `number` — an `OpKey_*` code |
 | `editorImePreedit` | `engine: number, text: string, selStart: number, selEnd: number` | `number` — offsets are BYTES here |
 | `editorImeCommit` | `engine: number, text: string` | `number` |
+| `editorPasteText` | `engine: number, text: string` | `number` — paste into the focused input (long-press menu); no-op without focus |
 | `editorImeFocused` | `engine: number` | `boolean` — show/hide the system keyboard |
 | `editorConfigureAuth` | `engine: number, storageDir: string, deviceName: string, appVersion: string, region: number` | `number` |
 | `editorTakeLoginUrl` | `engine: number` | `string \| null` — CONSUMES the pending URL |

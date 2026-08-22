@@ -1,4 +1,5 @@
 import { common, ConfigurationConstant } from '@kit.AbilityKit';
+import { pasteboard } from '@kit.BasicServicesKit';
 import napi from '../common/OpNative';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
@@ -55,6 +56,12 @@ struct Index {
   @State private currentLocale: string = '';
   @State private showNotice: boolean = false;
   @State private noticeMessage: ResourceStr = '';
+
+  // ---- Long-press paste menu ---------------------------------------------
+
+  @State private showPasteMenu: boolean = false;
+  @State private pasteMenuX: number = 0;
+  @State private pasteMenuY: number = 0;
 
   // ---- Sign-in state -----------------------------------------------------
 
@@ -213,6 +220,30 @@ struct Index {
           return claimed;
         })
 
+      // Long-press paste over a focused engine text input. The system
+      // PasteButton security component grants the one-shot pasteboard read
+      // without needing the READ_PASTEBOARD user-grant permission. New
+      // touches on the scrim dismiss; the long-press finger's own Up stays
+      // with the input overlay it started on and is release-suppressed.
+      if (this.showPasteMenu) {
+        Column()
+          .width('100%')
+          .height('100%')
+          .onTouch((event: TouchEvent) => {
+            if (event.type === TouchType.Down) {
+              this.showPasteMenu = false;
+            }
+          })
+        PasteButton()
+          .position({ x: this.pasteMenuX, y: this.pasteMenuY })
+          .onClick((event: ClickEvent, result: PasteButtonOnClickResult) => {
+            this.showPasteMenu = false;
+            if (result === PasteButtonOnClickResult.SUCCESS) {
+              this.pasteFromSystemPasteboard();
+            }
+          })
+      }
+
       LanguagePickerDialog({
         visible: $showLanguagePicker,
         currentCode: this.currentLocale,
@@ -363,6 +394,12 @@ struct Index {
       onSystemChromeAppearance: (prefersLightIcons: boolean): void => {
         WindowBridge.shared.applySystemChromeAppearance(prefersLightIcons);
       },
+      onEditorPasteMenu: (x: number, y: number): void => {
+        // Anchor the bubble just above the finger, clamped into the view.
+        this.pasteMenuX = Math.max(8, Math.min(x - 32, this.bands.width - 96));
+        this.pasteMenuY = Math.max(8, y - 56);
+        this.showPasteMenu = true;
+      },
       onImeFocusChanged: (focused: boolean): void => {
         this.imeProxy.reset();
         if (!focused) {
@@ -395,6 +432,20 @@ struct Index {
         }
       },
     };
+  }
+
+  /** Reads the pasteboard after the PasteButton's one-shot grant. */
+  private pasteFromSystemPasteboard(): void {
+    pasteboard.getSystemPasteboard().getData()
+      .then((data: pasteboard.PasteData) => {
+        const text: string | undefined = data.getPrimaryText();
+        if (text !== undefined && text.length > 0) {
+          this.host.pasteText(text);
+        }
+      })
+      .catch((error: Object) => {
+        hilog.warn(DOMAIN, TAG, 'pasteboard read failed: %{public}s', JSON.stringify(error));
+      });
   }
 
   private openDocument(): void {
