@@ -124,6 +124,8 @@ raise "scheme callbacks must route into every SDK" unless
   callbacks_source.include?("DouyinNativeSignIn.handleOpenURL(url)") &&
   callbacks_source.include?("AlipayNativeSignIn.handleOpenURL(url)") &&
   callbacks_source.include?("WechatNativeSignIn.handleOpenURL(url)")
+raise "onOpenURL-delivered universal links must reach the WeChat SDK" unless
+  callbacks_source.include?("WechatNativeSignIn.handleUniversalLinkURL(url)")
 app_source = File.read(File.expand_path("../Sources/OpPlayerApp.swift", __dir__))
 raise "scene must forward onOpenURL to the provider SDKs" unless app_source.include?(
   "NativeProviderCallbacks.handle(url)"

@@ -39,6 +39,8 @@ enum WechatNativeSignIn {
 
     static func handleUniversalLink(_ userActivity: NSUserActivity) -> Bool { false }
 
+    static func handleUniversalLinkURL(_ url: URL) -> Bool { false }
+
     #else
 
     /// Retained WXApiDelegate bridge; the SDK holds it weakly.
@@ -107,6 +109,21 @@ enum WechatNativeSignIn {
     static func handleUniversalLink(_ userActivity: NSUserActivity) -> Bool {
         registerIfNeeded()
         return WXApi.handleOpenUniversalLink(userActivity, delegate: delegate)
+    }
+
+    /// The SwiftUI lifecycle can deliver universal links through `onOpenURL`
+    /// (a bare URL) instead of the user-activity handler; wrap such a URL
+    /// back into an activity so the SDK sees its callback either way.
+    static func handleUniversalLinkURL(_ url: URL) -> Bool {
+        guard
+            let linkURL = URL(string: universalLink),
+            url.scheme == "https",
+            url.host == linkURL.host,
+            url.path.hasPrefix(linkURL.path)
+        else { return false }
+        let activity = NSUserActivity(activityType: NSUserActivityTypeBrowsingWeb)
+        activity.webpageURL = url
+        return handleUniversalLink(activity)
     }
 
     private static func deliver(_ outcome: NativeSignInOutcome) {

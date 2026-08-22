@@ -16,6 +16,10 @@ enum NativeProviderCallbacks {
     static func handle(_ url: URL) -> Bool {
         if DouyinNativeSignIn.handleOpenURL(url) { return true }
         if AlipayNativeSignIn.handleOpenURL(url) { return true }
-        return WechatNativeSignIn.handleOpenURL(url)
+        if WechatNativeSignIn.handleOpenURL(url) { return true }
+        // SwiftUI delivers universal links here as bare URLs; WeChat's
+        // callback must reach its SDK before the generic router can
+        // swallow the /app-links/wechat/ path.
+        return WechatNativeSignIn.handleUniversalLinkURL(url)
     }
 }
