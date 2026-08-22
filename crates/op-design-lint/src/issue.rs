@@ -37,6 +37,7 @@ pub enum IssueCategory {
     WidgetA11y,
     EmptyFilledPanel,
     TopAnchoredBars,
+    NoBaselineBars,
 }
 
 /// The node property a fix targets. `Remove` is the `"__remove"` sentinel;
