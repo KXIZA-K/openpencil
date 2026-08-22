@@ -238,12 +238,14 @@ impl LlmClient for DirectOpenAiClient {
             // `reasoning_effort:"low"` it demands instead (sending `thinking`
             // to K3 is a 400).
             apply_reasoning_wire_control(&mut body, &model, reduce_reasoning_for_smoke(&model));
-            // Connect + overall deadlines so a hung provider endpoint surfaces
+            // Connect + read-idle deadlines so a hung provider endpoint surfaces
             // as an error instead of pinning the headless harness forever
-            // (mirrors the desktop's builtin_http_client).
+            // (mirrors the desktop's builtin_http_client). Per-read, not
+            // per-request: a reasoning model can spend longer than any whole-
+            // request budget on one generation without the connection stalling.
             let client = reqwest::Client::builder()
                 .connect_timeout(std::time::Duration::from_secs(15))
-                .timeout(std::time::Duration::from_secs(300))
+                .read_timeout(std::time::Duration::from_secs(180))
                 .build()
                 .unwrap_or_else(|_| reqwest::Client::new());
             let resp = match client.post(&url).bearer_auth(&key).json(&body).send().await {

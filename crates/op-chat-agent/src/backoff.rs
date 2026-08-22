@@ -34,7 +34,7 @@ static BUILTIN_HTTP_ADAPTIVE_GAP_MS: std::sync::atomic::AtomicU64 =
 const ADAPTIVE_GAP_START_MS: u64 = 1_000;
 const ADAPTIVE_GAP_MAX_MS: u64 = 5_000;
 const BUILTIN_HTTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
-const BUILTIN_HTTP_REQUEST_TIMEOUT: Duration = Duration::from_secs(300);
+const BUILTIN_HTTP_READ_IDLE_TIMEOUT: Duration = Duration::from_secs(180);
 const RETRY_AFTER_MAX: Duration = Duration::from_secs(30);
 const BACKOFF_MAX: Duration = Duration::from_secs(8);
 
@@ -192,14 +192,20 @@ pub async fn send_with_backoff(
     unreachable!("backoff loop always returns before exhausting range")
 }
 
-/// reqwest client with connect + overall timeouts. A bare `Client::new()` has
-/// NO timeout, so a hung LLM endpoint (connection opens but the server never
-/// streams, or stalls mid-response) makes the blocking provider iterator — and
-/// therefore the orchestrator's planning / sub-agent call — hang forever
+/// reqwest client with connect + read-idle timeouts. A bare `Client::new()`
+/// has NO timeout, so a hung LLM endpoint (connection opens but the server
+/// never streams, or stalls mid-response) makes the blocking provider iterator
+/// — and therefore the orchestrator's planning / sub-agent call — hang forever
 /// (desktop pinned on "Planning…", with Stop unable to interrupt the already
 /// in-flight request). These deadlines surface the stall as an error so the
-/// planning loop falls back instead of hanging. 300s is generous enough not to
-/// kill a slow-but-live generation.
+/// planning loop falls back instead of hanging.
+///
+/// The deadline is per-read, NOT per-request: a reasoning model can spend more
+/// than a whole-request budget on a single large generation while the stream
+/// stays alive, so an overall `.timeout()` severs live work (measured: a 1M-ctx
+/// reasoning model aborted mid-design at the old 300s cap). A read-idle
+/// deadline still trips on the stall this guard exists for, because a wedged
+/// endpoint stops producing bytes.
 ///
 /// Reports [`crate::provider_dial::ProviderDialError::ClientBuild`] rather
 /// than a local variant: this IS the `Trusted` half of `provider_dial`'s
@@ -219,7 +225,7 @@ pub fn builtin_http_client_builder() -> reqwest::ClientBuilder {
     reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(BUILTIN_HTTP_CONNECT_TIMEOUT)
-        .timeout(BUILTIN_HTTP_REQUEST_TIMEOUT)
+        .read_timeout(BUILTIN_HTTP_READ_IDLE_TIMEOUT)
 }
 
 /// Apply the provider-specific low-reasoning control for structured design
