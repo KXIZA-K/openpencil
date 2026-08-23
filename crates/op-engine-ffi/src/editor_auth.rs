@@ -456,6 +456,7 @@ mod tests {
                 callbacks: Callbacks::default(),
                 asset_base: None,
                 editor_mode: true,
+                documents_root: None,
             })
             .expect("editor session"),
         )
@@ -471,6 +472,7 @@ mod tests {
             callbacks: Callbacks::default(),
             asset_base: None,
             editor_mode: true,
+            documents_root: None,
         })
         .expect("blank editor session");
         let starter = op_editor_core::EditorState::starter();

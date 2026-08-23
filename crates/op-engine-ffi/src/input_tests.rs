@@ -309,6 +309,7 @@ fn viewer_engine() -> OpEngine {
             asset_base: None,
             #[cfg(feature = "editor")]
             editor_mode: false,
+            documents_root: None,
         })
         .expect("viewer session"),
     )

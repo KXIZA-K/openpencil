@@ -103,6 +103,8 @@ impl EditorHarness {
             mode: 1,
             storage_root_ptr: ptr::null(),
             storage_root_len: 0,
+            documents_root_ptr: ptr::null(),
+            documents_root_len: 0,
         };
         let mut engine: *mut OpEngine = ptr::null_mut();
         let status = unsafe { op_create(&desc, &mut engine) };

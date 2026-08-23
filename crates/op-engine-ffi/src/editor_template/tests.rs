@@ -17,6 +17,7 @@ fn editor_engine_with(doc: &str) -> OpEngine {
             callbacks: Callbacks::default(),
             asset_base: None,
             editor_mode: true,
+            documents_root: None,
         })
         .expect("editor session"),
     )

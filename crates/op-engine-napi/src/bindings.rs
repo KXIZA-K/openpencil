@@ -213,6 +213,10 @@ fn create_impl(
             mode,
             storage_root_ptr: storage_root.as_ptr(),
             storage_root_len: storage_root.len(),
+            // No user-visible documents root yet: Android / HarmonyOS keep
+            // the private `<storage_root>/documents` fallback.
+            documents_root_ptr: ptr::null(),
+            documents_root_len: 0,
         };
         // SAFETY: every borrowed range above outlives this call.
         let status = unsafe { op_create(&desc, &mut engine) };

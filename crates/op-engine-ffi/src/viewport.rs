@@ -110,6 +110,7 @@ mod tests {
                 callbacks: Callbacks::default(),
                 asset_base: None,
                 editor_mode: true,
+                documents_root: None,
             })
             .expect("editor session"),
         )

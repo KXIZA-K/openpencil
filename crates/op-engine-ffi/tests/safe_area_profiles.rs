@@ -106,6 +106,8 @@ impl Harness {
             mode: 1,
             storage_root_ptr: ptr::null(),
             storage_root_len: 0,
+            documents_root_ptr: ptr::null(),
+            documents_root_len: 0,
         };
         let mut engine = ptr::null_mut();
         assert_eq!(unsafe { op_create(&desc, &mut engine) }, OpStatus::Ok);

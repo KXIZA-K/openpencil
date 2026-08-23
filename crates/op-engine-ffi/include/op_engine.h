@@ -103,8 +103,12 @@ typedef struct OpCallbacks {
  * canonical .op document. Full-editor mode may pass NULL/0 to open the
  * canonical blank starter; viewer mode always requires document bytes.
  * asset_base is the v1 tail; mode is the v2 tail (0 = viewer, 1 = full
- * editor); storage_root is the v3 tail. Mobile editor shells must pass a
- * private app-sandbox directory before any runtime config is resolved. */
+ * editor); storage_root is the v3 tail; documents_root is the v4 tail.
+ * Mobile editor shells must pass a private app-sandbox directory before any
+ * runtime config is resolved. documents_root is optional: it is the absolute
+ * user-visible directory saved .op documents land in (iOS
+ * NSDocumentDirectory, surfaced by the Files app). Omitting it keeps saves
+ * under <storage_root>/documents. */
 typedef struct OpCreateDesc {
     size_t size;
     const uint8_t *doc_ptr;
@@ -118,6 +122,8 @@ typedef struct OpCreateDesc {
     int32_t mode;
     const uint8_t *storage_root_ptr;
     size_t storage_root_len;
+    const uint8_t *documents_root_ptr;
+    size_t documents_root_len;
 } OpCreateDesc;
 
 /* Platform surface descriptor. iOS: borrowed CAMetalLayer*. Android:

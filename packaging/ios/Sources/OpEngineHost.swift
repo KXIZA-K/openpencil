@@ -169,27 +169,37 @@ final class OpEngineHost: NSObject {
             NSLog("OpenPencil Player resolved an empty private storage path")
             return
         }
+        // Saves must land where the user can find them: NSDocumentDirectory
+        // is what Files shows under "On My iPhone -> OpenPencil". An empty
+        // value leaves the engine on its private fallback rather than
+        // failing to start.
+        let documentsRoot = Data((DocumentStorage.prepare()?.path ?? "").utf8)
         var callbacks = makeCallbacks()
         var created: OpaquePointer?
 
         let status = document.withUnsafeBytes { documentBytes in
             assetBase.withUnsafeBytes { assetBytes in
                 storageRoot.withUnsafeBytes { storageBytes in
-                    withUnsafePointer(to: &callbacks) { callbacksPointer in
-                        var desc = OpCreateDesc()
-                        desc.size = MemoryLayout<OpCreateDesc>.size
-                        desc.doc_ptr = documentBytes.bindMemory(to: UInt8.self).baseAddress
-                        desc.doc_len = documentBytes.count
-                        desc.width = Float(logicalSize.width)
-                        desc.height = Float(logicalSize.height)
-                        desc.dpr = Float(scale)
-                        desc.callbacks = callbacksPointer
-                        desc.asset_base_ptr = assetBytes.bindMemory(to: UInt8.self).baseAddress
-                        desc.asset_base_len = assetBytes.count
-                        desc.mode = editorMode ? 1 : 0
-                        desc.storage_root_ptr = storageBytes.bindMemory(to: UInt8.self).baseAddress
-                        desc.storage_root_len = storageBytes.count
-                        return op_create(&desc, &created)
+                    documentsRoot.withUnsafeBytes { documentsBytes in
+                        withUnsafePointer(to: &callbacks) { callbacksPointer in
+                            var desc = OpCreateDesc()
+                            desc.size = MemoryLayout<OpCreateDesc>.size
+                            desc.doc_ptr = documentBytes.bindMemory(to: UInt8.self).baseAddress
+                            desc.doc_len = documentBytes.count
+                            desc.width = Float(logicalSize.width)
+                            desc.height = Float(logicalSize.height)
+                            desc.dpr = Float(scale)
+                            desc.callbacks = callbacksPointer
+                            desc.asset_base_ptr = assetBytes.bindMemory(to: UInt8.self).baseAddress
+                            desc.asset_base_len = assetBytes.count
+                            desc.mode = editorMode ? 1 : 0
+                            desc.storage_root_ptr = storageBytes.bindMemory(to: UInt8.self).baseAddress
+                            desc.storage_root_len = storageBytes.count
+                            desc.documents_root_ptr = documentsBytes
+                                .bindMemory(to: UInt8.self).baseAddress
+                            desc.documents_root_len = documentsBytes.count
+                            return op_create(&desc, &created)
+                        }
                     }
                 }
             }

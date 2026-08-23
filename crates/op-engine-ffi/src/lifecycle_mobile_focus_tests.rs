@@ -20,6 +20,7 @@ fn editor_session_at(width: f32, height: f32) -> Session {
         callbacks: Callbacks::default(),
         asset_base: None,
         editor_mode: true,
+        documents_root: None,
     })
     .expect("editor session")
 }

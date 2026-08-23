@@ -89,7 +89,9 @@ pub struct OpCallbacks {
 /// always requires document bytes. `asset_base` is the filesystem root for
 /// doc-referenced media. Mobile editor shells must also provide `storage_root`,
 /// their private sandbox root, before any runtime/config service is
-/// constructed.
+/// constructed. `documents_root` is the optional user-visible directory saved
+/// documents land in (iOS `NSDocumentDirectory`, which the Files app exposes);
+/// omitting it keeps saves under `<storage_root>/documents`.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct OpCreateDesc {
@@ -107,6 +109,10 @@ pub struct OpCreateDesc {
     /// Private application-sandbox root for process-level config.
     pub storage_root_ptr: *const u8,
     pub storage_root_len: usize,
+    /// Optional user-visible directory for saved `.op` documents. Absolute
+    /// path; null/zero falls back to `<storage_root>/documents`.
+    pub documents_root_ptr: *const u8,
+    pub documents_root_len: usize,
 }
 
 /// Platform surface descriptor. On iOS `handle` is a borrowed
@@ -167,6 +173,10 @@ pub(crate) struct CreateOptions {
     pub asset_base: Option<String>,
     #[cfg(feature = "editor")]
     pub editor_mode: bool,
+    /// User-visible directory saved documents land in, when the shell has
+    /// one. `None` keeps the private `<storage_root>/documents` fallback.
+    #[cfg(feature = "editor")]
+    pub documents_root: Option<String>,
 }
 
 unsafe fn read_covered<T: Copy>(base: *const u8, size: usize, offset: usize) -> Option<T> {
@@ -221,6 +231,42 @@ unsafe fn parse_callbacks(pointer: *const OpCallbacks) -> FfiResult<Callbacks> {
             .unwrap_or(None)
         },
     })
+}
+
+/// Read the v4 `documents_root` tail: the user-visible directory saved
+/// documents land in. Absent (a pre-v4 shell, or one with no such
+/// directory) leaves the private `<storage_root>/documents` fallback in
+/// place, so Android / HarmonyOS keep today's behaviour untouched.
+///
+/// Unlike `storage_root` this configures no global — the path travels on
+/// [`CreateOptions`] into the session, because `storage_root` legitimately
+/// stays the private config root that settings persistence keys on.
+///
+/// # Safety
+///
+/// `base` must be readable for `size` bytes.
+unsafe fn parse_documents_root(base: *const u8, size: usize) -> FfiResult<Option<String>> {
+    let root_ptr = unsafe {
+        read_covered::<*const u8>(base, size, offset_of!(OpCreateDesc, documents_root_ptr))
+    };
+    let root_len =
+        unsafe { read_covered::<usize>(base, size, offset_of!(OpCreateDesc, documents_root_len)) }
+            .unwrap_or(0);
+    if root_len == 0 {
+        return Ok(None);
+    }
+    let root = unsafe {
+        read_utf8(
+            root_ptr.unwrap_or(ptr::null()),
+            root_len,
+            STRING_CAP,
+            "documents root",
+        )?
+    };
+    if !std::path::Path::new(&root).is_absolute() {
+        return Err(FfiError::invalid("documents root must be an absolute path"));
+    }
+    Ok(Some(root))
 }
 
 pub(crate) unsafe fn parse_create(pointer: *const OpCreateDesc) -> FfiResult<CreateOptions> {
@@ -354,6 +400,11 @@ pub(crate) unsafe fn parse_create(pointer: *const OpCreateDesc) -> FfiResult<Cre
             )
         })?;
     }
+    let documents_root = unsafe { parse_documents_root(base, size)? };
+    // Viewer-only builds have no document-save surface; the value is still
+    // parsed (and validated) so the ABI contract is identical everywhere.
+    #[cfg(not(feature = "editor"))]
+    let _ = documents_root;
     Ok(CreateOptions {
         document,
         width,
@@ -363,6 +414,8 @@ pub(crate) unsafe fn parse_create(pointer: *const OpCreateDesc) -> FfiResult<Cre
         asset_base,
         #[cfg(feature = "editor")]
         editor_mode,
+        #[cfg(feature = "editor")]
+        documents_root,
     })
 }
 
@@ -414,6 +467,8 @@ mod tests {
             mode,
             storage_root_ptr: ptr::null(),
             storage_root_len: 0,
+            documents_root_ptr: ptr::null(),
+            documents_root_len: 0,
         }
     }
 
@@ -437,5 +492,43 @@ mod tests {
         };
         assert!(options.editor_mode);
         assert!(options.document.is_empty());
+    }
+
+    /// Tail growth: a shell built against v3 stops its `size` short of the
+    /// documents-root pair and must still create an engine, keeping the
+    /// private `<storage_root>/documents` fallback.
+    #[cfg(feature = "editor")]
+    #[test]
+    fn a_pre_v4_descriptor_parses_without_a_documents_root() {
+        let mut desc = empty_create_desc(1);
+        desc.size = offset_of!(OpCreateDesc, documents_root_ptr);
+        // Garbage in the tail the caller never wrote must be ignored.
+        desc.documents_root_ptr = b"/not/read".as_ptr();
+        desc.documents_root_len = 9;
+        let options = unsafe { parse_create(&desc) }.expect("pre-v4 descriptor");
+        assert_eq!(options.documents_root, None);
+    }
+
+    #[cfg(feature = "editor")]
+    #[test]
+    fn a_documents_root_must_be_absolute() {
+        let mut desc = empty_create_desc(1);
+        let relative = b"documents";
+        desc.documents_root_ptr = relative.as_ptr();
+        desc.documents_root_len = relative.len();
+        let error = unsafe { parse_create(&desc) }
+            .err()
+            .expect("relative documents root");
+        assert_eq!(error.status, OpStatus::InvalidArg);
+        assert_eq!(error.message, "documents root must be an absolute path");
+
+        let absolute = b"/var/mobile/Documents";
+        desc.documents_root_ptr = absolute.as_ptr();
+        desc.documents_root_len = absolute.len();
+        let options = unsafe { parse_create(&desc) }.expect("absolute documents root");
+        assert_eq!(
+            options.documents_root.as_deref(),
+            Some("/var/mobile/Documents")
+        );
     }
 }

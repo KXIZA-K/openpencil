@@ -331,6 +331,7 @@ mod editor_viewport_tests {
             callbacks: Callbacks::default(),
             asset_base: None,
             editor_mode: true,
+            documents_root: None,
         })
         .expect("editor session");
 
@@ -364,6 +365,7 @@ mod editor_viewport_tests {
             callbacks: Callbacks::default(),
             asset_base: None,
             editor_mode: true,
+            documents_root: None,
         })
         .expect("editor session");
         session.insets = crate::viewport::OpInsets {
@@ -412,6 +414,7 @@ mod editor_viewport_tests {
             callbacks: Callbacks::default(),
             asset_base: None,
             editor_mode: true,
+            documents_root: None,
         })
         .expect("editor session");
         session.insets = crate::viewport::OpInsets {

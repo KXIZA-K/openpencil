@@ -59,5 +59,9 @@
 		<string>weixinULAPI</string>
 		<string>weixinURLParamsAPI</string>
 	</array>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
+	<key>UIFileSharingEnabled</key>
+	<true/>
 </dict>
 </plist>

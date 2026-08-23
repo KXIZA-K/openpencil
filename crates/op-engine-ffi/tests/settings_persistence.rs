@@ -42,6 +42,8 @@ fn create_editor_engine(storage_root: &Path) -> *mut OpEngine {
         mode: 1,
         storage_root_ptr: storage.as_ptr(),
         storage_root_len: storage.len(),
+        documents_root_ptr: ptr::null(),
+        documents_root_len: 0,
     };
     let mut engine: *mut OpEngine = ptr::null_mut();
     let status = unsafe { op_create(&desc, &mut engine) };

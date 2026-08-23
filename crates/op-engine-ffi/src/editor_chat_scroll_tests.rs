@@ -28,6 +28,7 @@ fn phone_engine_with_chat_sheet() -> OpEngine {
             callbacks: Callbacks::default(),
             asset_base: None,
             editor_mode: true,
+            documents_root: None,
         })
         .expect("editor session"),
     );

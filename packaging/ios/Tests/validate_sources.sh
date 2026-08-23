@@ -22,6 +22,7 @@ required=(
   "$player_dir/Sources/OpEngineHost.swift"
   "$player_dir/Sources/DocumentExportCoordinator.swift"
   "$player_dir/Sources/AuthStorage.swift"
+  "$player_dir/Sources/DocumentStorage.swift"
   "$player_dir/Sources/DeviceLoginRequestInfo.swift"
   "$player_dir/Sources/NativeLoginViewController.swift"
   "$player_dir/Sources/AuthCodeFormViewController.swift"
@@ -43,6 +44,7 @@ for path in "${required[@]}"; do
 done
 
 plutil -lint \
+  "$player_dir/Info.plist" \
   "$player_dir/OpenPencilPlayer.entitlements" \
   "$player_dir/Resources/en.lproj/InfoPlist.strings" \
   "$player_dir/Resources/zh-Hans.lproj/InfoPlist.strings" >/dev/null
@@ -50,6 +52,15 @@ grep -Fq '"NSLocalNetworkUsageDescription"' "$player_dir/Resources/en.lproj/Info
 grep -Fq '"NSLocalNetworkUsageDescription"' "$player_dir/Resources/zh-Hans.lproj/InfoPlist.strings"
 
 cmp "$fixture" "$player_dir/Resources/sample.op"
+
+# Saved documents are only visible in the Files app when the generated
+# Info.plist carries BOTH sharing keys.
+for key in UIFileSharingEnabled LSSupportsOpeningDocumentsInPlace; do
+  if [[ "$(plutil -extract "$key" raw -o - "$player_dir/Info.plist" 2>/dev/null)" != "true" ]]; then
+    echo "Info.plist must set $key to true so saved documents appear in Files" >&2
+    exit 1
+  fi
+done
 
 while IFS= read -r source; do
   lines="$(wc -l < "$source" | tr -d ' ')"
@@ -105,6 +116,10 @@ raise "Debug simulator must link the static debug engine" unless debug.fetch("OP
 raise "Debug device must link the static debug engine" unless debug.fetch("OP_ENGINE_ARCHIVE[sdk=iphoneos*]").end_with?("aarch64-apple-ios/debug/libop_engine_ffi.a")
 raise "Release simulator must link the static release engine" unless release.fetch("OP_ENGINE_ARCHIVE[sdk=iphonesimulator*]").end_with?("aarch64-apple-ios-sim/release/libop_engine_ffi.a")
 raise "Release device must link the static release engine" unless release.fetch("OP_ENGINE_ARCHIVE[sdk=iphoneos*]").end_with?("aarch64-apple-ios/release/libop_engine_ffi.a")
+info_properties = target.fetch("info").fetch("properties")
+%w[UIFileSharingEnabled LSSupportsOpeningDocumentsInPlace].each do |key|
+  raise "#{key} must be declared so saved documents appear in Files" unless info_properties[key] == true
+end
 scripts = target.fetch("preBuildScripts")
 auth_gate = scripts.find { |script| script["name"] == "Validate optional op-auth archive" }
 raise "mobile auth link gate missing" unless auth_gate
@@ -166,6 +181,15 @@ grep -Fq -- "UIDocumentPickerViewController(forExporting: [stagedFile], asCopy: 
 grep -Fq -- "FileManager.default.removeItem(at: directory)" "$player_dir/Sources/DocumentExportCoordinator.swift"
 grep -Fq -- "desc.storage_root_ptr" "$player_dir/Sources/OpEngineHost.swift"
 grep -Fq -- "desc.storage_root_len" "$player_dir/Sources/OpEngineHost.swift"
+grep -Fq -- "desc.documents_root_ptr" "$player_dir/Sources/OpEngineHost.swift"
+grep -Fq -- "desc.documents_root_len" "$player_dir/Sources/OpEngineHost.swift"
+grep -Fq -- "for: .documentDirectory" "$player_dir/Sources/DocumentStorage.swift"
+# The user's own documents belong in iCloud/iTunes backups; only the
+# private auth root opts out.
+if grep -Fq -- "isExcludedFromBackup" "$player_dir/Sources/DocumentStorage.swift"; then
+  echo "saved documents must stay in device backups" >&2
+  exit 1
+fi
 grep -Fq -- "callbacks.credential_load = nil" "$player_dir/Sources/OpEngineHost.swift"
 grep -Fq -- "callbacks.credential_store_if_absent = nil" "$player_dir/Sources/OpEngineHost.swift"
 grep -Fq -- "FileProtectionType.completeUntilFirstUserAuthentication" "$player_dir/Sources/AuthStorage.swift"
@@ -230,6 +254,9 @@ prepare = create.index("let storageURL = AuthStorage.prepare()")
 root = create.index("desc.storage_root_ptr")
 call = create.index("return op_create(&desc, &created)")
 raise "private storage must be prepared and bound before op_create" unless prepare && root && call && prepare < root && root < call
+documents_prepare = create.index("DocumentStorage.prepare()")
+documents_root = create.index("desc.documents_root_ptr")
+raise "the visible documents root must be prepared and bound before op_create" unless documents_prepare && documents_root && documents_prepare < documents_root && documents_root < call
 raise "auth must reuse the create-time storage root" unless create.include?("configureMobileAuth(engine: created, storageURL: storageURL)")
 RUBY
 

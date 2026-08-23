@@ -90,6 +90,11 @@ pub(crate) struct Session {
 impl Session {
     pub(crate) fn new(options: CreateOptions) -> FfiResult<Session> {
         let src = options.document;
+        // Where Save / Save As write. Kept off `storage_root` (the private
+        // config root) so a shell can expose documents to its file browser
+        // without moving its settings store.
+        #[cfg(feature = "editor")]
+        let documents_root = options.documents_root.map(std::path::PathBuf::from);
         // An editor shell with no explicit document opens the same canonical
         // blank starter as File -> New. Viewer mode still requires bytes at
         // the descriptor boundary, so an empty source can only reach here in
@@ -194,7 +199,9 @@ impl Session {
             #[cfg(feature = "editor")]
             export_shell: Default::default(),
             #[cfg(feature = "editor")]
-            document_save: Default::default(),
+            document_save: crate::editor_document::DocumentSaveShellState::with_root(
+                documents_root,
+            ),
             #[cfg(feature = "editor")]
             model_discovery: Default::default(),
             #[cfg(feature = "editor")]
@@ -203,6 +210,14 @@ impl Session {
             image_search: Default::default(),
         };
         session.fit_content_to_viewports();
+        // Documents saved before this shell had a visible directory must
+        // not disappear behind it. Idempotent and best-effort: a migration
+        // failure never blocks the editor from opening.
+        #[cfg(feature = "editor")]
+        if let Err(error) = crate::editor_document::migrate_legacy_documents(&session.document_save)
+        {
+            session.emit_runtime_error(2, &error.message, "op-engine-ffi/save");
+        }
         Ok(session)
     }
 

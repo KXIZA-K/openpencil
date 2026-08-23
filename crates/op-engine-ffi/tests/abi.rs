@@ -30,6 +30,8 @@ fn create_engine(width: f32, height: f32, dpr: f32) -> Result<*mut OpEngine, OpS
         mode: 0,
         storage_root_ptr: ptr::null(),
         storage_root_len: 0,
+        documents_root_ptr: ptr::null(),
+        documents_root_len: 0,
     };
     let mut engine: *mut OpEngine = ptr::null_mut();
     let status = unsafe { op_create(&desc, &mut engine) };
@@ -105,6 +107,8 @@ fn bad_document_reports_error_through_last_error() {
         mode: 0,
         storage_root_ptr: ptr::null(),
         storage_root_len: 0,
+        documents_root_ptr: ptr::null(),
+        documents_root_len: 0,
     };
     let mut engine: *mut OpEngine = ptr::null_mut();
     let status = unsafe { op_create(&desc, &mut engine) };

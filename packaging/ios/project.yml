@@ -81,6 +81,11 @@ targets:
         # client key by SDK convention; the Alipay scheme is app-chosen and
         # must match AlipayNativeSignIn.callbackScheme.
         DouyinAppID: awbponwo0ls6cjos
+        # Saved documents live in NSDocumentDirectory, which the Files app
+        # only exposes ("On My iPhone -> OpenPencil") when BOTH keys are
+        # true. Without them the engine's saves are invisible to the user.
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
         LSApplicationQueriesSchemes:
           - douyinopensdk
           - douyinliteopensdk

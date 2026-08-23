@@ -98,6 +98,7 @@ mod tests {
                 asset_base: None,
                 #[cfg(feature = "editor")]
                 editor_mode,
+                documents_root: None,
             })
             .expect("engine session"),
         )
