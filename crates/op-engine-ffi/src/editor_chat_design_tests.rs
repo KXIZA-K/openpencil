@@ -391,8 +391,11 @@ fn design_request_executes_script_mode_batch_design() {
         .iter()
         .find(|node| node.base().name.as_deref() == Some("ScriptHome"))
         .expect("script-mode batch_design must insert the ScriptHome frame");
-    // The JS loop emitted 2 sections; each carries a title + its tracks.
-    let sections = home.children().expect("script home has sections");
+    // Finalization prepends the canonical mobile status bar; the JS loop's
+    // two content sections remain after it and each carries a title + tracks.
+    let children = home.children().expect("script home has children");
+    let (status_bar, sections) = children.split_first().expect("script home is not empty");
+    assert_eq!(status_bar.base().role.as_deref(), Some("status-bar"));
     assert_eq!(sections.len(), 2);
     assert_eq!(sections[0].children().map(|c| c.len()), Some(1 + 4));
     assert_eq!(sections[1].children().map(|c| c.len()), Some(1 + 6));
