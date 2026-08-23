@@ -291,8 +291,24 @@ pub(crate) fn execute_image(binding: &str, args: &str, ctx: &mut ProgramCtx) -> 
                 .map(PenNode::id_str)
                 .collect::<Vec<_>>();
             if !child_ids.is_empty() {
+                // Name the empty slot the caller almost certainly meant. The
+                // authored shape is a painted card wrapping one empty media
+                // frame, and a measured run aimed every G() at the wrapper,
+                // burned its whole batch on the rejection, and never tried the
+                // child it had just built. Suggesting is not redirecting: a
+                // lone empty child can also be a deliberate scrim, so the
+                // caller still chooses.
+                let suggestion = empty_container_children(target);
+                let hint = match suggestion.as_slice() {
+                    [only] => format!(" The only empty container child is {only} — target that instead if it is the media slot."),
+                    [_, ..] => format!(
+                        " Empty container children that could be the slot: [{}].",
+                        suggestion.join(", ")
+                    ),
+                    [] => String::new(),
+                };
                 return Err(ProgramError::Rejected(format!(
-                    "G() slot target {} must be empty, but it has children [{}]. Pass the exact empty frame/rectangle slot id; use \"append\" only for an intentional child of an explicit horizontal/vertical flow parent",
+                    "G() slot target {} must be empty, but it has children [{}].{hint} Pass the exact empty frame/rectangle slot id; use \"append\" only for an intentional child of an explicit horizontal/vertical flow parent",
                     target.id_str(),
                     child_ids.join(", ")
                 )));
@@ -364,6 +380,20 @@ pub(crate) fn execute_image(binding: &str, args: &str, ctx: &mut ProgramCtx) -> 
     )?;
     ctx.bind(binding, &image_id);
     Ok(())
+}
+
+/// Ids of `node`'s direct children that are themselves empty containers —
+/// the shape an authored media slot takes when the model wraps it in a
+/// painted card. Used only to name a candidate in a rejection message.
+fn empty_container_children(node: &PenNode) -> Vec<String> {
+    node.children()
+        .into_iter()
+        .flatten()
+        .filter(|child| {
+            node_container(child).is_some() && child.children().is_some_and(|kids| kids.is_empty())
+        })
+        .map(|child| child.id_str().to_string())
+        .collect()
 }
 
 fn explicit_flow_layout(container: &ContainerProps) -> Option<&'static str> {
