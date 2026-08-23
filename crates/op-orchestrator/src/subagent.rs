@@ -269,7 +269,7 @@ pub(crate) async fn run_subtask_with_reveal_at(
         crate::tree_heuristics::apply_tree_heuristics(
             &mut nodes,
             page_bg.as_deref(),
-            theme == crate::role_defaults::Theme::Light,
+            theme,
             prior_accent.as_deref(),
         );
     }

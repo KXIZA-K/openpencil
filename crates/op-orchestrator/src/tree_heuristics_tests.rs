@@ -141,7 +141,12 @@ fn full_pipeline_rounds_nested_active_tab_in_pill() {
         }]
     }]))
     .expect("nav forest json");
-    apply_tree_heuristics(&mut forest, Some("#FFF8F0"), true, Some("$color-chart-6"));
+    apply_tree_heuristics(
+        &mut forest,
+        Some("#FFF8F0"),
+        Theme::Light,
+        Some("$color-chart-6"),
+    );
     let out = serde_json::to_value(&forest[0]).expect("serialize");
     let home = &out["children"][0]["children"][0];
     assert_eq!(home["name"], json!("Home Tab"));
@@ -180,7 +185,12 @@ fn full_pipeline_rounds_manifest_nav_item_active() {
         ]
     }]))
     .expect("manifest nav json");
-    apply_tree_heuristics(&mut forest, Some("#FFF8F0"), true, Some("$color-chart-6"));
+    apply_tree_heuristics(
+        &mut forest,
+        Some("#FFF8F0"),
+        Theme::Light,
+        Some("$color-chart-6"),
+    );
     let out = serde_json::to_value(&forest[0]).expect("serialize");
     let active = &out["children"][0];
     assert_eq!(active["role"], json!("nav-item-active"));
@@ -226,7 +236,12 @@ fn full_pipeline_rounds_user_tt5_exact_nav() {
         }]
     }]"##;
     let mut forest: Vec<PenNode> = serde_json::from_str(src).expect("user nav json");
-    apply_tree_heuristics(&mut forest, Some("#FFF8F0"), true, Some("$color-chart-6"));
+    apply_tree_heuristics(
+        &mut forest,
+        Some("#FFF8F0"),
+        Theme::Light,
+        Some("$color-chart-6"),
+    );
     let out = serde_json::to_value(&forest[0]).expect("serialize");
     let home = &out["children"][0]["children"][0];
     assert_eq!(home["name"], json!("Home Tab"));
@@ -333,6 +348,59 @@ fn section_fill_matching_page_bg_stripped() {
     assert!(
         sect.get("fill").is_none(),
         "section repainting the page bg is redundant → stripped"
+    );
+}
+
+#[test]
+fn screen_root_safe_dark_fill_preserved() {
+    // Screen root (mobile artboard, width=390, height=844) with safe-dark fill
+    // should NOT be stripped. A screen root is the ground level; its fill is never
+    // redundant because nothing is behind it to paint.
+    let mut root = json!({
+        "type":"frame","width":390.0,"height":844.0,
+        "fill":[{"type":"solid","color":"#0A0A0A"}],
+        "children":[{"type":"text","content":"Content"}]
+    });
+    strip_redundant_section_fill(&mut root, None);
+    assert_eq!(
+        root["fill"],
+        json!([{"type":"solid","color":"#0A0A0A"}]),
+        "screen root's dark fill preserved (is the ground)"
+    );
+}
+
+#[test]
+fn screen_root_page_background_fill_preserved() {
+    // Screen root with fill matching the page background. For a section, this
+    // would be redundant, but a screen root is the ground — it has no background
+    // behind it, so the fill is never redundant.
+    let mut root = json!({
+        "type":"frame","width":390.0,"height":844.0,
+        "fill":[{"type":"solid","color":"#FFFFFF"}],
+        "children":[{"type":"text","content":"Content"}]
+    });
+    strip_redundant_section_fill(&mut root, Some("#FFFFFF"));
+    assert_eq!(
+        root["fill"],
+        json!([{"type":"solid","color":"#FFFFFF"}]),
+        "screen root's background fill preserved (is the ground)"
+    );
+}
+
+#[test]
+fn fit_content_screen_root_fill_preserved() {
+    // Screen root with fit_content height (generated mobile artboard) and safe-dark
+    // fill should NOT be stripped.
+    let mut root = json!({
+        "type":"frame","width":390.0,"height":"fit_content",
+        "fill":[{"type":"solid","color":"#1A1A1A"}],
+        "children":[{"type":"text","content":"Content"}]
+    });
+    strip_redundant_section_fill(&mut root, None);
+    assert_eq!(
+        root["fill"],
+        json!([{"type":"solid","color":"#1A1A1A"}]),
+        "fit_content screen root's fill preserved"
     );
 }
 
@@ -607,7 +675,7 @@ fn invisible_white_text_band_gets_accent_on_light_page() {
         {"type":"text","content":"50% OFF","fill":[{"type":"solid","color":"$color-surface"}]},
         {"type":"text","content":"first order","fill":[{"type":"solid","color":"#FFFFFF"}]}
     ]});
-    fix_invisible_text_band(&mut band, true, "$color-accent");
+    fix_invisible_text_band(&mut band, Theme::Light, "$color-accent");
     assert_eq!(
         band["fill"],
         json!([{"type":"solid","color":"$color-accent"}]),
@@ -627,7 +695,7 @@ fn banner_with_filled_button_still_filled() {
             {"type":"text","content":"Order Now","fill":[{"type":"solid","color":"$color-accent"}]}
         ]}
     ]});
-    fix_invisible_text_band(&mut band, true, "$color-accent");
+    fix_invisible_text_band(&mut band, Theme::Light, "$color-accent");
     assert_eq!(
         band["fill"],
         json!([{"type":"solid","color":"$color-accent"}]),
@@ -657,7 +725,7 @@ fn light_surface_filled_banner_repainted_accent() {
             ]}
         ]
     });
-    fix_invisible_text_band(&mut band, true, "$color-chart-6");
+    fix_invisible_text_band(&mut band, Theme::Light, "$color-chart-6");
     assert_eq!(
         band["fill"],
         json!([{"type":"solid","color":"$color-chart-6"}]),
@@ -678,7 +746,7 @@ fn gradient_filled_banner_left_alone() {
         ]
     });
     let before = band["fill"].clone();
-    fix_invisible_text_band(&mut band, true, "$color-accent");
+    fix_invisible_text_band(&mut band, Theme::Light, "$color-accent");
     assert_eq!(
         band["fill"], before,
         "gradient banner keeps its real surface"
@@ -690,7 +758,7 @@ fn white_text_band_untouched_on_dark_page() {
     let mut band = json!({"type":"frame","children":[
         {"type":"text","fill":[{"type":"solid","color":"#FFFFFF"}]}
     ]});
-    fix_invisible_text_band(&mut band, false, "$color-accent");
+    fix_invisible_text_band(&mut band, Theme::Dark, "$color-accent");
     assert!(
         band.get("fill").is_none(),
         "white text on a dark page is fine — no fill stamped"
@@ -704,7 +772,7 @@ fn mixed_text_band_not_filled() {
         {"type":"text","fill":[{"type":"solid","color":"#FFFFFF"}]},
         {"type":"text","fill":[{"type":"solid","color":"#1C1410"}]}
     ]});
-    fix_invisible_text_band(&mut band, true, "$color-accent");
+    fix_invisible_text_band(&mut band, Theme::Light, "$color-accent");
     assert!(band.get("fill").is_none(), "mixed text → not a hidden band");
 }
 
@@ -743,7 +811,7 @@ fn backdrop_sibling_fill_merges_into_the_nav_item() {
         ]
     }))
     .unwrap()];
-    apply_tree_heuristics(&mut nodes, None, false, None);
+    apply_tree_heuristics(&mut nodes, None, Theme::Dark, None);
     let v = serde_json::to_value(&nodes[0]).unwrap();
     let kids = v["children"].as_array().unwrap();
     assert_eq!(kids.len(), 2, "backdrop removed: {kids:?}");
@@ -766,7 +834,7 @@ fn thin_divider_and_fixed_avatar_are_not_backdrops() {
         ]
     }))
     .unwrap()];
-    apply_tree_heuristics(&mut nodes, None, false, None);
+    apply_tree_heuristics(&mut nodes, None, Theme::Dark, None);
     let v = serde_json::to_value(&nodes[0]).unwrap();
     assert_eq!(
         v["children"].as_array().unwrap().len(),

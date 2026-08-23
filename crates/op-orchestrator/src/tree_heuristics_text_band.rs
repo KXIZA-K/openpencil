@@ -1,5 +1,11 @@
 //! `fix_invisible_text_band` (the glm banner-fill floor) and the
 //! dominant-design-accent tally it shares with the nav rounding pass.
+//!
+//! This pass operates at **section scope** (see caller in tree_heuristics.rs).
+//! The forest fed to apply_tree_heuristics contains only section-level roots
+//! (page-root children or top-level nodes in flat layout), so the blast radius
+//! of any section-repainting heuristic is that entire section. A missing bound
+//! here becomes a full-screen fill, not a cosmetic mistake.
 
 use super::*;
 
@@ -85,8 +91,14 @@ pub(super) fn is_light_surface_color(color: &str) -> bool {
     ) || SAFE_LIGHT_HEXES.contains(&normalize_hex(color).as_str())
 }
 
-pub(super) fn fix_invisible_text_band(node: &mut Value, light_theme: bool, design_accent: &str) {
-    if !light_theme {
+pub(super) fn fix_invisible_text_band(node: &mut Value, theme: super::Theme, design_accent: &str) {
+    // Guard B: unknown theme → abstain. When we can't tell if the page is light
+    // or dark (unresolved tokens or unparseable hex), repainting on a guess
+    // produced the full-bleed blue wall. Better to leave the node untouched.
+    if theme == super::Theme::Unknown {
+        return;
+    }
+    if theme != super::Theme::Light {
         return; // white text on a dark page is fine
     }
     if node.get("type").and_then(Value::as_str) != Some("frame") {
@@ -163,7 +175,7 @@ pub(super) fn tally_accent(node: &Value, counts: &mut Vec<(String, usize)>) {
 mod tests {
     use super::*;
 
-    /// Status bar with role="status-bar" and white 9:41 text under a dark root
+    /// Status bar with role="status-bar" and white 9:41 text under a light theme
     /// should NOT get the design_accent stamp.
     #[test]
     fn test_status_bar_role_exempt_from_text_band_stamp() {
@@ -180,8 +192,8 @@ mod tests {
             ]
         });
 
-        // Apply the pass: light_theme = true, design_accent = "$color-accent" (blue).
-        fix_invisible_text_band(&mut bar, true, "$color-accent");
+        // Apply the pass: theme = Light, design_accent = "$color-accent" (blue).
+        fix_invisible_text_band(&mut bar, super::Theme::Light, "$color-accent");
 
         // Status bar should have NO fill (exempt by role).
         assert!(
@@ -206,7 +218,7 @@ mod tests {
             ]
         });
 
-        fix_invisible_text_band(&mut bar, true, "$color-accent");
+        fix_invisible_text_band(&mut bar, super::Theme::Light, "$color-accent");
 
         assert!(
             bar.get("fill").is_none(),
@@ -230,7 +242,7 @@ mod tests {
             ]
         });
 
-        fix_invisible_text_band(&mut banner, true, "$color-accent");
+        fix_invisible_text_band(&mut banner, super::Theme::Light, "$color-accent");
 
         // Non-status-bar frame SHOULD get the accent fill.
         assert!(
@@ -259,11 +271,163 @@ mod tests {
             ]
         });
 
-        fix_invisible_text_band(&mut bar, true, "$color-accent");
+        fix_invisible_text_band(&mut bar, super::Theme::Light, "$color-accent");
 
         assert!(
             bar.get("fill").is_none(),
             "Status bar with Chinese name should not receive fill stamp"
+        );
+    }
+
+    /// Guard B: unknown theme → abstain. When the page background is an
+    /// unresolved token (variables: null), we can't tell if the page is light or
+    /// dark, so we must not repaint on a guess. The screen root should remain
+    /// unchanged, preserving the model's original design intent.
+    #[test]
+    fn guard_b_unknown_theme_abstains_from_repaint() {
+        let mut screen_root = json!({
+            "type": "frame",
+            "id": "root",
+            "height": 844.0,
+            "children": [
+                {
+                    "type": "text",
+                    "content": "Hello",
+                    "fill": [{"type": "solid", "color": "#ffffff"}]
+                },
+                {
+                    "type": "text",
+                    "content": "World",
+                    "fill": [{"type": "solid", "color": "#fff"}]
+                }
+            ]
+        });
+
+        // Theme is Unknown (unresolved token or missing variables).
+        fix_invisible_text_band(&mut screen_root, super::Theme::Unknown, "$color-accent");
+
+        // Screen root should NOT be repainted, even though all text is light.
+        assert!(
+            screen_root.get("fill").is_none(),
+            "Unknown theme must abstain from repainting"
+        );
+    }
+
+    /// Guard A: the measured case — a body section containing a card.
+    /// The section should NOT be repainted because it has frame children
+    /// (container structure), not text descendants on its own surface.
+    #[test]
+    fn guard_a_section_with_card_child_not_repainted() {
+        // Measured failure structure: section holding a card.
+        let mut section = json!({
+            "type": "frame",
+            "id": "body-section",
+            "name": "Body",
+            "height": "fit_content",
+            "children": [
+                {
+                    "type": "frame",
+                    "id": "card",
+                    "name": "Card",
+                    "fill": [{"type": "solid", "color": "$color-surface"}],
+                    "children": [
+                        {
+                            "type": "text",
+                            "content": "Card content",
+                            "fill": [{"type": "solid", "color": "#ffffff"}]
+                        }
+                    ]
+                }
+            ]
+        });
+
+        fix_invisible_text_band(&mut section, super::Theme::Light, "$color-accent");
+
+        // Section with frame children is a container, not a band.
+        assert!(
+            section.get("fill").is_none(),
+            "Section with frame child should not be repainted"
+        );
+    }
+
+    /// Genuine band: text sits directly in the node, no nested frames with text.
+    /// Should still be repainted when all text is light and surface fill is light.
+    #[test]
+    fn guard_a_genuine_band_with_direct_text_gets_stamp() {
+        let mut banner = json!({
+            "type": "frame",
+            "id": "banner-001",
+            "name": "Promo Banner",
+            "fill": [{"type": "solid", "color": "$color-surface"}],
+            "children": [
+                {
+                    "type": "text",
+                    "content": "Get 30% Off",
+                    "fill": [{"type": "solid", "color": "#ffffff"}]
+                },
+                {
+                    "type": "text",
+                    "content": "Limited time",
+                    "fill": [{"type": "solid", "color": "#ffffff"}]
+                }
+            ]
+        });
+
+        fix_invisible_text_band(&mut banner, super::Theme::Light, "$color-accent");
+
+        // True band with only text children (no nested frames with text) should
+        // be repainted when all text is light and surface fill is light.
+        assert!(
+            banner.get("fill").is_some(),
+            "Genuine band with direct text should receive fill stamp"
+        );
+        assert_eq!(
+            banner["fill"][0]["color"], "$color-accent",
+            "Fill should be the design accent"
+        );
+    }
+
+    /// Row/grid with multiple cards: has frame children, so it's a structure,
+    /// not a band. Should not be repainted.
+    #[test]
+    fn guard_a_grid_with_multiple_cards_not_repainted() {
+        let mut grid = json!({
+            "type": "frame",
+            "id": "grid-container",
+            "children": [
+                {
+                    "type": "frame",
+                    "id": "card-1",
+                    "fill": [{"type": "solid", "color": "$color-surface"}],
+                    "children": [
+                        {
+                            "type": "text",
+                            "content": "Card 1",
+                            "fill": [{"type": "solid", "color": "#ffffff"}]
+                        }
+                    ]
+                },
+                {
+                    "type": "frame",
+                    "id": "card-2",
+                    "fill": [{"type": "solid", "color": "$color-surface"}],
+                    "children": [
+                        {
+                            "type": "text",
+                            "content": "Card 2",
+                            "fill": [{"type": "solid", "color": "#ffffff"}]
+                        }
+                    ]
+                }
+            ]
+        });
+
+        fix_invisible_text_band(&mut grid, super::Theme::Light, "$color-accent");
+
+        // Grid with frame children is a container structure, not a band.
+        assert!(
+            grid.get("fill").is_none(),
+            "Grid with frame children should not be repainted"
         );
     }
 }

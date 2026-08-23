@@ -130,7 +130,9 @@ fn locate_section_context(forest: &[PenNode]) -> (bool, Option<String>, f64, The
             .unwrap_or(DEFAULT_CANVAS_WIDTH);
         // A flat-section forest has no page-bg frame: each top-level node is a
         // section, so there is no "redundant page background" to match against.
-        // Theme falls back to Light (matching `detect_theme_from_fill(None)`).
+        // Explicitly default to Light here; `detect_theme_from_fill(None)` now
+        // returns Unknown. Without a page background to detect from, we assume
+        // Light to preserve existing behavior.
         (false, None, width, Theme::Light)
     }
 }
@@ -542,7 +544,6 @@ pub fn apply_loop_finalize_counted(state: &mut EditorState) -> RepairSummary {
     // -- Resolve the section forest + its page context. --
     let (has_wrapper, page_bg, canvas_width, theme) =
         locate_section_context(state.active_children());
-    let light_theme = theme == Theme::Light;
     let root_form = locate_root_form(state.active_children());
     // Violations the section walk below detected and deliberately did not
     // repair (see `crate::deck_echo`). Filled inside the borrow, noted onto
@@ -589,7 +590,7 @@ pub fn apply_loop_finalize_counted(state: &mut EditorState) -> RepairSummary {
             crate::tree_heuristics::apply_tree_heuristics(
                 forest,
                 page_bg.as_deref(),
-                light_theme,
+                theme,
                 prior_accent.as_deref(),
             );
         }
