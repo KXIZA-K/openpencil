@@ -5,6 +5,8 @@ mod mobile_ai_sheet_tests;
 mod mobile_auth_collab_tests;
 #[path = "mobile_layer_drag_tests.rs"]
 mod mobile_layer_drag_tests;
+#[path = "mobile_more_actions_tests.rs"]
+mod mobile_more_actions_tests;
 #[path = "mobile_save_menu_tests.rs"]
 mod mobile_save_menu_tests;
 use op_editor_core::size_class::{EditorSizeClass, MobileSheetKind};
