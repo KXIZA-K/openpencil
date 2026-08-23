@@ -172,14 +172,12 @@ impl WidgetHost {
             None
         };
 
-        // Frame slideshow board before borrowing ui immutably. This must
-        // happen BEFORE the canvas painting so the camera is ready.
+        // Frame the slideshow board BEFORE the canvas painting so the camera
+        // is ready.
         #[cfg(feature = "canvaskit")]
         if self.preview_slideshow_active() {
             self.frame_slideshow_board((viewport_width, viewport_height));
         }
-
-        let ui = &self.editor_state.editor_ui;
 
         let top_bar = self.top_bar();
         let top_bar_rect = self.top_bar_rect(viewport_width);
@@ -502,6 +500,11 @@ impl WidgetHost {
                 self.now_ms,
             );
         }
+
+        // Bound here rather than at the top of the pass: the rail section
+        // above needs `&mut self.editor_state` to reveal the selection, and a
+        // chrome-wide immutable borrow would outlive it.
+        let ui = &self.editor_state.editor_ui;
 
         // ShapePicker — anchored to the right of the toolbar shape
         // slot; same z-priority as the locale picker (native §9).
