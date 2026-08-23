@@ -128,4 +128,6 @@ pub enum RelayProtocolError {
     SealedInviteKeyDerivationFailed,
     #[error("sealed pairing invite encryption failed")]
     SealedInviteEncryptionFailed,
+    #[error("relay waiting advertisement header is malformed or out of range")]
+    InvalidWaitingAdvertisement,
 }

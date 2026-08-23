@@ -1,7 +1,6 @@
 use std::fmt;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::Duration;
 
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, oneshot, watch};
@@ -17,7 +16,8 @@ use crate::error::{
     TunnelError,
 };
 use crate::limits::{
-    owner_lane_first_pair_budget, RelayLimits, DEFAULT_OWNER_LANE_COUNT, MAX_OWNER_LANE_COUNT,
+    LaneStagger, OwnerPairBudget, PairBudget, RelayLimits, DEFAULT_OWNER_LANE_COUNT,
+    MAX_OWNER_LANE_COUNT,
 };
 use crate::reauth_budget::ReauthBudget;
 use crate::session::{cancelled, pump, sleep_or_cancel, ClientReauthContext};
@@ -242,7 +242,15 @@ enum LaneEvent {
 /// short for a full retry window every time it refreshes itself.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum LaneOutcome {
+    /// The client retired an idle lane on its own schedule.
     Recycled,
+    /// The relay retired the lane with its own pairing timeout before the
+    /// client's recycle budget expired.
+    ///
+    /// Operationally the same as [`LaneOutcome::Recycled`] — the lane never
+    /// paired, so it is neither a fault nor a reason to back off — but it is
+    /// counted separately because it means the pairing contract inverted.
+    RecycledByRelay,
     Cancelled,
     Failed(RelayFailureKind),
 }
@@ -261,6 +269,13 @@ fn lane_outcome(became_active: bool, result: Result<(), TunnelError>) -> LaneOut
         None => LaneOutcome::Recycled,
         Some(TunnelError::Failure(RelayFailureKind::PairTimeout)) if !became_active => {
             LaneOutcome::Recycled
+        }
+        // The relay beat the client to the retirement. The lane still never
+        // paired, so the pool must treat it exactly like its own recycle —
+        // no `last_error`, no backoff — but the pool counts it so an inverted
+        // pairing contract is visible instead of silent.
+        Some(TunnelError::Failure(RelayFailureKind::RejectedPairingTimeout)) if !became_active => {
+            LaneOutcome::RecycledByRelay
         }
         Some(error) => error
             .failure_kind()
@@ -293,11 +308,14 @@ async fn run_owner(
     };
     let mut lanes = JoinSet::new();
     // Staggered first budgets, so the pool refreshes one lane at a time and
-    // the relay's waiting queue is never left empty.
+    // the relay's waiting queue is never left empty. The stagger travels as a
+    // slot rather than an absolute duration: the budget it divides is not
+    // known until the relay's waiting advertisement arrives, and a lease-backed
+    // pool must stay staggered at the longer scale too.
     for index in 0..lane_count {
         factory.spawn(
             &mut lanes,
-            owner_lane_first_pair_budget(limits.owner_pair, index, lane_count),
+            factory.budget(Some(LaneStagger { index, lane_count })),
             false,
         );
     }
@@ -309,7 +327,14 @@ async fn run_owner(
     let mut waiting = 0_usize;
     let mut active = 0_usize;
     let mut last_error = None;
-    publish_owner(&status_tx, waiting, active, last_error);
+    let mut relay_pairing_timeouts = 0_u32;
+    publish_owner(
+        &status_tx,
+        waiting,
+        active,
+        last_error,
+        relay_pairing_timeouts,
+    );
 
     loop {
         tokio::select! {
@@ -319,7 +344,13 @@ async fn run_owner(
                 if ready.is_some() {
                     waiting = waiting.saturating_add(1).min(lane_count);
                     last_error = None;
-                    publish_owner(&status_tx, waiting, active, last_error);
+                    publish_owner(
+                        &status_tx,
+                        waiting,
+                        active,
+                        last_error,
+                        relay_pairing_timeouts,
+                    );
                 }
             }
             event = event_rx.recv() => {
@@ -327,7 +358,13 @@ async fn run_owner(
                     waiting = waiting.saturating_sub(1);
                     active = active.saturating_add(1).min(MAX_OWNER_LANE_COUNT);
                     last_error = None;
-                    publish_owner(&status_tx, waiting, active, last_error);
+                    publish_owner(
+                        &status_tx,
+                        waiting,
+                        active,
+                        last_error,
+                        relay_pairing_timeouts,
+                    );
                     let _ = acknowledge.send(());
                     // A paired lane has left the relay's waiting queue for
                     // good, so the pool owes it a replacement: without one it
@@ -361,7 +398,16 @@ async fn run_owner(
                 if let LaneOutcome::Failed(kind) = report.outcome {
                     last_error = Some(kind);
                 }
-                publish_owner(&status_tx, waiting, active, last_error);
+                if report.outcome == LaneOutcome::RecycledByRelay {
+                    relay_pairing_timeouts = relay_pairing_timeouts.saturating_add(1);
+                }
+                publish_owner(
+                    &status_tx,
+                    waiting,
+                    active,
+                    last_error,
+                    relay_pairing_timeouts,
+                );
                 // A scheduled recycle re-dials at once; only a real failure
                 // serves the backoff.
                 let delayed = matches!(report.outcome, LaneOutcome::Failed(_));
@@ -391,7 +437,21 @@ struct LaneFactory {
 }
 
 impl LaneFactory {
-    fn spawn(&self, lanes: &mut JoinSet<LaneReport>, pair_budget: Duration, delayed: bool) {
+    /// The waiting budget policy for one lane.
+    ///
+    /// `renewable_cap` is the ordinary [`RelayLimits::pair`] window: when the
+    /// relay advertises a renewable waiting lease the lane no longer has to
+    /// out-race a fixed server countdown, so it parks for the full window
+    /// instead of re-dialling every recycle period.
+    fn budget(&self, stagger: Option<LaneStagger>) -> PairBudget {
+        PairBudget::Owner(OwnerPairBudget {
+            unrenewable_cap: self.limits.owner_pair,
+            renewable_cap: self.limits.pair,
+            stagger,
+        })
+    }
+
+    fn spawn(&self, lanes: &mut JoinSet<LaneReport>, pair_budget: PairBudget, delayed: bool) {
         let spawn = LaneSpawn {
             endpoint: self.endpoint.clone(),
             route: self.route.clone(),
@@ -417,7 +477,7 @@ impl LaneFactory {
         delayed: bool,
     ) {
         while *unpaired_lanes < lane_count && lanes.len() < MAX_OWNER_LANE_COUNT {
-            self.spawn(lanes, self.limits.owner_pair, delayed);
+            self.spawn(lanes, self.budget(None), delayed);
             *unpaired_lanes = unpaired_lanes.saturating_add(1);
         }
     }
@@ -433,8 +493,9 @@ struct LaneSpawn {
     event_tx: mpsc::Sender<LaneEvent>,
     ready_tx: mpsc::Sender<()>,
     limits: RelayLimits,
-    /// How long this lane may sit unpaired before the client recycles it.
-    pair_budget: Duration,
+    /// How long this lane may sit unpaired before the client recycles it,
+    /// resolved against the relay's advertisement once it connects.
+    pair_budget: PairBudget,
     delayed: bool,
 }
 
@@ -545,6 +606,7 @@ fn publish_owner(
     waiting_lanes: usize,
     active_tunnels: usize,
     last_error: Option<RelayFailureKind>,
+    relay_pairing_timeouts: u32,
 ) {
     let phase = if active_tunnels > 0 {
         RelayBridgePhase::Active
@@ -560,5 +622,6 @@ fn publish_owner(
         waiting_lanes,
         active_tunnels,
         last_error,
+        relay_pairing_timeouts,
     });
 }

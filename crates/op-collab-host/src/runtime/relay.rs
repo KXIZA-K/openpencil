@@ -326,6 +326,7 @@ impl OwnerRelayRuntime {
             waiting_lanes: status.waiting_lanes,
             active_tunnels: status.active_tunnels,
             last_error: status.last_error,
+            relay_pairing_timeouts: status.relay_pairing_timeouts,
         }
     }
 }
@@ -339,6 +340,10 @@ pub(super) struct OwnerRelayBridgeReport {
     pub(super) waiting_lanes: usize,
     pub(super) active_tunnels: usize,
     pub(super) last_error: Option<op_collab_relay_client::RelayFailureKind>,
+    /// Lanes the relay retired with its own pairing timeout. Non-zero means
+    /// the relay's waiting window is expiring before the client's lane recycle
+    /// budget, which leaves the waiting queue short while the pool re-dials.
+    pub(super) relay_pairing_timeouts: u32,
 }
 
 impl std::fmt::Debug for OwnerRelayRuntime {

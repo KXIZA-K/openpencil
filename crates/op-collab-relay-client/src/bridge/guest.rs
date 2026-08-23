@@ -112,6 +112,7 @@ impl RelayGuestBridge {
             waiting_lanes: 1,
             active_tunnels: 0,
             last_error: None,
+            relay_pairing_timeouts: 0,
         };
         let (status_tx, status_rx) = watch::channel(initial);
         let task = tokio::spawn(run_guest(
@@ -209,6 +210,7 @@ async fn run_guest(
             waiting_lanes: 0,
             active_tunnels: 1,
             last_error: None,
+            relay_pairing_timeouts: 0,
         },
     );
     match pump(
@@ -241,6 +243,7 @@ fn publish_failed(status: &watch::Sender<RelayBridgeStatus>, kind: RelayFailureK
             waiting_lanes: 0,
             active_tunnels: 0,
             last_error: Some(kind),
+            relay_pairing_timeouts: 0,
         },
     );
 }

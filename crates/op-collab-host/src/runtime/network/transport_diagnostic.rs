@@ -73,8 +73,12 @@ pub(super) fn report_owner_secure_transport_failure(transport_error: &RuntimeErr
 pub(super) fn report_owner_relay_bridge(report: OwnerRelayBridgeReport) {
     eprintln!(
         "[collab] RelayOwnerBridge {{ phase: {:?}, waiting_lanes: {}, active_tunnels: {}, \
-         last_error: {:?} }}",
-        report.phase, report.waiting_lanes, report.active_tunnels, report.last_error
+         last_error: {:?}, relay_pairing_timeouts: {} }}",
+        report.phase,
+        report.waiting_lanes,
+        report.active_tunnels,
+        report.last_error,
+        report.relay_pairing_timeouts
     );
 }
 

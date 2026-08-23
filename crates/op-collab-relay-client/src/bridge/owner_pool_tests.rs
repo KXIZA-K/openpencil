@@ -222,3 +222,214 @@ async fn owner_lanes_recycle_on_the_client_budget_and_keep_the_pool_populated() 
     server.abort();
     drop(owner_listener);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_relay_pairing_timeout_recycles_the_lane_without_degrading_the_pool() {
+    use op_collab_relay_protocol::RelayRejectCode;
+    use tokio_tungstenite::tungstenite::protocol::{frame::coding::CloseCode, CloseFrame};
+
+    // The relay retires every lane the way a real one does when its own
+    // waiting window expires first, and it does so with the close frame alone:
+    // the status frame is exactly what a connection reset used to swallow, so
+    // the client must recover the reason from the closing handshake.
+    let owner_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let owner_addr = owner_listener.local_addr().unwrap();
+    let relay_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let relay_addr = relay_listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        while let Ok((stream, _)) = relay_listener.accept().await {
+            tokio::spawn(async move {
+                let Ok(mut socket) = accept_async(stream).await else {
+                    return;
+                };
+                receive_hello(&mut socket, RelayRole::Owner).await;
+                if socket
+                    .send(Message::Binary(RelayServerStatus::Ready.encode().to_vec()))
+                    .await
+                    .is_err()
+                {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                let _ = socket
+                    .send(Message::Close(Some(CloseFrame {
+                        code: CloseCode::Policy,
+                        reason: RelayRejectCode::PairingTimeout.close_reason().into(),
+                    })))
+                    .await;
+                while socket.next().await.is_some() {}
+            });
+        }
+    });
+
+    let mut limits = test_limits();
+    limits.owner_pair = Duration::from_secs(5);
+    let bridge =
+        RelayOwnerBridge::start_test(endpoint(relay_addr), handshake(11), owner_addr, 1, limits)
+            .await
+            .unwrap();
+
+    let deadline = StdInstant::now() + Duration::from_secs(5);
+    while bridge.status().relay_pairing_timeouts == 0 && StdInstant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let status = bridge.status();
+    assert!(
+        status.relay_pairing_timeouts >= 1,
+        "a relay-retired lane must be counted so an inverted pairing contract is visible"
+    );
+    assert_eq!(
+        status.last_error, None,
+        "a relay recycle is not a pool failure and must not advertise a broken relay"
+    );
+    assert_ne!(status.phase, RelayBridgePhase::Degraded);
+    assert_ne!(status.phase, RelayBridgePhase::Failed);
+
+    bridge.stop().await.unwrap();
+    server.abort();
+    drop(owner_listener);
+}
+
+/// Peak-tracking counter of connections the relay has accepted and not paired.
+///
+/// This is the number the relay's `max_waiting_per_route` actually bounds, and
+/// it is NOT the same as the pool's `unpaired_lanes`: that counts lane tasks,
+/// including ones still dialling, which have no slot in the relay's queue yet.
+#[derive(Default)]
+struct WaitingWatch {
+    open: AtomicUsize,
+    peak: AtomicUsize,
+}
+
+impl WaitingWatch {
+    fn enter(&self) {
+        let open = self.open.fetch_add(1, Ordering::SeqCst) + 1;
+        self.peak.fetch_max(open, Ordering::SeqCst);
+    }
+
+    fn leave(&self) {
+        self.open.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_pool_never_exceeds_its_lane_count_in_the_relays_waiting_queue() {
+    // `unpaired_lanes` counts lane tasks, not registrations, so a slow dial, a
+    // refused dial, and a lane leaving the queue to pair all move the two
+    // counts apart. The relay caps waiting peers per route, so the count that
+    // matters is how many connections are simultaneously accepted-and-unpaired
+    // — never more than `lane_count`, or a production relay would start
+    // refusing the pool's own lanes with `Capacity`.
+    const LANE_COUNT: usize = 2;
+
+    let owner_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let owner_addr = owner_listener.local_addr().unwrap();
+    let owner_driver = tokio::spawn(async move {
+        // Hold the paired tunnel's local end open for the whole assertion.
+        while let Ok((stream, _)) = owner_listener.accept().await {
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_secs(6)).await;
+                drop(stream);
+            });
+        }
+    });
+
+    let relay_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let relay_addr = relay_listener.local_addr().unwrap();
+    let watch = Arc::new(WaitingWatch::default());
+    let relay_watch = Arc::clone(&watch);
+    let server = tokio::spawn(async move {
+        let mut nth = 0_usize;
+        while let Ok((stream, _)) = relay_listener.accept().await {
+            nth += 1;
+            let watch = Arc::clone(&relay_watch);
+            tokio::spawn(async move {
+                // A dial refused outright before the upgrade, the way a relay
+                // at capacity or a half-open proxy behaves.
+                if nth == 2 {
+                    drop(stream);
+                    return;
+                }
+                // A dial whose upgrade is slow, the way a loaded TLS
+                // terminator behaves: the lane task exists and counts as
+                // unpaired long before the relay has a slot for it.
+                if nth == 3 {
+                    tokio::time::sleep(Duration::from_millis(400)).await;
+                }
+                let Ok(mut socket) = accept_async(stream).await else {
+                    return;
+                };
+                receive_hello(&mut socket, RelayRole::Owner).await;
+                // Only accepted-and-unpaired connections occupy a queue slot.
+                watch.enter();
+                if socket
+                    .send(Message::Binary(RelayServerStatus::Ready.encode().to_vec()))
+                    .await
+                    .is_err()
+                {
+                    watch.leave();
+                    return;
+                }
+                if nth == 3 {
+                    // A guest arrives for the slow lane once it is settled in
+                    // the queue. It leaves the queue to tunnel, and owes the
+                    // pool a replacement dial.
+                    tokio::time::sleep(Duration::from_millis(300)).await;
+                    if socket
+                        .send(Message::Binary(RelayServerStatus::Paired.encode().to_vec()))
+                        .await
+                        .is_err()
+                    {
+                        watch.leave();
+                        return;
+                    }
+                    watch.leave();
+                    while socket.next().await.is_some() {}
+                    return;
+                }
+                while socket.next().await.is_some() {}
+                watch.leave();
+            });
+        }
+    });
+
+    let mut limits = test_limits();
+    // Long enough that nothing recycles on schedule during the assertion: the
+    // churn under test is the pool's own replacement logic, not the clock.
+    limits.owner_pair = Duration::from_secs(30);
+    limits.pair = Duration::from_secs(30);
+    limits.idle = Duration::from_secs(30);
+    limits.lifetime = Duration::from_secs(60);
+    let bridge = RelayOwnerBridge::start_test(
+        endpoint(relay_addr),
+        handshake(12),
+        owner_addr,
+        LANE_COUNT,
+        limits,
+    )
+    .await
+    .unwrap();
+
+    // Let the refused dial retry, the slow upgrade land, and the pair settle.
+    let deadline = StdInstant::now() + Duration::from_secs(5);
+    while watch.open.load(Ordering::SeqCst) < LANE_COUNT && StdInstant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    assert!(
+        watch.peak.load(Ordering::SeqCst) <= LANE_COUNT,
+        "the pool held {} unpaired registrations at once, above its lane count of {LANE_COUNT}",
+        watch.peak.load(Ordering::SeqCst)
+    );
+    assert_eq!(
+        watch.open.load(Ordering::SeqCst),
+        LANE_COUNT,
+        "the pool must settle back to exactly `lane_count` waiting lanes"
+    );
+    assert_eq!(bridge.status().active_tunnels, 1);
+
+    bridge.stop().await.unwrap();
+    server.abort();
+    owner_driver.abort();
+}

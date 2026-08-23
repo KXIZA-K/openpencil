@@ -1,5 +1,7 @@
 use std::time::Duration;
 
+use op_collab_relay_protocol::{RelayWaitingAdvertisementV1, RELAY_OWNER_LANE_RECYCLE_SECS};
+
 pub const DEFAULT_OWNER_LANE_COUNT: usize = 4;
 pub const MAX_OWNER_LANE_COUNT: usize = 8;
 pub const MAX_RELAY_BINARY_BYTES: usize = 64 * 1024;
@@ -14,14 +16,21 @@ pub(crate) struct RelayLimits {
     /// retires it and dials a fresh one.
     ///
     /// The relay hard-closes an unpaired peer after its own waiting window
-    /// (`RelayConfig::waiting_timeout`, 60 s and not operator-configurable),
-    /// so an owner lane parked on the long [`RelayLimits::pair`] budget never
-    /// recycles on its own schedule: it either learns about the close late or,
-    /// behind a NAT that silently reaps the idle flow, not at all. Either way
-    /// the owner is absent from the relay's waiting queue while it re-dials,
-    /// and a guest that registers in that window has no counterpart to pair
-    /// with. Staying comfortably under the server window keeps the recycle
-    /// client-driven, bounded, and observable.
+    /// (`op_collab_relay_server::RelayConfig::waiting_timeout`, which operators
+    /// tune with `OPENPENCIL_COLLAB_RELAY_WAITING_TIMEOUT_SECS`), so an owner
+    /// lane parked on the long [`RelayLimits::pair`] budget never recycles on
+    /// its own schedule: it either learns about the close late or, behind a NAT
+    /// that silently reaps the idle flow, not at all. Either way the owner is
+    /// absent from the relay's waiting queue while it re-dials, and a guest
+    /// that registers in that window has no counterpart to pair with. Staying
+    /// under the server window keeps the recycle client-driven, bounded, and
+    /// observable.
+    ///
+    /// Both halves of the contract are pinned in
+    /// `op_collab_relay_protocol::pairing_window`: this budget is
+    /// [`RELAY_OWNER_LANE_RECYCLE_SECS`], and the relay refuses to start with a
+    /// waiting window below [`MIN_RELAY_WAITING_TIMEOUT_SECS`], so neither side
+    /// can drift without the other failing.
     pub owner_pair: Duration,
     pub idle: Duration,
     pub lifetime: Duration,
@@ -37,7 +46,7 @@ impl Default for RelayLimits {
             connect: Duration::from_secs(10),
             hello: Duration::from_secs(10),
             pair: Duration::from_secs(5 * 60),
-            owner_pair: Duration::from_secs(45),
+            owner_pair: Duration::from_secs(RELAY_OWNER_LANE_RECYCLE_SECS),
             idle: Duration::from_secs(2 * 60),
             lifetime: Duration::from_secs(24 * 60 * 60),
             retry: Duration::from_secs(1),
@@ -95,13 +104,17 @@ pub(crate) fn owner_lane_first_pair_budget(
 
 #[cfg(test)]
 mod tests {
+    use op_collab_relay_protocol::MIN_RELAY_WAITING_TIMEOUT_SECS;
+
     use super::*;
 
     #[test]
-    fn default_owner_pair_budget_stays_under_the_relay_waiting_window() {
-        // `op_collab_relay_server::RelayConfig::waiting_timeout` is 60 s and is
-        // not operator-configurable, so the client must always recycle first.
-        assert!(RelayLimits::default().owner_pair < Duration::from_secs(60));
+    fn default_owner_pair_budget_stays_under_every_permitted_relay_window() {
+        // The relay refuses to start below MIN_RELAY_WAITING_TIMEOUT_SECS, so
+        // clearing that bound clears every window an operator can configure.
+        assert!(
+            RelayLimits::default().owner_pair < Duration::from_secs(MIN_RELAY_WAITING_TIMEOUT_SECS)
+        );
     }
 
     #[test]
@@ -142,6 +155,85 @@ mod tests {
         );
     }
 
+    fn owner_budget(stagger: Option<LaneStagger>) -> PairBudget {
+        PairBudget::Owner(OwnerPairBudget {
+            unrenewable_cap: RelayLimits::default().owner_pair,
+            renewable_cap: RelayLimits::default().pair,
+            stagger,
+        })
+    }
+
+    #[test]
+    fn a_relay_without_an_advertisement_leaves_the_fallback_untouched() {
+        // The compiled-in constants are the fallback, never the contract: a
+        // relay that predates the capability, or an intermediary that strips
+        // the header, must not change how a lane behaves.
+        assert_eq!(
+            owner_budget(None).resolve(None),
+            RelayLimits::default().owner_pair
+        );
+        assert_eq!(
+            PairBudget::Fixed(Duration::from_secs(99)).resolve(None),
+            Duration::from_secs(99)
+        );
+    }
+
+    #[test]
+    fn a_guest_budget_ignores_what_the_relay_advertises() {
+        // A guest is a one-shot join, not a standing member of the queue.
+        let lease = RelayWaitingAdvertisementV1::new(60, true).expect("advertisement");
+        assert_eq!(
+            PairBudget::Fixed(Duration::from_secs(99)).resolve(Some(lease)),
+            Duration::from_secs(99)
+        );
+    }
+
+    #[test]
+    fn a_leased_relay_lets_an_owner_lane_stop_churning() {
+        let limits = RelayLimits::default();
+        let lease =
+            RelayWaitingAdvertisementV1::new(12 * 60 * 60, true).expect("lease advertisement");
+        assert_eq!(owner_budget(None).resolve(Some(lease)), limits.pair);
+
+        // A relay that still runs a fixed countdown keeps the lane on the
+        // short recycle budget.
+        let countdown = RelayWaitingAdvertisementV1::new(60, false).expect("advertisement");
+        assert_eq!(
+            owner_budget(None).resolve(Some(countdown)),
+            limits.owner_pair
+        );
+    }
+
+    #[test]
+    fn the_first_cycle_stays_staggered_at_whatever_scale_the_relay_allows() {
+        // Regression guard: the stagger travels as a slot, not a duration. If
+        // it were resolved before the advertisement, a lease-backed pool would
+        // hand every lane the same budget and retire all of them in the same
+        // instant — emptying the waiting queue, which is the failure the
+        // stagger exists to prevent.
+        let lease =
+            RelayWaitingAdvertisementV1::new(12 * 60 * 60, true).expect("lease advertisement");
+        let budgets: Vec<Duration> = (0..DEFAULT_OWNER_LANE_COUNT)
+            .map(|index| {
+                owner_budget(Some(LaneStagger {
+                    index,
+                    lane_count: DEFAULT_OWNER_LANE_COUNT,
+                }))
+                .resolve(Some(lease))
+            })
+            .collect();
+
+        assert!(budgets.windows(2).all(|pair| pair[0] < pair[1]));
+        assert_eq!(
+            budgets.last().copied(),
+            Some(RelayLimits::default().pair),
+            "the last lane runs the full leased window"
+        );
+        assert!(budgets
+            .iter()
+            .all(|budget| *budget > RelayLimits::default().owner_pair || *budget == budgets[0]));
+    }
+
     #[test]
     fn an_out_of_range_index_is_clamped_to_the_last_lane() {
         let owner_pair = Duration::from_secs(45);
@@ -149,5 +241,68 @@ mod tests {
             owner_lane_first_pair_budget(owner_pair, 99, 4),
             owner_lane_first_pair_budget(owner_pair, 3, 4)
         );
+    }
+}
+
+/// A lane's slot in the owner pool, used to stagger first-cycle recycles.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct LaneStagger {
+    pub(crate) index: usize,
+    pub(crate) lane_count: usize,
+}
+
+/// An owner lane's waiting budget, resolved against the relay's advertisement.
+///
+/// Two ceilings, because the right budget depends on something only the relay
+/// knows. When the relay retires un-paired peers on a fixed countdown the lane
+/// must recycle itself first, so it stays on the short `unrenewable_cap`. When
+/// the relay advertises a renewable waiting lease it will hold the slot for as
+/// long as the lane answers pings, so the lane may park on the much longer
+/// `renewable_cap` and stop churning.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct OwnerPairBudget {
+    pub(crate) unrenewable_cap: Duration,
+    pub(crate) renewable_cap: Duration,
+    /// Present only on a lane's first connection.
+    pub(crate) stagger: Option<LaneStagger>,
+}
+
+/// How one connection decides how long it may sit un-paired.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PairBudget {
+    /// The caller's budget, used as-is.
+    ///
+    /// A guest is a one-shot join rather than a standing member of the relay's
+    /// waiting queue, so it keeps the long [`RelayLimits::pair`] window and is
+    /// unaffected by what the relay advertises.
+    Fixed(Duration),
+    /// An owner lane, which narrows towards whatever the relay advertises.
+    Owner(OwnerPairBudget),
+}
+
+impl PairBudget {
+    /// Resolve the budget once the relay's advertisement is known.
+    ///
+    /// The advertisement can only ever narrow the client's own ceiling or
+    /// unlock the wider lease ceiling; it is never adopted verbatim, and its
+    /// absence leaves the compiled-in fallback untouched.
+    pub(crate) fn resolve(self, advertised: Option<RelayWaitingAdvertisementV1>) -> Duration {
+        match self {
+            Self::Fixed(budget) => budget,
+            Self::Owner(owner) => {
+                let budget = match advertised {
+                    Some(advertisement) => {
+                        advertisement.derive_lane_budget(owner.unrenewable_cap, owner.renewable_cap)
+                    }
+                    None => owner.unrenewable_cap,
+                };
+                match owner.stagger {
+                    Some(stagger) => {
+                        owner_lane_first_pair_budget(budget, stagger.index, stagger.lane_count)
+                    }
+                    None => budget,
+                }
+            }
+        }
     }
 }

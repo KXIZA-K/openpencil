@@ -7,13 +7,14 @@ use tokio::sync::watch;
 use tokio::time::Instant;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::http::{header::AUTHORIZATION, HeaderMap};
-use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
+use tokio_tungstenite::tungstenite::protocol::{CloseFrame, WebSocketConfig};
 use tokio_tungstenite::tungstenite::{Error as WebSocketError, Message};
 use tokio_tungstenite::{connect_async_with_config, MaybeTlsStream, WebSocketStream};
 
 use op_collab_relay_protocol::{
-    RelayReauthChallengeV1, RelayRole, RelayServerChallengeV1, VerifiedRelayRoute,
-    MAX_RELAY_REAUTH_RESPONSE_TEXT_BYTES, RELAY_CHALLENGE_HEADER_NAME,
+    RelayReauthChallengeV1, RelayRejectCode, RelayRole, RelayServerChallengeV1,
+    RelayWaitingAdvertisementV1, VerifiedRelayRoute, MAX_RELAY_REAUTH_RESPONSE_TEXT_BYTES,
+    RELAY_CHALLENGE_HEADER_NAME, RELAY_WAITING_HEADER_NAME,
 };
 
 use crate::auth::{AuthMode, RelayAuthAttempt, RelayCredential};
@@ -34,6 +35,12 @@ pub(crate) struct ClientReauthContext<'a> {
 pub(crate) struct RelayUpgrade {
     pub(crate) socket: RelaySocket,
     pub(crate) challenge_attempt: Option<(RelayAuthAttempt, RelayServerChallengeV1)>,
+    /// The relay's waiting-window capability, when it advertised one.
+    ///
+    /// Optional by design: a relay that predates the capability, or an
+    /// intermediary that strips unknown headers, simply leaves the client on
+    /// its compiled-in fallback rather than breaking the connection.
+    pub(crate) waiting: Option<RelayWaitingAdvertisementV1>,
 }
 
 pub(crate) async fn connect_socket(
@@ -103,6 +110,7 @@ pub(crate) async fn connect_socket(
                     Ok(RelayUpgrade {
                         socket,
                         challenge_attempt,
+                        waiting: parse_waiting_advertisement(response.headers()),
                     })
                 }
             }
@@ -123,6 +131,20 @@ fn parse_challenge(headers: &HeaderMap) -> Result<RelayServerChallengeV1, Tunnel
         .map_err(|_| TunnelError::Failure(RelayFailureKind::Authentication))?;
     RelayServerChallengeV1::decode_header(value)
         .map_err(|_| TunnelError::Failure(RelayFailureKind::Authentication))
+}
+
+/// Read the relay's waiting capability from the upgrade response.
+///
+/// Never fails the connection. A missing, duplicated, or malformed value is
+/// treated exactly like an absent one, because the capability is an
+/// optimisation and the fallback is always safe.
+fn parse_waiting_advertisement(headers: &HeaderMap) -> Option<RelayWaitingAdvertisementV1> {
+    let mut values = headers.get_all(RELAY_WAITING_HEADER_NAME).iter();
+    let value = values.next()?;
+    if values.next().is_some() {
+        return None;
+    }
+    RelayWaitingAdvertisementV1::decode_header(value.to_str().ok()?).ok()
 }
 
 pub(crate) async fn send_binary(
@@ -294,9 +316,8 @@ pub(crate) async fn next_binary_with_reauth(
                     .await?;
             }
             Some(Ok(Message::Pong(_))) => {}
-            Some(Ok(Message::Close(_))) | None => {
-                return Err(TunnelError::Failure(RelayFailureKind::Closed));
-            }
+            Some(Ok(Message::Close(frame))) => return Err(close_error(frame.as_ref())),
+            None => return Err(TunnelError::Failure(RelayFailureKind::Closed)),
             Some(Ok(Message::Frame(_))) => {
                 return Err(TunnelError::Failure(RelayFailureKind::Protocol));
             }
@@ -426,6 +447,20 @@ pub(crate) async fn sleep_or_cancel(
     }
 }
 
+/// Classify a close frame the relay sent while this end was still waiting for
+/// a status frame.
+///
+/// The relay repeats a rejection's reason inside the close frame, so a close
+/// that carries a `relay-reject:` token is a rejection with a known cause, not
+/// an anonymous disconnect. Anything else stays
+/// [`RelayFailureKind::Closed`].
+fn close_error(frame: Option<&CloseFrame<'_>>) -> TunnelError {
+    match frame.and_then(|frame| RelayRejectCode::from_close_reason(frame.reason.as_ref())) {
+        Some(code) => TunnelError::Failure(RelayFailureKind::from_reject(code)),
+        None => TunnelError::Failure(RelayFailureKind::Closed),
+    }
+}
+
 pub(crate) fn map_websocket_error(error: WebSocketError) -> TunnelError {
     match error {
         WebSocketError::Capacity(_) => TunnelError::Failure(RelayFailureKind::BinaryFrameTooLarge),
@@ -436,5 +471,56 @@ pub(crate) fn map_websocket_error(error: WebSocketError) -> TunnelError {
             TunnelError::Failure(RelayFailureKind::Closed)
         }
         _ => TunnelError::Failure(RelayFailureKind::RelayIo),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::borrow::Cow;
+
+    use op_collab_relay_protocol::RELAY_REJECT_CODES;
+    use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
+
+    use super::*;
+
+    fn frame(reason: &'static str) -> CloseFrame<'static> {
+        CloseFrame {
+            code: CloseCode::Policy,
+            reason: Cow::Borrowed(reason),
+        }
+    }
+
+    #[test]
+    fn a_relay_close_reason_recovers_the_reject_code_it_carries() {
+        for code in RELAY_REJECT_CODES {
+            let expected = RelayFailureKind::from_reject(code);
+            assert_eq!(
+                close_error(Some(&frame(code.close_reason()))),
+                TunnelError::Failure(expected)
+            );
+        }
+        // A pairing timeout is the one the client must never confuse with a
+        // real rejection or with a generic protocol fault.
+        assert_eq!(
+            close_error(Some(&frame(RelayRejectCode::PairingTimeout.close_reason()))),
+            TunnelError::Failure(RelayFailureKind::RejectedPairingTimeout)
+        );
+    }
+
+    #[test]
+    fn an_ordinary_close_stays_an_anonymous_disconnect() {
+        assert_eq!(
+            close_error(None),
+            TunnelError::Failure(RelayFailureKind::Closed)
+        );
+        for reason in ["idle timeout", "relay shutdown", "", "relay-reject:"] {
+            assert_eq!(
+                close_error(Some(&CloseFrame {
+                    code: CloseCode::Away,
+                    reason: Cow::Borrowed(reason),
+                })),
+                TunnelError::Failure(RelayFailureKind::Closed)
+            );
+        }
     }
 }
