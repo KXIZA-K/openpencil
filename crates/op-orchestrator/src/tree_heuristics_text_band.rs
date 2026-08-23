@@ -92,6 +92,13 @@ pub(super) fn fix_invisible_text_band(node: &mut Value, light_theme: bool, desig
     if node.get("type").and_then(Value::as_str) != Some("frame") {
         return;
     }
+    // Exempt status bars (role or name/id aliases, including Chinese): they are
+    // fill-less by contract and their foreground is already derived from the root's
+    // luminance, so "light text on no fill" is a false positive here. Stamping the
+    // accent would turn OS chrome into a coloured band.
+    if crate::cleanup::is_status_bar_from_json(node) {
+        return;
+    }
     // Skip only when the node ALREADY paints a non-light surface (a colored or
     // dark solid, or a gradient / image) — light text reads fine there. A node
     // with NO fill, OR a LIGHT-SURFACE solid fill (`$color-surface`, white), is a
@@ -149,5 +156,114 @@ pub(super) fn tally_accent(node: &Value, counts: &mut Vec<(String, usize)>) {
     }
     for child in children_of(node) {
         tally_accent(child, counts);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Status bar with role="status-bar" and white 9:41 text under a dark root
+    /// should NOT get the design_accent stamp.
+    #[test]
+    fn test_status_bar_role_exempt_from_text_band_stamp() {
+        let mut bar = json!({
+            "type": "frame",
+            "id": "status-bar-001",
+            "role": "status-bar",
+            "children": [
+                {
+                    "type": "text",
+                    "content": "9:41",
+                    "fill": [{"type": "solid", "color": "#ffffffff"}]
+                }
+            ]
+        });
+
+        // Apply the pass: light_theme = true, design_accent = "$color-accent" (blue).
+        fix_invisible_text_band(&mut bar, true, "$color-accent");
+
+        // Status bar should have NO fill (exempt by role).
+        assert!(
+            bar.get("fill").is_none(),
+            "Status bar with role should not receive fill stamp"
+        );
+    }
+
+    /// Status bar identified by name only (no role) should also be exempt.
+    #[test]
+    fn test_status_bar_name_exempt_from_text_band_stamp() {
+        let mut bar = json!({
+            "type": "frame",
+            "id": "bar-001",
+            "name": "Status Bar",
+            "children": [
+                {
+                    "type": "text",
+                    "content": "9:41",
+                    "fill": [{"type": "solid", "color": "#ffffffff"}]
+                }
+            ]
+        });
+
+        fix_invisible_text_band(&mut bar, true, "$color-accent");
+
+        assert!(
+            bar.get("fill").is_none(),
+            "Status bar identified by name should not receive fill stamp"
+        );
+    }
+
+    /// Non-status-bar frame with the same light-text shape SHOULD get the stamp.
+    #[test]
+    fn test_non_status_bar_with_light_text_gets_stamp() {
+        let mut banner = json!({
+            "type": "frame",
+            "id": "banner-001",
+            "name": "Promo Banner",
+            "children": [
+                {
+                    "type": "text",
+                    "content": "Get 30% Off",
+                    "fill": [{"type": "solid", "color": "#ffffff"}]
+                }
+            ]
+        });
+
+        fix_invisible_text_band(&mut banner, true, "$color-accent");
+
+        // Non-status-bar frame SHOULD get the accent fill.
+        assert!(
+            banner.get("fill").is_some(),
+            "Non-status-bar frame with light text should receive fill stamp"
+        );
+        assert_eq!(
+            banner["fill"][0]["color"], "$color-accent",
+            "Fill should be the design accent"
+        );
+    }
+
+    /// Status bar with Chinese alias (e.g., 顶部状态栏) should be exempt.
+    #[test]
+    fn test_status_bar_chinese_name_exempt() {
+        let mut bar = json!({
+            "type": "frame",
+            "id": "bar-001",
+            "name": "顶部状态栏",
+            "children": [
+                {
+                    "type": "text",
+                    "content": "9:41",
+                    "fill": [{"type": "solid", "color": "#ffffffff"}]
+                }
+            ]
+        });
+
+        fix_invisible_text_band(&mut bar, true, "$color-accent");
+
+        assert!(
+            bar.get("fill").is_none(),
+            "Status bar with Chinese name should not receive fill stamp"
+        );
     }
 }

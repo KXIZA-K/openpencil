@@ -5,7 +5,7 @@ phase: [generation]
 trigger:
   keywords: [mobile, phone, ios, android, 移动, 手机]
 priority: 25
-budget: 2000
+budget: 2100
 category: domain
 ---
 
@@ -23,6 +23,7 @@ The status bar (time, signal, wifi, battery) is **automatically pre-inserted** b
 
 - **DO NOT generate a status bar** — it already exists
 - **DO NOT delete or modify** the pre-inserted status bar
+- **DO NOT give it a background fill** — it carries none, so it shows the screen behind it and its glyphs are already coloured for that background
 - Your first section should start BELOW the status bar (it occupies ~62px)
 
 ## 2) APP CONTENT (your layout)

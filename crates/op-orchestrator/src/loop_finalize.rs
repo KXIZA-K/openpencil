@@ -711,3 +711,7 @@ mod polarity_tests;
 #[cfg(test)]
 #[path = "loop_finalize_tier_tests.rs"]
 mod tier_tests;
+
+#[cfg(test)]
+#[path = "loop_finalize_status_bar_tests.rs"]
+mod status_bar_tests;
