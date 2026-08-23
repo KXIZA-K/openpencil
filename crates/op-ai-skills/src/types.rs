@@ -87,7 +87,10 @@ impl Phase {
     ///
     /// Generation moved again 15700 → 15850 (2026-08-19) when bar-chart geometry
     /// and CJK punctuation line-break rules were added to the deck-patterns and
-    /// cjk-typography skills. A mixed CJK branding + deck request (logo review +
+    /// cjk-typography skills, then 15850 → 16050 (2026-08-23) when schema.md
+    /// gained the payload-dialect rules (bare numbers, snake_case fill types,
+    /// gradient stop `offset`, string text content) that four measured GLM
+    /// rejections proved the model needs stated. A mixed CJK branding + deck request (logo review +
     /// slides + design rules) measured 15694 tokens; at 15700 the Step 3 knapsack
     /// truncated the `slides` tail, losing the contract. The new ceiling provides
     /// headroom for the expanded corpus while keeping all orthogonal skill contracts
@@ -104,7 +107,7 @@ impl Phase {
     pub fn default_budget(self) -> u32 {
         match self {
             Phase::Planning => 6000,
-            Phase::Generation => 15850,
+            Phase::Generation => 16050,
             Phase::Validation => 3000,
             Phase::Maintenance => 5000,
         }
@@ -114,7 +117,7 @@ impl Phase {
 /// Per-phase default token budgets — the TS `DEFAULT_BUDGETS` record.
 pub const DEFAULT_BUDGETS: [(Phase, u32); 4] = [
     (Phase::Planning, 6000),
-    (Phase::Generation, 15850),
+    (Phase::Generation, 16050),
     (Phase::Validation, 3000),
     (Phase::Maintenance, 5000),
 ];
@@ -388,7 +391,7 @@ mod tests {
     #[test]
     fn default_budget_table() {
         assert_eq!(Phase::Planning.default_budget(), 6000);
-        assert_eq!(Phase::Generation.default_budget(), 15850);
+        assert_eq!(Phase::Generation.default_budget(), 16050);
         assert_eq!(Phase::Validation.default_budget(), 3000);
         assert_eq!(Phase::Maintenance.default_budget(), 5000);
         // The const table agrees with the per-variant method.

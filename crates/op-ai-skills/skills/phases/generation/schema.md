@@ -38,8 +38,12 @@ Fill = [{ type: "solid", color: "#hex" }] or [{ type: "linear_gradient", angle, 
 - radial_gradient example (concentric glow): `fill: [{ type: "radial_gradient", cx: 0.5, cy: 0.5, radius: 0.7, stops: [{ offset: 0, color: "#6d28d9" }, { offset: 1, color: "#0b0614" }] }]` — cx/cy are 0..1 fractions of the box (0.5 = centre); radius is a 0..1 fraction of max(w,h).
 - mesh_gradient example (smooth four-corner blend): `fill: [{ type: "mesh_gradient", rows: 2, cols: 2, stops: [{ row: 0, col: 0, color: "#ec4899" }, { row: 0, col: 1, color: "#8b5cf6" }, { row: 1, col: 0, color: "#3b82f6" }, { row: 1, col: 1, color: "#06b6d4" }] }]` — a rows×cols vertex grid Gouraud-interpolated across the box; each stop pins one vertex colour at (row, col). Use it for rich multi-hue hero/background panels instead of stacking layers.
 - shader fill (advanced, generative noise/aurora/glow): `fill: [{ type: "shader", sksl: "half4 main(float2 p){ ... }", uniforms: {...} }]` — native SkSL, render-only. See the `shader-fill` knowledge skill (triggers on shader/glsl/sksl/generative/noise/aurora). PREFER mesh_gradient/linear_gradient unless the intent is explicitly generative; a failed shader degrades to a flat solid.
+- Gradient stops use `offset` (0..1 position) and `color` (hex). Never write `pos`.
+- text nodes' `content` is ALWAYS a string — never a number, boolean, or null.
 Stroke = { thickness, fill: [...] } — thickness accepts number (uniform) | [T, R, B, L] | { top, right, bottom, left } (per-side, e.g. { bottom: 1 } for an underline). Effects = [{ type: "shadow", offsetX, offsetY, blur, spread, color }]
 SIZING: width/height accept number (px), "fill_container", or "fit_content".
+NUMERIC FIELDS (x, y, width, height, cornerRadius, gap, fontSize, fontWeight, opacity): bare numbers only — never quoted, never with units like "158px" or "50%".
+Fill variant types use snake_case: "linear_gradient", "radial_gradient", "mesh_gradient", not CSS hyphens or camelCase.
 RAIL CARDS: cards in a horizontal scroll row must ALL share the same fixed pixel width — never "fill_container" (it crushes them to a sliver beside a fixed sibling).
 PADDING: number (uniform), [v, h], or [top, right, bottom, left].
 cornerRadius is a number. fill is ALWAYS an array. Do NOT set x/y on children inside layout frames.
