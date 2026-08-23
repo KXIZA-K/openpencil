@@ -17,6 +17,7 @@ use crate::issue::Issue;
 pub mod empty_filled_panel;
 pub mod siblings;
 pub mod spacing;
+pub mod structural_quality;
 pub mod structure;
 pub mod text;
 pub mod top_anchored_bars;
@@ -31,6 +32,7 @@ mod spacing_edge_tests;
 pub use empty_filled_panel::*;
 pub use siblings::*;
 pub use spacing::*;
+pub use structural_quality::*;
 pub use structure::*;
 pub use text::*;
 pub use top_anchored_bars::*;
@@ -79,6 +81,10 @@ pub fn detect_all_for_form(root: &PenNode, doc: &PenDocument, form: DesignForm) 
     combined.extend(detect_text_bg_contrast(root, doc));
     combined.extend(detect_empty_filled_panel(root));
     combined.extend(detect_top_anchored_bars(root));
+    // Structural workability detectors — report-only findings on nesting and layout.
+    combined.extend(detect_redundant_wrappers(root));
+    combined.extend(detect_excessive_nesting_depth(root));
+    combined.extend(detect_absolute_positioning_share(root));
     // Phase E5 — widget a11y. No TS counterpart; runs last so it never
     // shadows an earlier detector under the `{node_id}:{property}` dedup.
     combined.extend(detect_unlabeled_inputs(root));

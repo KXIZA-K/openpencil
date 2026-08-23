@@ -38,6 +38,9 @@ pub enum IssueCategory {
     EmptyFilledPanel,
     TopAnchoredBars,
     NoBaselineBars,
+    RedundantWrapper,
+    ExcessiveNestingDepth,
+    AbsolutePositioningShare,
 }
 
 /// The node property a fix targets. `Remove` is the `"__remove"` sentinel;

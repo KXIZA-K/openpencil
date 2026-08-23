@@ -122,6 +122,16 @@ pub fn node_kind_str(node: &PenNode) -> &'static str {
     }
 }
 
+impl NodeKind {
+    /// True when this kind is a structural container — Frame, Group, or Rectangle.
+    pub fn is_container(self) -> bool {
+        matches!(
+            self,
+            NodeKind::Frame | NodeKind::Group | NodeKind::Rectangle
+        )
+    }
+}
+
 /// Read an authored x coordinate. A missing coordinate is not treated as zero
 /// because flex layout may supply it later.
 pub fn node_x(node: &PenNode) -> Option<f64> {
