@@ -409,9 +409,18 @@ impl CollabRuntime {
             self.clear_discarded_stash(host);
         }
         if phase.is_authenticated() {
+            // Status events are the only diagnostic trace a headless or mobile
+            // host has (both print them to stderr), so they have to stay a log
+            // of what changed. Republishing Active for every routed frame made
+            // it a log of what arrived: presence alone repeats it ~30 times a
+            // second while the other peer drags, which buries the one
+            // `Failed(..)` line that says why a session dropped. Report the
+            // transition only.
+            let was_active =
+                host.editor_state().editor_ui.collab.phase == CollabConnectionPhase::Active;
             set_guest_ui(host, guest, phase);
             self.publish_guest_connection_path(host);
-            if phase == CollabConnectionPhase::Active {
+            if phase == CollabConnectionPhase::Active && !was_active {
                 self.push_status(CollabStatusEvent::SessionActive {
                     role: guest.session.core().role(),
                 });

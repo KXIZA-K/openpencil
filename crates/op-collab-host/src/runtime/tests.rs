@@ -784,6 +784,7 @@ fn inbound_bridge_reservation_is_held_through_gui_frame_handling() {
             frame: inbound,
         },
         inbound_len,
+        false,
     )
     .unwrap();
     assert_eq!(runtime.bridge_budget.used().unwrap(), inbound_len);

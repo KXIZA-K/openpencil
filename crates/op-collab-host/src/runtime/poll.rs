@@ -39,6 +39,7 @@ impl CollabRuntime {
                 generation: self.generation,
                 event: NetworkEvent::Failed(CollabRuntimeFailure::ResourceLimit),
                 bridge_reservation: None,
+                _lane_seat: None,
             });
         }
 
