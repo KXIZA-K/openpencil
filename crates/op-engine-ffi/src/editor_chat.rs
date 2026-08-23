@@ -77,6 +77,16 @@ struct ChatTurnJob {
     /// The agent-indicator epoch a design turn opened (frame glows +
     /// entrance reveals). `None` for plain chat turns.
     indicator_epoch: Option<u64>,
+    /// At least one design tool changed the live document. Kept separately
+    /// from `viewport_fitted`: variable/style writes may precede the first
+    /// sized root, but final completion must still fit any resulting content.
+    document_mutated: bool,
+}
+
+#[derive(Default)]
+struct ToolExecutionOutcome {
+    state_changed: bool,
+    document_mutated: bool,
 }
 
 /// Runtime-only chat jobs stay out of serializable editor state. Dropping
@@ -105,10 +115,15 @@ impl MobileChatHost {
     /// Drain widget-raised chat flags, launch a newly requested turn, and
     /// fold streamed deltas into the transcript. Returns the next
     /// engine-thread poll deadline while a turn is in flight.
-    pub(crate) fn pump(&mut self, host: &mut WidgetHostNative, now_ms: u64) -> Option<u64> {
+    pub(crate) fn pump(
+        &mut self,
+        host: &mut WidgetHostNative,
+        now_ms: u64,
+        viewport_size: (f32, f32),
+    ) -> Option<u64> {
         let mut changed = self.drain_new_chat_and_stop(host);
         changed |= self.launch_if_pending(host);
-        changed |= self.poll_into(host);
+        changed |= self.poll_into(host, viewport_size);
         if changed {
             host.mark_editor_state_dirty();
         }
@@ -239,7 +254,7 @@ impl MobileChatHost {
     /// canvas tool calls against the live editor state (design loop).
     /// Errors land as `error: …` content and `finished` clears the bubble's
     /// streaming flag — the two halves of "never stuck at Thinking…".
-    fn poll_into(&mut self, host: &mut WidgetHostNative) -> bool {
+    fn poll_into(&mut self, host: &mut WidgetHostNative, viewport_size: (f32, f32)) -> bool {
         let Some(job) = self.turn.as_mut() else {
             return false;
         };
@@ -266,12 +281,43 @@ impl MobileChatHost {
                 changed = true;
             }
         }
-        changed |= execute_tool_requests(host, &mut job.session, tool_requests, running_tab);
+        let tool_execution =
+            execute_tool_requests(host, &mut job.session, tool_requests, running_tab);
+        changed |= tool_execution.state_changed;
+        job.document_mutated |= tool_execution.document_mutated;
+        if is_design && tool_execution.document_mutated && !job.session.viewport_fitted() {
+            // Desktop parity: as soon as the first real design write lands,
+            // stop framing the retired starter document and center the new
+            // output. Variable/style-only writes can precede the first root;
+            // do not consume the one-shot fit until an actual sized artboard
+            // exists. The completion branch performs the final-size fit.
+            let has_sized_root = host.editor_state().active_children().iter().any(|node| {
+                op_editor_core::PenNodeExt::width_px(node).is_some()
+                    && op_editor_core::PenNodeExt::height_px(node).is_some()
+            });
+            if has_sized_root {
+                host.mark_editor_state_dirty();
+                host.fit_content_to_viewport(viewport_size.0, viewport_size.1);
+                job.session.mark_viewport_fitted();
+            }
+        }
         if is_design {
             changed |= reconcile_starter_ghost(host.editor_state_mut(), !poll.finished);
         }
+        let fit_completed_design = is_design && job.document_mutated;
         if poll.finished {
             changed |= self.retire_turn(host);
+            // Natural completion is the one safe final-fit point: every
+            // pending tool request has been applied and retire_turn has run
+            // the fallback finalize (if needed) plus ghost reconciliation.
+            // Stop / New Chat / replacement also retire turns, but do not
+            // reach this branch and therefore never yank the user's camera.
+            if fit_completed_design {
+                let before = host.editor_state().viewport;
+                host.mark_editor_state_dirty();
+                host.fit_content_to_viewport(viewport_size.0, viewport_size.1);
+                changed |= host.editor_state().viewport != before;
+            }
         }
         changed
     }
@@ -311,8 +357,8 @@ fn execute_tool_requests(
     session: &mut ChatSession,
     requests: Vec<ChatToolRequest>,
     running_tab: usize,
-) -> bool {
-    let mut changed = false;
+) -> ToolExecutionOutcome {
+    let mut outcome = ToolExecutionOutcome::default();
     for req in requests {
         // Reserved loop-finalize op: run the deterministic structural
         // backstop (or its read-only `checkOnly` probe) over the assembled
@@ -339,7 +385,7 @@ fn execute_tool_requests(
                 let names =
                     op_orchestrator::unfilled_screens::finalize_and_mark_unfilled_screens(state);
                 session.mark_loop_finalized();
-                changed = true;
+                outcome.state_changed = true;
                 names
             };
             let committed = op_orchestrator::unfilled_screens::list_screen_candidates(state)
@@ -394,7 +440,7 @@ fn execute_tool_requests(
         if !allow_ai_bulk_write(host) {
             let result = collaboration_ai_rejection();
             let state = host.editor_state_mut();
-            changed |= attach_tool_result_to_transcript(
+            outcome.state_changed |= attach_tool_result_to_transcript(
                 state.chat.run_tab_mut(Some(running_tab)),
                 &req.name,
                 &result,
@@ -418,7 +464,7 @@ fn execute_tool_requests(
                 is_error: false,
             };
             let state = host.editor_state_mut();
-            changed |= attach_tool_result_to_transcript(
+            outcome.state_changed |= attach_tool_result_to_transcript(
                 state.chat.run_tab_mut(Some(running_tab)),
                 &req.name,
                 &result,
@@ -439,24 +485,28 @@ fn execute_tool_requests(
             mutated
         );
         if mutated {
-            changed = true;
+            outcome.state_changed = true;
+            outcome.document_mutated = true;
         }
         if attach_tool_result_to_transcript(
             state.chat.run_tab_mut(Some(running_tab)),
             &req.name,
             &result,
         ) {
-            changed = true;
+            outcome.state_changed = true;
         }
         let _ = req.ack.send(result);
     }
-    changed
+    outcome
 }
 
 impl Session {
     pub(crate) fn pump_editor_chat(&mut self, now_ms: u64) -> Option<u64> {
+        let viewport_size = self.editor_viewport();
         let Session { editor, chat, .. } = self;
-        editor.as_mut().and_then(|host| chat.pump(host, now_ms))
+        editor
+            .as_mut()
+            .and_then(|host| chat.pump(host, now_ms, viewport_size))
     }
 }
 
@@ -470,6 +520,7 @@ fn start_turn(turn: BuiltinChatTurn, running_tab: usize) -> Result<ChatTurnJob, 
         running_tab,
         abort: Some(task.abort_handle()),
         indicator_epoch: None,
+        document_mutated: false,
     })
 }
 
@@ -567,6 +618,7 @@ fn start_design_turn(
         running_tab,
         abort: Some(task.abort_handle()),
         indicator_epoch: Some(epoch),
+        document_mutated: false,
     })
 }
 

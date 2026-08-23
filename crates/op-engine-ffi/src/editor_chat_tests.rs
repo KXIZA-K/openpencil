@@ -9,6 +9,8 @@ use std::time::{Duration, Instant};
 
 use op_editor_core::BuiltinAgentKind;
 
+const TEST_VIEWPORT: (f32, f32) = (402.0, 782.0);
+
 fn host_with_builtin_provider(base_url: &str) -> WidgetHostNative {
     let mut host = WidgetHostNative::new();
     let settings = &mut host.editor_state_mut().editor_ui.agent_settings;
@@ -73,7 +75,7 @@ fn pump_to_completion(chat_host: &mut MobileChatHost, host: &mut WidgetHostNativ
     let started = Instant::now();
     let mut now_ms = 10;
     loop {
-        let wake = chat_host.pump(host, now_ms);
+        let wake = chat_host.pump(host, now_ms, TEST_VIEWPORT);
         if wake.is_none() {
             return;
         }
@@ -152,7 +154,10 @@ fn non_builtin_selection_reports_honest_error() {
     send_user_message(&mut host, "hi there");
 
     let mut chat_host = MobileChatHost::default();
-    assert!(chat_host.pump(&mut host, 10).is_none(), "no turn launches");
+    assert!(
+        chat_host.pump(&mut host, 10, TEST_VIEWPORT).is_none(),
+        "no turn launches"
+    );
 
     let reply = last_assistant(&host);
     assert!(
@@ -174,12 +179,12 @@ fn stop_request_drops_the_inflight_turn() {
 
     let mut chat_host = MobileChatHost::default();
     assert!(
-        chat_host.pump(&mut host, 10).is_some(),
+        chat_host.pump(&mut host, 10, TEST_VIEWPORT).is_some(),
         "a launched turn schedules the streaming repoll"
     );
     host.editor_state_mut().chat.pending_stop_chat = true;
     assert!(
-        chat_host.pump(&mut host, 43).is_none(),
+        chat_host.pump(&mut host, 43, TEST_VIEWPORT).is_none(),
         "stop must retire the in-flight turn"
     );
     drop(listener);
