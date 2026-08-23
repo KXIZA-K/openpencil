@@ -72,6 +72,12 @@ test("encodeOutbound: resolve-conflict", () => {
 // Field names/values copied verbatim from bridge_protocol.rs's event_* output.
 // ---------------------------------------------------------------------------
 
+test("parseInboundFromPage: listening", () => {
+  const raw = '{"type":"op-bridge/listening"}';
+  const expected: BridgeInboundFromPage = { type: "op-bridge/listening" };
+  expect(parseInboundFromPage(raw)).toEqual(expected);
+});
+
 test("parseInboundFromPage: ready", () => {
   const raw = '{"type":"op-bridge/ready","generation":2,"revision":17}';
   const expected: BridgeInboundFromPage = { type: "op-bridge/ready", generation: 2, revision: 17 };

@@ -10,8 +10,9 @@
 //! `op-bridge/save-committed`, `op-bridge/resolve-conflict`;
 //! outbound: `op-bridge/ready`, `op-bridge/dirty-changed`, `op-bridge/opened`,
 //! `op-bridge/snapshot-result`, `op-bridge/snapshot-conflict`,
-//! `op-bridge/sync-conflict`, `op-bridge/conflict-resolved`. Field names are
-//! camelCase (`requestId`, `serverVersion`, `docJson`).
+//! `op-bridge/sync-conflict`, `op-bridge/conflict-resolved`,
+//! `op-bridge/listening`. Field names are camelCase (`requestId`,
+//! `serverVersion`, `docJson`).
 
 use serde_json::Value;
 
@@ -138,6 +139,20 @@ pub fn event_ready(generation: u64, revision: u64) -> String {
         "type": "op-bridge/ready",
         "generation": generation,
         "revision": revision,
+    })
+    .to_string()
+}
+
+/// `op-bridge/listening`: the app-side `message` listener is registered, so
+/// the host may (re)send `init`. Posted IMMEDIATELY after the listener
+/// installs — before the backend wasm download completes — because
+/// `postMessage` to a window without a listener silently drops the message
+/// and the host's finite `init` retry burst (~10 s) can expire during a slow
+/// mount. The payload is exactly the `type` field: old hosts ignore the
+/// unknown type and the app never waits for a reply.
+pub fn event_listening() -> String {
+    serde_json::json!({
+        "type": "op-bridge/listening",
     })
     .to_string()
 }
@@ -307,5 +322,23 @@ mod tests {
         assert_eq!(v["type"], "op-bridge/snapshot-result");
         assert_eq!(v["docJson"], r#"{"a":"b \" c"}"#);
         assert_eq!(v["generation"], 2);
+    }
+
+    #[test]
+    fn listening_payload_is_exactly_the_type_field() {
+        let ev = event_listening();
+        let v: serde_json::Value = serde_json::from_str(&ev).unwrap();
+        assert_eq!(v, serde_json::json!({ "type": "op-bridge/listening" }));
+        assert_eq!(v.as_object().map(|o| o.len()), Some(1));
+    }
+
+    #[test]
+    fn listening_is_outbound_only_and_ignored_when_echoed() {
+        // The app's own `listening` post is not inbound traffic: a host that
+        // echoes it back must not be treated as a bridge message.
+        assert_eq!(
+            BridgeInbound::parse(r#"{"type":"op-bridge/listening"}"#),
+            None
+        );
     }
 }

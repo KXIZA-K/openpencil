@@ -21,6 +21,16 @@ pub(super) async fn mount_ck(canvas_id: String) -> Result<(), JsValue> {
     console_error_panic_hook::set_once();
 
     let window = web_sys::window().ok_or_else(|| JsValue::from_str("mount_ck: no window"))?;
+    // dsh-openpencil #2: the host starts sending `op-bridge/init` the moment
+    // this iframe is created and retries only ~20x over ~10 s, while
+    // `init_backend` below downloads + instantiates ~24 MB of wasm
+    // (op_host_web_bg + CanvasKit) and paints the first frame. `postMessage`
+    // to a window without a listener is silently DROPPED — never queued — so
+    // install the bridge's receive-and-buffer phase NOW: it announces
+    // `op-bridge/listening` (the host responds by resending init) and buffers
+    // inbound messages until the full `install` replays them once this shell
+    // exists.
+    crate::vscode_bridge::install_early();
     let document = window
         .document()
         .ok_or_else(|| JsValue::from_str("mount_ck: no document"))?;
@@ -177,7 +187,9 @@ pub(super) async fn mount_ck(canvas_id: String) -> Result<(), JsValue> {
     let sync_controller: crate::live_sync_glue::SharedSync =
         Rc::new(RefCell::new(crate::live_sync_glue::SyncController::new()));
     // 1. Install the bridge listener + observer BEFORE any daemon request, so an
-    //    Init / OpenDocument arriving during bootstrap is never missed.
+    //    Init / OpenDocument arriving during bootstrap is never missed. The
+    //    early phase (`install_early` above) already buffered anything that
+    //    arrived during the wasm download; `install` replays it here.
     crate::vscode_bridge::install(&inner, sync_controller.clone());
     // 2. Inside a webview iframe, await the host's Init (token) with a 2s
     //    fallback (proceed as a direct open on timeout). A standalone browser

@@ -13,8 +13,8 @@
 // `op-bridge/save-committed`, `op-bridge/resolve-conflict`; inbound (page → extension): `op-bridge/ready`,
 // `op-bridge/dirty-changed`, `op-bridge/opened`, `op-bridge/snapshot-result`,
 // `op-bridge/snapshot-conflict`, `op-bridge/sync-conflict`,
-// `op-bridge/conflict-resolved`. Field names are camelCase (`requestId`,
-// `serverVersion`, `docJson`).
+// `op-bridge/conflict-resolved`, `op-bridge/listening`. Field names are
+// camelCase (`requestId`, `serverVersion`, `docJson`).
 
 export type BridgeOutboundToPage =
   | { type: "op-bridge/init"; token: string; mcpUrl?: string }
@@ -26,6 +26,7 @@ export type BridgeOutboundToPage =
   | { type: "op-bridge/resolve-conflict"; mode: "use-local" | "accept-remote"; requestId: string };
 
 export type BridgeInboundFromPage =
+  | { type: "op-bridge/listening" }
   | { type: "op-bridge/ready"; generation: number; revision: number }
   | { type: "op-bridge/dirty-changed"; generation: number; revision: number; dirty: boolean }
   | { type: "op-bridge/opened"; generation: number }
@@ -69,6 +70,8 @@ export function parseInboundFromPage(raw: unknown): BridgeInboundFromPage | null
   if (typeof ty !== "string") return null;
 
   switch (ty) {
+    case "op-bridge/listening":
+      return { type: "op-bridge/listening" };
     case "op-bridge/ready": {
       const generation = value["generation"];
       const revision = value["revision"];

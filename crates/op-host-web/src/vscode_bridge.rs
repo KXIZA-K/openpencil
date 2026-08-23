@@ -16,18 +16,29 @@
 //!
 //! Borrow discipline: a `SharedSync`/`inner` borrow is held only for the span
 //! of one synchronous decision, never across an XHR callback.
+//!
+//! Startup handoff (dsh-openpencil #2): [`early_listener`] installs a
+//! minimal `message` listener at the very start of the mount — before the
+//! ~24 MB wasm download — buffers inbound messages and announces
+//! `op-bridge/listening`; [`install`] then replays the buffer through this
+//! pipeline once the shell state exists.
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use js_sys::{Function, Object, Promise};
+use js_sys::{Function, Object};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use web_sys::MessageEvent;
 
 #[path = "vscode_bridge_snapshot.rs"]
 mod document_snapshot;
+mod early_listener;
 mod helpers;
+mod startup;
+
+pub(crate) use early_listener::install_early;
+pub(crate) use startup::{await_init, in_iframe};
 
 use crate::document_json::{parse_document_json, with_borrowed_parsed_document};
 use crate::live_sync;
@@ -67,8 +78,9 @@ thread_local! {
     /// `event.origin`, then enforced on every later message (mismatch dropped).
     static BRIDGE_ORIGIN: RefCell<Option<String>> = const { RefCell::new(None) };
     /// The pending `await_init` promise resolver — the `init` handler calls it
-    /// so `mount_ck` stops waiting the moment the token lands.
-    static INIT_RESOLVER: RefCell<Option<Function>> = const { RefCell::new(None) };
+    /// so `mount_ck` stops waiting the moment the token lands. `pub(super)`
+    /// because `startup::await_init` installs it from the sibling module.
+    pub(super) static INIT_RESOLVER: RefCell<Option<Function>> = const { RefCell::new(None) };
     /// One-shot late-init recovery hook. Registered by `canvaskit`'s FALLBACK
     /// (unmanaged) bootstrap completion when `await_init` timed out; invoked by
     /// [`handle_init`] if a slow host's `init` lands afterwards, so the managed
@@ -81,11 +93,20 @@ thread_local! {
 // Install + startup coordination
 // ---------------------------------------------------------------------------
 
-/// Install the window `message` listener + the outbound-event tick observer.
-/// The listener `Closure` is deliberately leaked (`forget`) — the bridge lives
-/// for the whole page, exactly like the other page-level listeners; returning an
-/// owning handle would tear the bridge down when `mount_ck` returns.
+/// Install the window `message` listener + the outbound-event tick observer,
+/// then replay whatever the early listener buffered during the backend
+/// download (typically the host's `init`). The listener `Closure` is
+/// deliberately leaked (`forget`) — the bridge lives for the whole page,
+/// exactly like the other page-level listeners; returning an owning handle
+/// would tear the bridge down when `mount_ck` returns.
 pub(crate) fn install<C: RepaintContext + 'static>(inner: &Rc<RefCell<C>>, sync: SharedSync) {
+    // Take over from the early listener FIRST: it no-ops from here on, and
+    // everything it buffered is drained for the replay below. This function
+    // runs as one synchronous task (no message event can interleave), so any
+    // message either sits in the drained buffer or is handled by the full
+    // listener registered below — nothing is dropped in between.
+    let buffered = early_listener::take_over();
+
     let Some(window) = web_sys::window() else {
         return;
     };
@@ -114,50 +135,14 @@ pub(crate) fn install<C: RepaintContext + 'static>(inner: &Rc<RefCell<C>>, sync:
         let tick: Rc<dyn Fn()> = Rc::new(move || observe_tick(&inner, &sync, &last_triple));
         let _ = live_sync::start_interval(BRIDGE_TICK_INTERVAL_MS, tick);
     }
-}
 
-/// True when the page runs inside a frame (`window.self != window.top`) — the
-/// VS Code webview case, where `mount_ck` awaits the host's `init` before it
-/// bootstraps the daemon services.
-pub(crate) fn in_iframe(window: &web_sys::Window) -> bool {
-    let self_win = window.self_();
-    // `top`/`parent` return a cross-origin-accessible WindowProxy; an identity
-    // compare never touches a property so it can't throw. Check both so a host
-    // that shadows one (some webview shells) is still detected.
-    let differs = |other: Result<Option<web_sys::Window>, JsValue>| {
-        other
-            .ok()
-            .flatten()
-            .map(|w| !Object::is(self_win.as_ref(), w.as_ref()))
-            .unwrap_or(false)
-    };
-    differs(window.top()) || differs(window.parent())
-}
-
-/// Await the host's `init` (which resolves the promise from the message
-/// handler) or a `timeout_ms` fallback, whichever comes first. On timeout the
-/// caller proceeds as a direct open (no token). Returns after the promise
-/// settles; check [`live_sync::bridge_token`] to learn which path won.
-pub(crate) async fn await_init(window: &web_sys::Window, timeout_ms: i32) {
-    let window = window.clone();
-    let promise = Promise::new(&mut |resolve, _reject| {
-        INIT_RESOLVER.with(|r| *r.borrow_mut() = Some(resolve.clone()));
-        // Timeout fallback: resolve the same promise so the await unblocks even
-        // if no host is listening (standalone browser tab, or a slow host).
-        let resolve_timeout = resolve.clone();
-        let cb = Closure::once_into_js(move || {
-            let _ = resolve_timeout.call0(&JsValue::NULL);
-        });
-        let _ = window
-            .set_timeout_with_callback_and_timeout_and_arguments_0(cb.unchecked_ref(), timeout_ms);
-    });
-    let _ = wasm_bindgen_futures::JsFuture::from(promise).await;
-    // Drop the resolver so a late `init` doesn't try to settle a done promise.
-    INIT_RESOLVER.with(|r| *r.borrow_mut() = None);
-    if live_sync::bridge_token().is_none() {
-        web_sys::console::warn_1(&JsValue::from_str(
-            "[op-bridge] init not received before timeout; proceeding as direct open",
-        ));
+    // Replay what the early listener buffered while the wasm was still
+    // downloading — most importantly the host's `init`, which would
+    // otherwise die with its finite retry burst — through the exact same
+    // pipeline the live listener uses, with the receive-time origin each
+    // message carried.
+    for (origin, msg) in buffered {
+        route_message(inner, &sync, &origin, msg);
     }
 }
 
@@ -190,10 +175,21 @@ fn handle_message<C: RepaintContext + 'static>(
         return; // non-bridge / malformed
     };
 
+    route_message(inner, sync, &evt.origin(), msg);
+}
+
+/// Origin lock + dispatch — shared by the live listener and the early-inbox
+/// replay: [`install`] feeds [`early_listener`]'s buffered messages through
+/// here with their receive-time origin, so both paths enforce the same rules.
+fn route_message<C: RepaintContext + 'static>(
+    inner: &Rc<RefCell<C>>,
+    sync: &SharedSync,
+    origin: &str,
+    msg: BridgeInbound,
+) {
     // Origin lock: the first valid `init` records the origin; every later
     // message (including a re-`init`) must match it. A non-init arriving before
     // any lock is dropped.
-    let origin = evt.origin();
     let is_init = matches!(msg, BridgeInbound::Init { .. });
     let locked = BRIDGE_ORIGIN.with(|o| o.borrow().clone());
     match &locked {
@@ -202,7 +198,7 @@ fn handle_message<C: RepaintContext + 'static>(
         _ => {}
     }
     if is_init && locked.is_none() {
-        BRIDGE_ORIGIN.with(|o| *o.borrow_mut() = Some(origin.clone()));
+        BRIDGE_ORIGIN.with(|o| *o.borrow_mut() = Some(origin.to_string()));
     }
 
     match msg {
@@ -259,6 +255,10 @@ fn handle_theme<C: RepaintContext + 'static>(
 }
 
 /// `init`: store the managed token and unblock `mount_ck`'s `await_init`.
+/// Idempotent by construction: the token write below is unconditional, so the
+/// host's repeated `init` messages (its own retries plus the resend the
+/// `op-bridge/listening` announcement triggers) all just overwrite the same
+/// value.
 ///
 /// `ready` is deliberately NOT emitted here. It must be serialized strictly
 /// AFTER the managed bootstrap sync-reset: the host sends `open-document` the
