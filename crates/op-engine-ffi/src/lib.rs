@@ -52,6 +52,10 @@ mod editor_document;
 #[cfg(all(feature = "editor", test))]
 mod editor_document_save_tests;
 #[cfg(feature = "editor")]
+mod editor_document_shell;
+#[cfg(all(feature = "editor", test))]
+mod editor_document_shell_tests;
+#[cfg(feature = "editor")]
 mod editor_export;
 #[cfg(feature = "editor")]
 mod editor_image_search;
@@ -100,6 +104,12 @@ pub use editor_auth::{
     SHELL_ACTION_OPEN_ACCOUNT_CENTER, SHELL_ACTION_OPEN_DOCUMENT,
     SHELL_ACTION_OPEN_LANGUAGE_PICKER, SHELL_ACTION_OPEN_LOGIN_WEBVIEW, SHELL_ACTION_REQUEST_LOGIN,
     SHELL_ACTION_WINDOW_CLOSE, SHELL_ACTION_WINDOW_MINIMIZE, SHELL_ACTION_WINDOW_ZOOM,
+};
+#[cfg(feature = "editor")]
+pub use editor_document_shell::{
+    op_editor_cancel_save, op_editor_commit_save, op_editor_configure_save_picker,
+    op_editor_copy_save_file_name, op_editor_copy_save_target, op_editor_stage_save_to_path,
+    SHELL_ACTION_SAVE_DOCUMENT,
 };
 #[cfg(feature = "editor")]
 pub use editor_export::{

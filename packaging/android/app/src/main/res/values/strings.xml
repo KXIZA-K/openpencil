@@ -4,6 +4,7 @@
     <string name="document_open_failed">Couldn\'t open this file.</string>
     <string name="document_type_unsupported">Choose an .op or .pen file.</string>
     <string name="document_export_failed">Couldn\'t export this file.</string>
+    <string name="document_save_failed">Couldn\'t save this document.</string>
     <string name="native_login_title">Sign in to OpenPencil</string>
     <string name="native_login_close">Close</string>
     <string name="native_login_email">Email</string>

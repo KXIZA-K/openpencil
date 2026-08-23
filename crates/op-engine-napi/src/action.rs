@@ -31,10 +31,12 @@ pub const SHELL_ACTION_WINDOW_CLOSE: i32 = 8;
 pub const SHELL_ACTION_WINDOW_MINIMIZE: i32 = 9;
 /// TopBar green dot — toggle maximised / restored.
 pub const SHELL_ACTION_WINDOW_ZOOM: i32 = 10;
+/// Save the document through `DocumentViewPicker.save`.
+pub const SHELL_ACTION_SAVE_DOCUMENT: i32 = 11;
 
 /// Every shell action the engine can hand the OHOS shell, in `OpShellAction`
 /// order. `SHELL_ACTION_NONE` is deliberately absent — it means "no work".
-pub const SHELL_ACTIONS: [i32; 10] = [
+pub const SHELL_ACTIONS: [i32; 11] = [
     SHELL_ACTION_OPEN_DOCUMENT,
     SHELL_ACTION_OPEN_LOGIN_WEBVIEW,
     SHELL_ACTION_CLOSE_LOGIN_WEBVIEW,
@@ -45,6 +47,7 @@ pub const SHELL_ACTIONS: [i32; 10] = [
     SHELL_ACTION_WINDOW_CLOSE,
     SHELL_ACTION_WINDOW_MINIMIZE,
     SHELL_ACTION_WINDOW_ZOOM,
+    SHELL_ACTION_SAVE_DOCUMENT,
 ];
 
 /// Whether `code` is an action the shell must handle. Negative values are
@@ -370,7 +373,7 @@ mod tests {
         assert!(!is_shell_action(SHELL_ACTION_NONE));
         assert!(!is_shell_action(STATUS_CLOSING));
         assert!(!is_shell_action(-6)); // -(OpStatus::WrongThread)
-        assert!(!is_shell_action(11)); // past the last defined action
+        assert!(!is_shell_action(12)); // past the last defined action
     }
 
     #[test]

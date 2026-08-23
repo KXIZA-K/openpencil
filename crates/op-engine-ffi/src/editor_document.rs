@@ -1,26 +1,40 @@
 //! `.op` Save / Save As for the mobile editor shells.
 //!
-//! The touch shells never expose a directory picker, so the engine owns the
-//! destination directory. A shell that has a user-visible documents
-//! directory hands it to `op_create` as `documents_root` (iOS passes
-//! `NSDocumentDirectory`, which the Files app surfaces under
-//! "On My iPhone ▸ OpenPencil"); a shell that does not falls back to
-//! `documents/` under the private storage root every mobile editor already
-//! passes (the same root `op-config-store` keys settings persistence on).
-//! Documents written under the old private fallback are migrated into the
-//! visible directory once a shell starts providing one — see
-//! [`migrate_legacy_documents`]. Saving reuses the exact canonical writer
-//! the desktop's `doc_io::save_to_path` wraps —
+//! Two destinations exist, and the shell decides which one it can offer.
+//!
+//! * **Shell-owned (picker) saves.** Every touch shell that declares
+//!   [`op_editor_configure_save_picker`] routes Save / Save As through the
+//!   platform file picker, so the user places the document somewhere their
+//!   file manager can reach. The picker hands back a *handle*, not a path
+//!   (Android: a SAF `content://` URI plus persisted permission; HarmonyOS:
+//!   a `DocumentViewPicker` file URI; iOS: base64 security-scoped bookmark
+//!   data), so the engine can never write it directly. The engine stays the
+//!   only writer of canonical `.op` bytes: it streams them into an
+//!   app-private staging file the shell names, and the shell copies that
+//!   file into the picked destination. See [`crate::editor_document_shell`].
+//! * **Engine-owned paths.** A shell that declares no picker keeps the
+//!   original behaviour: the engine owns the destination directory —
+//!   `documents_root` from `op_create` when the shell has a user-visible one
+//!   (iOS `NSDocumentDirectory`, which the Files app surfaces under
+//!   "On My iPhone ▸ OpenPencil"), else `documents/` under the private
+//!   storage root — and the engine-painted name dialog names the file.
+//!
+//! `documents_root` still matters for a picker shell: it is where legacy
+//! documents are migrated to (see [`migrate_legacy_documents`]), where the
+//! iOS picker opens by default, and where the suspend shadow copy lands.
+//!
+//! Either way the bytes come from the exact canonical writer the desktop's
+//! `doc_io::save_to_path` wraps —
 //! `jian_ops_schema::image_table::write_document_with_extension` with
 //! `EditorMeta::from_state` — so a file written here round-trips through
 //! every other host.
 //!
 //! Flow: the More sheet's Save / Save As tile queues
 //! `FileAction::Save`/`SaveAs`; `editor_auth::take_shell_action` routes it
-//! to [`begin_save`]. A known path saves in place; otherwise the shared
-//! save-name dialog opens and [`drain_confirmed_save`] performs the write
-//! once the user confirms a name. No new shell action is involved — all
-//! three platforms get the feature from the engine alone.
+//! to [`begin_save`]. On a picker shell that stages bytes and returns
+//! `SHELL_ACTION_SAVE_DOCUMENT`; otherwise a known path saves in place and
+//! anything else opens the shared save-name dialog, whose confirmation
+//! [`drain_confirmed_save`] performs.
 
 use crate::error::{FfiError, FfiResult};
 use crate::lifecycle::Session;
@@ -33,21 +47,83 @@ use std::path::{Path, PathBuf};
 /// with room for the ` NNN.op` dedup suffix.
 const STEM_BYTE_CAP: usize = 120;
 
-/// Where the current document lives on disk, if it has been saved, plus
-/// the shell-provided destination directory saves land in. Documents
-/// opened through the platform picker arrive as bytes without a writable
-/// path, so `path` starts (and re-starts) as `None`.
+/// Where the current document is bound, if it has been saved at all.
+///
+/// Modelled explicitly rather than as "a path that might be missing":
+/// a picker destination is an opaque, shell-owned handle the engine can
+/// neither open nor write, and pretending otherwise is exactly how a
+/// silent Save would end up writing the wrong file.
+#[derive(Default)]
+pub(crate) enum DocumentBinding {
+    /// Never saved, or the binding was dropped by New / Open.
+    #[default]
+    None,
+    /// A filesystem path the engine rewrites itself.
+    Path(PathBuf),
+    /// A destination only the shell can write. See [`ShellBinding`].
+    Shell(ShellBinding),
+}
+
+/// A destination the platform picker owns.
+///
+/// `handle` is opaque to the engine and round-trips verbatim: the shell is
+/// the only party that knows how to turn it back into a writable stream
+/// (`ContentResolver.openOutputStream`, `fs.openSync`, or a resolved
+/// security-scoped bookmark). It must be *durable* — the shell has to keep
+/// it valid across process restarts (Android
+/// `takePersistableUriPermission`, iOS bookmark data) — because a plain
+/// Save is expected to rewrite it without prompting again.
+pub(crate) struct ShellBinding {
+    pub(crate) handle: String,
+    /// What the picker actually named the file, for the TopBar and for the
+    /// next save's suggested name.
+    pub(crate) display_name: String,
+}
+
+/// Save-flow state for one session: the current binding, the shell's
+/// destination directory, whether the shell drives a picker, and any
+/// picker round trip currently in flight.
 #[derive(Default)]
 pub(crate) struct DocumentSaveShellState {
-    pub(crate) path: Option<PathBuf>,
+    pub(crate) binding: DocumentBinding,
     /// User-visible documents directory from `OpCreateDesc.documents_root`.
     /// `None` keeps the private `<storage_root>/documents` fallback.
     pub(crate) root: Option<PathBuf>,
+    /// The shell implements `SHELL_ACTION_SAVE_DOCUMENT`, so Save / Save As
+    /// go through its file picker instead of the engine's name dialog.
+    /// Declared once by `op_editor_configure_save_picker`.
+    pub(crate) picker: bool,
+    /// Staged save waiting for the shell to report its picker outcome.
+    pub(crate) pending: Option<crate::editor_document_shell::PendingShellSave>,
+    /// A suspend flush wrote the shadow copy of a shell-bound document.
+    /// The next shell-action drain (i.e. once the app is foregrounded and
+    /// the engine is resumed) re-emits a silent save so the user's picked
+    /// destination catches up.
+    pub(crate) resave_pending: bool,
 }
 
 impl DocumentSaveShellState {
     pub(crate) fn with_root(root: Option<PathBuf>) -> Self {
-        Self { path: None, root }
+        Self {
+            root,
+            ..Self::default()
+        }
+    }
+
+    /// The engine-writable path this document is bound to, if any. A
+    /// shell-owned binding deliberately has none.
+    pub(crate) fn bound_path(&self) -> Option<&Path> {
+        match &self.binding {
+            DocumentBinding::Path(path) => Some(path),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn shell_binding(&self) -> Option<&ShellBinding> {
+        match &self.binding {
+            DocumentBinding::Shell(binding) => Some(binding),
+            _ => None,
+        }
     }
 }
 
@@ -56,6 +132,13 @@ impl DocumentSaveShellState {
 /// `editor_auth::take_shell_action` after the auth / window / one-shot
 /// request drains.
 pub(crate) fn drain_document_actions(session: &mut Session) -> FfiResult<i32> {
+    // A suspend flush could not reach a shell-owned destination; now that the
+    // engine is drained again (so the app is foregrounded), ask the shell to
+    // rewrite it silently. Runs before anything else so a user-initiated save
+    // is never queued behind it.
+    if let Some(action) = drain_suspend_resave(session) {
+        return Ok(action);
+    }
     // A confirmed save-name dialog writes into the sandbox engine-side; no
     // shell action is involved.
     if drain_confirmed_save(session)? {
@@ -137,11 +220,23 @@ pub(crate) fn begin_save(session: &mut Session, save_as: bool) -> FfiResult<i32>
         let host = session.editor_mut()?;
         host.editor_state_mut().editor_ui.pending_file_action = None;
     }
-    if !save_as && session.document_save.path.is_some() {
-        let path = session.document_save.path.clone().expect("checked above");
-        write_current_document(session, &path)?;
-        finish_successful_save(session, path, false);
-        return Ok(crate::editor_auth::SHELL_ACTION_NONE);
+    if !save_as {
+        // A plain Save never re-asks where the document lives.
+        if let Some(path) = session.document_save.bound_path().map(Path::to_path_buf) {
+            write_current_document(session, &path)?;
+            finish_successful_save(session, path, false);
+            return Ok(crate::editor_auth::SHELL_ACTION_NONE);
+        }
+        if let Some(binding) = session.document_save.shell_binding() {
+            let (handle, name) = (binding.handle.clone(), binding.display_name.clone());
+            return crate::editor_document_shell::begin_shell_save(session, Some(handle), name);
+        }
+    }
+    if session.document_save.picker {
+        // First save, or Save As: the platform picker owns both the name and
+        // the destination, so the engine's name dialog stays closed.
+        let name = suggested_file_name(session)?;
+        return crate::editor_document_shell::begin_shell_save(session, None, name);
     }
     let now_ms = session.now_ms;
     let host = session.editor_mut()?;
@@ -153,6 +248,42 @@ pub(crate) fn begin_save(session: &mut Session, save_as: bool) -> FfiResult<i32>
     host.mark_editor_state_dirty();
     session.request_redraw();
     Ok(crate::editor_auth::SHELL_ACTION_NONE)
+}
+
+/// `<stem>.op` the picker opens pre-filled with, derived from the same
+/// seed the engine's name dialog would have shown.
+pub(crate) fn suggested_file_name(session: &mut Session) -> FfiResult<String> {
+    let host = session.editor_mut()?;
+    Ok(format!(
+        "{}.op",
+        sanitize_stem(&seed_name(host.editor_state()))
+    ))
+}
+
+/// Re-emit the silent save a suspend flush could not perform itself.
+///
+/// Returns `None` (and leaves no state behind) whenever the reconcile is
+/// unnecessary or impossible — a clean document, a binding that is no longer
+/// shell-owned, or a picker round trip already in flight. The flag is always
+/// consumed so this can never spin on every frame.
+fn drain_suspend_resave(session: &mut Session) -> Option<i32> {
+    if !session.document_save.resave_pending {
+        return None;
+    }
+    session.document_save.resave_pending = false;
+    if session.document_save.pending.is_some() {
+        return None;
+    }
+    let dirty = session
+        .editor
+        .as_ref()
+        .is_some_and(|host| host.editor_state().is_dirty());
+    if !dirty {
+        return None;
+    }
+    let binding = session.document_save.shell_binding()?;
+    let (handle, name) = (binding.handle.clone(), binding.display_name.clone());
+    crate::editor_document_shell::begin_shell_save(session, Some(handle), name).ok()
 }
 
 /// Perform the write for a confirmed save-name dialog. Returns `true` when
@@ -177,14 +308,21 @@ pub(crate) fn drain_confirmed_save(session: &mut Session) -> FfiResult<bool> {
     Ok(true)
 }
 
-/// Backgrounding flush: overwrite the current sandbox file when the
-/// document has one and carries unsaved changes. A document that was never
-/// saved is deliberately left alone — silently inventing a file (and a
-/// name) for it would surprise more than it protects.
+/// Backgrounding flush: persist unsaved changes to whatever the engine can
+/// reach by itself.
+///
+/// * An engine-owned path is overwritten and the document is marked saved —
+///   the user-visible file is now current.
+/// * A shell-owned binding cannot be written from here: reaching a
+///   `content://` URI or a security-scoped bookmark means calling back into
+///   the shell, and backgrounding is not a moment to start a UI round trip.
+///   The bytes go into a private shadow copy so the work survives even a
+///   process kill, the document deliberately stays **dirty** (the file the
+///   user picked really is stale), and [`drain_suspend_resave`] rewrites the
+///   picked destination on the next drain after resume.
+/// * A document that was never saved is left alone — silently inventing a
+///   file (and a name) for it would surprise more than it protects.
 pub(crate) fn flush_on_suspend(session: &mut Session) {
-    let Some(path) = session.document_save.path.clone() else {
-        return;
-    };
     let dirty = session
         .editor
         .as_ref()
@@ -192,26 +330,55 @@ pub(crate) fn flush_on_suspend(session: &mut Session) {
     if !dirty {
         return;
     }
-    match write_current_document(session, &path) {
-        Ok(()) => {
-            if let Some(host) = session.editor.as_mut() {
-                host.editor_state_mut().mark_saved_revision();
-                host.mark_editor_state_dirty();
+    if let Some(path) = session.document_save.bound_path().map(Path::to_path_buf) {
+        match write_current_document(session, &path) {
+            Ok(()) => {
+                if let Some(host) = session.editor.as_mut() {
+                    host.editor_state_mut().mark_saved_revision();
+                    host.mark_editor_state_dirty();
+                }
+            }
+            Err(error) => {
+                // Backgrounding cannot show UI; leave the document dirty so
+                // the next foreground save retries, and surface a diagnostic.
+                session.emit_runtime_error(2, &error.message, "op-engine-ffi/save");
             }
         }
-        Err(error) => {
-            // Backgrounding cannot show UI; leave the document dirty so the
-            // next foreground save retries, and surface a diagnostic.
-            session.emit_runtime_error(2, &error.message, "op-engine-ffi/save");
-        }
+        return;
     }
+    let Some(shadow) = session
+        .document_save
+        .shell_binding()
+        .map(|binding| binding.display_name.clone())
+        .and_then(|name| shadow_path(&session.document_save, &name).ok())
+    else {
+        return;
+    };
+    match write_current_document(session, &shadow) {
+        // Still dirty on purpose: the picked destination has not been
+        // rewritten yet, and claiming "saved" here would be a lie the user
+        // would only discover by losing the delta.
+        Ok(()) => session.document_save.resave_pending = true,
+        Err(error) => session.emit_runtime_error(2, &error.message, "op-engine-ffi/save"),
+    }
+}
+
+/// Private shadow copy for a shell-bound document that was backgrounded
+/// while dirty. Hidden (dot-prefixed) so it never shows up next to the
+/// user's own documents, and stable per document name so repeated
+/// backgrounding does not litter the directory.
+fn shadow_path(state: &DocumentSaveShellState, display_name: &str) -> FfiResult<PathBuf> {
+    let stem = sanitize_stem(display_name.trim_end_matches(".op"));
+    Ok(documents_dir(state)?.join(format!(".{stem}.autosave.op")))
 }
 
 /// The current document is being replaced (New / platform Open): its
 /// sandbox binding and any stale name prompt must not survive onto the
 /// incoming document.
 pub(crate) fn forget_current_document(session: &mut Session) {
-    session.document_save.path = None;
+    session.document_save.binding = DocumentBinding::None;
+    session.document_save.pending = None;
+    session.document_save.resave_pending = false;
     if let Some(host) = session.editor.as_mut() {
         if host.editor_state().editor_ui.save_name_dialog.open {
             host.editor_state_mut().editor_ui.save_name_dialog.close();
@@ -232,14 +399,14 @@ fn finish_successful_save(session: &mut Session, path: PathBuf, close_dialog: bo
         state.mark_saved_revision();
         host.mark_editor_state_dirty();
     }
-    session.document_save.path = Some(path);
+    session.document_save.binding = DocumentBinding::Path(path);
     session.request_redraw();
 }
 
 /// Stream the live editor state to `path` through the canonical writer,
 /// via a sibling temp file so a mid-write crash never leaves a truncated
 /// document at the destination.
-fn write_current_document(session: &mut Session, path: &Path) -> FfiResult<()> {
+pub(crate) fn write_current_document(session: &mut Session, path: &Path) -> FfiResult<()> {
     let host = session.editor_mut()?;
     let state = host.editor_state();
     let meta = op_pen_loader::EditorMeta::from_state(state);

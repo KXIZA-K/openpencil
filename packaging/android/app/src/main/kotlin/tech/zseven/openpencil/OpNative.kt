@@ -18,6 +18,7 @@ object OpNative {
     const val SHELL_ACTION_OPEN_ACCOUNT_CENTER = 5
     const val SHELL_ACTION_REQUEST_LOGIN = 6
     const val SHELL_ACTION_OPEN_LANGUAGE_PICKER = 7
+    const val SHELL_ACTION_SAVE_DOCUMENT = 11
 
     init {
         System.loadLibrary("op_engine_jni")
@@ -108,6 +109,22 @@ object OpNative {
     external fun nativeEditorExportFileName(engine: Long): String?
     external fun nativeEditorExportToPath(engine: Long, path: String): Int
     external fun nativeEditorCancelExport(engine: Long): Int
+
+    // ---- Picker-backed Save / Save As ------------------------------------
+    // Declared once after create; the engine then emits
+    // SHELL_ACTION_SAVE_DOCUMENT instead of painting its own name dialog.
+    // See MainActivity.beginDocumentSave for the round trip.
+    external fun nativeEditorConfigureSavePicker(engine: Long, enabled: Boolean): Int
+    /** Suggested `<stem>.op` for the picker; null when no save is pending. */
+    external fun nativeEditorSaveFileName(engine: Long): String?
+    /** Bound destination URI a plain Save rewrites; null = show the picker. */
+    external fun nativeEditorSaveTarget(engine: Long): String?
+    /** Writes canonical `.op` bytes into a NEW app-private staging file. */
+    external fun nativeEditorStageSaveToPath(engine: Long, path: String): Int
+    /** The staged bytes reached the picked URI: bind it and mark it saved. */
+    external fun nativeEditorCommitSave(engine: Long, handle: String, displayName: String): Int
+    /** Picker dismissed (false) or the copy failed (true); stays dirty. */
+    external fun nativeEditorCancelSave(engine: Long, failed: Boolean): Int
     external fun nativeEditorAccountSnapshot(engine: Long): String?
     external fun nativeEditorSignOut(engine: Long): Int
     external fun nativeEditorBeginLogin(engine: Long): Int

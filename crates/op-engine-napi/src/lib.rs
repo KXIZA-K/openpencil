@@ -161,6 +161,12 @@ mod contract_tests {
         "editorExportFileName",
         "editorExportToPath",
         "editorCancelExport",
+        "editorConfigureSavePicker",
+        "editorSaveFileName",
+        "editorSaveTarget",
+        "editorStageSaveToPath",
+        "editorCommitSave",
+        "editorCancelSave",
         "editorAccountSnapshot",
         "editorSignOut",
         "editorBeginLogin",
@@ -250,13 +256,13 @@ mod contract_tests {
 
     #[test]
     fn the_kotlin_derived_prefix_matches_opnative_order() {
-        // The first 55 names are `OpNative.kt`'s own order; the additions
+        // The leading names are `OpNative.kt`'s own order; the additions
         // follow. A new OHOS-only export must be appended, never spliced in.
-        const KOTLIN_DERIVED: usize = 57;
+        const KOTLIN_DERIVED: usize = 63;
         assert_eq!(EXPORTED_NAMES[KOTLIN_DERIVED], "setXcomponentListener");
         assert_eq!(EXPORTED_NAMES[0], "create");
         assert_eq!(EXPORTED_NAMES[KOTLIN_DERIVED - 1], "editorLocaleCode");
-        assert_eq!(EXPORTED_NAMES.len(), 72);
+        assert_eq!(EXPORTED_NAMES.len(), 78);
     }
 
     /// The engine's own C header — the single source of truth for the codes
@@ -290,6 +296,7 @@ mod contract_tests {
             ("OpShellAction_WindowClose", SHELL_ACTION_WINDOW_CLOSE),
             ("OpShellAction_WindowMinimize", SHELL_ACTION_WINDOW_MINIMIZE),
             ("OpShellAction_WindowZoom", SHELL_ACTION_WINDOW_ZOOM),
+            ("OpShellAction_SaveDocument", SHELL_ACTION_SAVE_DOCUMENT),
         ] {
             assert!(
                 HEADER.contains(&format!("{name} = {code},")),

@@ -11,6 +11,7 @@ import { BrowserLauncher } from '../common/BrowserLauncher';
 import { ConfirmDialog } from '../common/ConfirmDialog';
 import { DeviceLoginRequest } from '../common/DeviceLoginRequest';
 import { DocumentShell, ShellOutcome } from '../common/DocumentShell';
+import { DocumentSaveBridge } from '../common/DocumentSaveBridge';
 import { EngineHost, ShellActionSink, WindowControlKind } from '../common/EngineHost';
 import { EngineLanguage } from '../common/EngineLanguage';
 import { IME_PROXY_ID, ImeProxyBridge } from '../common/ImeProxyBridge';
@@ -46,6 +47,7 @@ struct Index {
   private engineStarted: boolean = false;
   private documentOpenInProgress: boolean = false;
   private exportInProgress: boolean = false;
+  private saveInProgress: boolean = false;
 
   private readonly imeProxy: ImeProxyBridge = new ImeProxyBridge();
   private readonly imeProxyController: TextInputController = new TextInputController();
@@ -379,6 +381,7 @@ struct Index {
     return {
       onOpenDocument: (): void => this.openDocument(),
       onExportDocument: (): void => this.exportDocument(),
+      onSaveDocument: (): void => this.saveDocument(),
       onOpenLoginUi: (url: string): void => this.presentLoginUi(url),
       onRequestLogin: (): void => this.requestLogin(),
       onOpenAccountCenter: (): void => this.presentAccountCenter(),
@@ -488,6 +491,31 @@ struct Index {
         this.exportInProgress = false;
         hilog.warn(DOMAIN, TAG, 'export failed: %{public}s', JSON.stringify(error));
         this.presentNotice($r('app.string.document_export_failed'));
+      });
+  }
+
+  private saveDocument(): void {
+    if (this.saveInProgress) {
+      // A second shell action must not race the picker; discard the newly
+      // staged engine request instead of replacing the live one.
+      DocumentSaveBridge.cancel(this.host, false);
+      return;
+    }
+    this.saveInProgress = true;
+    DocumentShell.saveDocument(this.context, this.host)
+      .then((outcome: ShellOutcome) => {
+        this.saveInProgress = false;
+        if (outcome === ShellOutcome.FAILED) {
+          this.presentNotice($r('app.string.document_save_failed'));
+        }
+      })
+      .catch((error: Object) => {
+        this.saveInProgress = false;
+        hilog.warn(DOMAIN, TAG, 'save failed: %{public}s', JSON.stringify(error));
+        // The promise died before any terminal report; make sure the engine
+        // is not left believing a save is still in flight.
+        DocumentSaveBridge.cancel(this.host, true);
+        this.presentNotice($r('app.string.document_save_failed'));
       });
   }
 

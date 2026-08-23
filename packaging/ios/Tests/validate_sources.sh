@@ -21,6 +21,8 @@ required=(
   "$player_dir/Sources/OpPlayerView.swift"
   "$player_dir/Sources/OpEngineHost.swift"
   "$player_dir/Sources/DocumentExportCoordinator.swift"
+  "$player_dir/Sources/DocumentSaveCoordinator.swift"
+  "$player_dir/Sources/DocumentSaveBinding.swift"
   "$player_dir/Sources/AuthStorage.swift"
   "$player_dir/Sources/DocumentStorage.swift"
   "$player_dir/Sources/DeviceLoginRequestInfo.swift"
@@ -61,6 +63,20 @@ for key in UIFileSharingEnabled LSSupportsOpeningDocumentsInPlace; do
     exit 1
   fi
 done
+
+# Save / Save As must go through the document picker (the engine paints no
+# name dialog once the capability is declared), and the picker must still open
+# on the Files-visible Documents directory.
+grep -Fq 'DocumentSaveCoordinator.declareCapability(engine: created, host: self)' \
+  "$player_dir/Sources/OpEngineHost.swift"
+grep -Fq 'op_editor_configure_save_picker(engine, true)' \
+  "$player_dir/Sources/DocumentSaveCoordinator.swift"
+grep -Fq 'OpShellAction_SaveDocument.rawValue' "$player_dir/Sources/OpEngineHost.swift"
+grep -Fq 'picker.directoryURL = DocumentStorage.prepare()' \
+  "$player_dir/Sources/DocumentSaveCoordinator.swift"
+# Only a reported destination write may mark the document saved.
+grep -Fq 'op_editor_commit_save' "$player_dir/Sources/DocumentSaveCoordinator.swift"
+grep -Fq 'op_editor_cancel_save' "$player_dir/Sources/DocumentSaveCoordinator.swift"
 
 while IFS= read -r source; do
   lines="$(wc -l < "$source" | tr -d ' ')"
@@ -286,6 +302,38 @@ raise "picker success cleanup missing" unless coordinator.include?("didPickDocum
 raise "picker cancellation cleanup missing" unless coordinator.include?("documentPickerWasCancelled")
 RUBY
 
+ruby - "$player_dir/Sources/OpEngineHost.swift" \
+  "$player_dir/Sources/DocumentSaveCoordinator.swift" <<'RUBY'
+host = File.read(ARGV.fetch(0))
+coordinator = File.read(ARGV.fetch(1))
+
+drain = host[/private func drainShellActions\b.*?(?=\n    \/\/\/ Polls the engine)/m]
+raise "iOS save shell-action branch missing" unless drain
+action = drain.index("OpShellAction_SaveDocument.rawValue")
+defer_to_uikit = drain.index("DispatchQueue.main.async", action || 0)
+begin_save = drain.index("documentSaveCoordinator.beginSave()", action || 0)
+raise "save presentation must leave the editor ABI stack" unless action && defer_to_uikit && begin_save && action < defer_to_uikit && defer_to_uikit < begin_save
+raise "save teardown must cancel the pending engine request" unless host.include?("documentSaveCoordinator.cancelForTeardown()")
+
+begin_method = coordinator[/func beginSave\(\).*?(?=\n    \/\/\/ Teardown)/m]
+raise "iOS save coordinator missing" unless begin_method
+filename = begin_method.index("copySaveFilename")
+stage_url = begin_method.index("makeStagedFileURL")
+write = begin_method.index("op_editor_stage_save_to_path")
+target = begin_method.index("copySaveTarget")
+rewrite = begin_method.index("rewrite(staged:")
+present = begin_method.index("presentPicker(for: staged)")
+raise "save must name, stage, then write the canonical bytes" unless filename && stage_url && write && filename < stage_url && stage_url < write
+raise "a bound destination must be rewritten before the picker is considered" unless target && rewrite && present && write < target && target < rewrite && rewrite < present
+
+# Only a reported destination write may mark the document saved, and the
+# engine must always be told how a round trip ended.
+raise "save commit missing" unless coordinator.include?("op_editor_commit_save")
+raise "save cancellation missing" unless coordinator.include?("op_editor_cancel_save")
+raise "picker cancellation must release the engine's pending save" unless coordinator[/func documentPickerWasCancelled.*?\n    \}/m]&.include?("cancelPendingEngineRequest(failed: false)")
+raise "a bookmark that cannot be made must not mark the document saved" unless coordinator[/private func bind\(pickedURL.*?(?=\n    \/\/ MARK:)/m]&.include?("cancelPendingEngineRequest(failed: true)")
+RUBY
+
 sdk="$(xcrun --sdk iphonesimulator --show-sdk-path)"
 target="arm64-apple-ios15.0-simulator"
 module_cache="${TMPDIR:-/tmp}/op-ios-module-cache"
@@ -369,6 +417,15 @@ xcrun swiftc \
   "$player_dir/Tests/DeviceLoginRequestInfoTests.swift" \
   -o "$device_login_test"
 "$device_login_test"
+
+save_binding_test="$reader_test_dir/document-save-binding-runner"
+xcrun swiftc \
+  -warnings-as-errors \
+  -parse-as-library \
+  "$player_dir/Sources/DocumentSaveBinding.swift" \
+  "$player_dir/Tests/DocumentSaveBindingTests.swift" \
+  -o "$save_binding_test"
+"$save_binding_test"
 
 universal_link_test="$reader_test_dir/universal-link-runner"
 xcrun swiftc \

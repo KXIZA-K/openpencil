@@ -47,6 +47,13 @@ export enum OpShellAction {
   WINDOW_CLOSE = 8,
   WINDOW_MINIMIZE = 9,
   WINDOW_ZOOM = 10,
+  /**
+   * Save / Save As through `DocumentViewPicker.save`. Emitted only after
+   * `editorConfigureSavePicker(engine, true)`: HarmonyOS public directories
+   * are not path-writable, so the engine cannot place a document anywhere
+   * the user's file manager can reach on its own.
+   */
+  SAVE_DOCUMENT = 11,
 }
 
 /** Pointer phases mirroring the C ABI `OpPointerPhase`. */

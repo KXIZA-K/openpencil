@@ -10,10 +10,11 @@ use napi_derive_ohos::napi;
 use napi_ohos::bindgen_prelude::Buffer;
 use op_engine_ffi::{
     op_editor_account_snapshot, op_editor_auth_sign_out, op_editor_begin_login,
-    op_editor_cancel_export, op_editor_cancel_login, op_editor_configure_auth,
-    op_editor_copy_export_file_name, op_editor_copy_login_url, op_editor_export_to_path,
-    op_editor_locale_code, op_editor_open_document, op_editor_set_locale,
-    op_editor_take_shell_action, OpStatus, SHELL_ACTION_NONE,
+    op_editor_cancel_export, op_editor_cancel_login, op_editor_cancel_save, op_editor_commit_save,
+    op_editor_configure_auth, op_editor_configure_save_picker, op_editor_copy_export_file_name,
+    op_editor_copy_login_url, op_editor_copy_save_file_name, op_editor_copy_save_target,
+    op_editor_export_to_path, op_editor_locale_code, op_editor_open_document, op_editor_set_locale,
+    op_editor_stage_save_to_path, op_editor_take_shell_action, OpStatus, SHELL_ACTION_NONE,
 };
 
 use crate::action::{auth_region_or_default, STATUS_CLOSING};
@@ -321,6 +322,72 @@ pub fn editor_export_to_path(engine: i64, path: String) -> i32 {
 pub fn editor_cancel_export(engine: i64) -> i32 {
     // SAFETY: dispatched onto the engine's owner thread.
     call_status(engine, move |e| unsafe { op_editor_cancel_export(e) })
+}
+
+// ---- Picker-backed Save / Save As ----------------------------------------
+//
+// The ArkTS side is `DocumentShell.saveDocument`. See
+// `op-engine-ffi/src/editor_document_shell.rs` for the round trip.
+
+/// `editorConfigureSavePicker` — declare that this shell routes Save /
+/// Save As through `DocumentViewPicker.save`.
+#[napi(js_name = "editorConfigureSavePicker")]
+pub fn editor_configure_save_picker(engine: i64, enabled: bool) -> i32 {
+    // SAFETY: dispatched onto the engine's owner thread.
+    call_status(engine, move |e| unsafe {
+        op_editor_configure_save_picker(e, enabled)
+    })
+}
+
+/// `editorSaveFileName` — the pending save's suggested file name, or `null`
+/// when no save is pending. Reading never consumes it.
+#[napi(js_name = "editorSaveFileName")]
+pub fn editor_save_file_name(engine: i64) -> Option<String> {
+    copy_out_string(engine, op_editor_copy_save_file_name)
+}
+
+/// `editorSaveTarget` — the durable destination handle a plain Save should
+/// rewrite, or `null` when the shell must present the picker.
+#[napi(js_name = "editorSaveTarget")]
+pub fn editor_save_target(engine: i64) -> Option<String> {
+    copy_out_string(engine, op_editor_copy_save_target)
+}
+
+/// `editorStageSaveToPath` — write the canonical `.op` bytes into a NEW
+/// app-private staging file. Does not mark the document saved.
+#[napi(js_name = "editorStageSaveToPath")]
+pub fn editor_stage_save_to_path(engine: i64, path: String) -> i32 {
+    let path = path.into_bytes();
+    // SAFETY: `path` outlives the call.
+    call_status(engine, move |e| unsafe {
+        op_editor_stage_save_to_path(e, path.as_ptr(), path.len())
+    })
+}
+
+/// `editorCommitSave` — the staged bytes reached the picked file URI; bind
+/// it and mark the document saved.
+#[napi(js_name = "editorCommitSave")]
+pub fn editor_commit_save(engine: i64, handle: String, display_name: String) -> i32 {
+    let handle = handle.into_bytes();
+    let display_name = display_name.into_bytes();
+    // SAFETY: both ranges outlive the call.
+    call_status(engine, move |e| unsafe {
+        op_editor_commit_save(
+            e,
+            handle.as_ptr(),
+            handle.len(),
+            display_name.as_ptr(),
+            display_name.len(),
+        )
+    })
+}
+
+/// `editorCancelSave` — the picker was dismissed, or the copy into the
+/// picked file failed. The document stays dirty either way.
+#[napi(js_name = "editorCancelSave")]
+pub fn editor_cancel_save(engine: i64, failed: bool) -> i32 {
+    // SAFETY: dispatched onto the engine's owner thread.
+    call_status(engine, move |e| unsafe { op_editor_cancel_save(e, failed) })
 }
 
 /// `editorHover` — desktop-chrome cursor motion without a pressed button;

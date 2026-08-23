@@ -121,6 +121,7 @@ class OpSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Call
     private var keyboardHeight = 0f
     private var openDocumentHandler: (() -> Unit)? = null
     private var exportDocumentHandler: (() -> Unit)? = null
+    private var saveDocumentHandler: (() -> Unit)? = null
     private var accountCenterHandler: (() -> Unit)? = null
     private var requestLoginHandler: (() -> Unit)? = null
     private var languagePickerHandler: (() -> Unit)? = null
@@ -153,6 +154,20 @@ class OpSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Call
     /** Registers the Activity-owned save-UI handler for frozen exports. */
     fun setExportDocumentHandler(handler: () -> Unit) {
         exportDocumentHandler = handler
+    }
+
+    /**
+     * Registers the Activity-owned Save / Save As picker handler AND tells
+     * the engine this shell can present one. Without the declaration the
+     * engine keeps painting its own name dialog and writes into the private
+     * `documents/` fallback, which Android 11+ hides from the file manager.
+     */
+    fun setSaveDocumentHandler(handler: () -> Unit) {
+        saveDocumentHandler = handler
+        val current = engine
+        if (editorMode && current != 0L) {
+            OpNative.nativeEditorConfigureSavePicker(current, true)
+        }
     }
 
     /** Registers the Activity-owned native account-center handler. */
@@ -347,6 +362,12 @@ class OpSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Call
                 return
             }
             authRuntime.configure(engine, editorMode)
+            // The Activity may have registered the handler before the engine
+            // existed (configure() runs in onCreate); re-declare here so the
+            // capability is always in place before the first shell action.
+            if (editorMode && saveDocumentHandler != null) {
+                OpNative.nativeEditorConfigureSavePicker(engine, true)
+            }
             EngineLanguage.storedPreference(context)?.let { tag ->
                 OpNative.nativeEditorSetLocale(engine, tag)
             }
@@ -843,6 +864,9 @@ class OpSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Call
             action == OpNative.SHELL_ACTION_EXPORT_DOCUMENT -> post {
                 if (engine != 0L) exportDocumentHandler?.invoke()
             }
+            action == OpNative.SHELL_ACTION_SAVE_DOCUMENT -> post {
+                if (engine != 0L) saveDocumentHandler?.invoke()
+            }
             action == OpNative.SHELL_ACTION_OPEN_ACCOUNT_CENTER -> post {
                 if (engine != 0L) accountCenterHandler?.invoke()
             }
@@ -931,6 +955,7 @@ class OpSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Call
     fun destroy() {
         openDocumentHandler = null
         exportDocumentHandler = null
+        saveDocumentHandler = null
         accountCenterHandler = null
         requestLoginHandler = null
         languagePickerHandler = null

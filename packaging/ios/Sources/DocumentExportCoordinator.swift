@@ -130,7 +130,10 @@ final class DocumentExportCoordinator: NSObject {
         return Self.validatedFilename(filename)
     }
 
-    private static func validatedFilename(_ filename: String) -> String? {
+    /// Shared with `DocumentSaveCoordinator`, exactly as the Android and
+    /// HarmonyOS shells share `DocumentExportSupport.validatedFilename`
+    /// between their export and save flows.
+    static func validatedFilename(_ filename: String) -> String? {
         guard
             !filename.isEmpty,
             filename != ".",

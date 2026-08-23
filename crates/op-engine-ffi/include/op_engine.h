@@ -163,6 +163,11 @@ typedef enum OpShellAction {
     OpShellAction_WindowClose = 8,
     OpShellAction_WindowMinimize = 9,
     OpShellAction_WindowZoom = 10,
+    /* Save the current document through the platform file picker. Emitted
+     * only after op_editor_configure_save_picker(engine, true); a shell that
+     * never declares the capability keeps the engine-owned destination
+     * directory and the engine-painted name dialog. */
+    OpShellAction_SaveDocument = 11,
 } OpShellAction;
 
 /* Regional SSO deployments for op_editor_configure_auth. Both map to pinned
@@ -363,6 +368,54 @@ OpStatus op_editor_export_to_path(OpEngine *engine, const uint8_t *path_ptr, siz
 
 /* Discard a frozen export when the platform save UI cannot be presented. */
 OpStatus op_editor_cancel_export(OpEngine *engine);
+
+/* ---- Picker-backed Save / Save As -------------------------------------
+ *
+ * A file picker returns an opaque handle, not a path (a SAF content:// URI,
+ * a DocumentViewPicker file URI, security-scoped bookmark data), so the
+ * engine writes canonical .op bytes into an app-private staging file the
+ * shell names, and the shell copies them into the picked destination:
+ *
+ *   OpShellAction_SaveDocument
+ *   -> op_editor_copy_save_file_name   suggested "<stem>.op"
+ *   -> op_editor_copy_save_target      bound handle, *required == 0 = prompt
+ *   -> (prompt only) run the picker
+ *   -> op_editor_stage_save_to_path    engine writes the bytes
+ *   -> copy staging into the destination
+ *   -> op_editor_commit_save / op_editor_cancel_save
+ *
+ * Only op_editor_commit_save marks the document saved. The shell owns the
+ * staging directory and must remove it on every terminal path. */
+
+/* Declare that this shell drives Save / Save As through its file picker.
+ * Call once after op_create. */
+OpStatus op_editor_configure_save_picker(OpEngine *engine, bool enabled);
+
+/* Peek/copy the pending save's suggested UTF-8 file name. NULL/0 reports the
+ * required length. Reading never consumes the pending save. */
+OpStatus op_editor_copy_save_file_name(OpEngine *engine, uint8_t *buffer, size_t capacity, size_t *required);
+
+/* Peek/copy the durable destination handle a plain Save should rewrite.
+ * Returns OpStatus_Ok with *required == 0 when the document has no binding
+ * yet — that is the signal to present the picker, not an error. */
+OpStatus op_editor_copy_save_target(OpEngine *engine, uint8_t *buffer, size_t capacity, size_t *required);
+
+/* Write the live document's canonical .op bytes to a NEW absolute UTF-8
+ * staging path whose file name matches op_editor_copy_save_file_name. Does
+ * NOT consume the pending save or mark the document saved. */
+OpStatus op_editor_stage_save_to_path(OpEngine *engine, const uint8_t *path_ptr, size_t path_len);
+
+/* The shell placed the staged bytes at the destination. `handle` is the
+ * durable token a later plain Save rewrites; `display_name` is what the
+ * destination is actually called. Marks the document saved. */
+OpStatus op_editor_commit_save(OpEngine *engine,
+                               const uint8_t *handle_ptr, size_t handle_len,
+                               const uint8_t *name_ptr, size_t name_len);
+
+/* The picker was dismissed (failed == false) or the shell could not write
+ * the destination (failed == true). The document stays dirty and keeps its
+ * previous binding either way. */
+OpStatus op_editor_cancel_save(OpEngine *engine, bool failed);
 
 /* Configure the real mobile auth backend. `storage_dir` must be a private
  * app-owned directory; device name and app version are display metadata.

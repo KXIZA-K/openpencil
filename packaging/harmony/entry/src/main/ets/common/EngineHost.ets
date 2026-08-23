@@ -2,7 +2,6 @@ import { http } from '@kit.NetworkKit';
 import { deviceInfo } from '@kit.BasicServicesKit';
 import { ClipboardBridge } from './ClipboardBridge';
 import { hilog } from '@kit.PerformanceAnalysisKit';
-import { fileIo as fs } from '@kit.CoreFileKit';
 import { displaySync } from '@kit.ArkGraphics2D';
 import { OpCallbacks } from 'libopenpencil.so';
 import napi, { OpEngineMode, OpShellAction, OpStatus } from './OpNative';
@@ -10,6 +9,7 @@ import { ImeConduit, ImeConduitHost } from './ImeConduit';
 import { PointerRouter, PointerRouterHost } from './PointerRouter';
 import { ViewportBands } from './WindowBridge';
 import { ViewportInputState } from './ViewportInputState';
+import { SystemFontRegistry } from './SystemFontRegistry';
 
 const DOMAIN = 0x0001;
 const TAG = 'OpenPencilPlayer';
@@ -33,6 +33,8 @@ export enum WindowControlKind {
 export interface ShellActionSink {
   onOpenDocument: () => void;
   onExportDocument: () => void;
+  /** The engine asked for the Save / Save As file picker (action 11). */
+  onSaveDocument: () => void;
   onOpenAccountCenter: () => void;
   onRequestLogin: () => void;
   onOpenLanguagePicker: () => void;
@@ -160,6 +162,11 @@ export class EngineHost implements PointerRouterHost, ImeConduitHost {
       `${bands.width}x${bands.height} dpr=${bands.dpr}`
     );
     this.attach();
+    // HarmonyOS public directories are not path-writable, so Save / Save As
+    // go through `DocumentViewPicker.save` (see `DocumentShell.saveDocument`).
+    if (editorMode) {
+      napi.editorConfigureSavePicker(this.engine, true);
+    }
     // Desktop-class devices get the engine's full desktop chrome (top bar,
     // side panels, pointer-first interactions); phones and tablets keep the
     // touch chrome.
@@ -173,47 +180,11 @@ export class EngineHost implements PointerRouterHost, ImeConduitHost {
     // printable characters. See `ImeConduit`'s prove-then-suppress rule.
     napi.setImeConduitAttached(false);
     this.applyViewport(bands);
-    this.registerSystemCjkFont();
+    SystemFontRegistry.registerCjkFonts(this.engine);
     this.startPump();
     return true;
   }
 
-  /**
-   * skia has no OHOS system font manager, so without this the engine can
-   * paint only its embedded Latin font and CJK chrome strings render as
-   * tofu. HarmonyOS Sans SC carries the CJK repertoire; the engine's
-   * imported-font fallback chain picks it up per codepoint.
-   */
-  private registerSystemCjkFont(): void {
-    // Coverage for every non-Latin chrome locale: Simplified/Traditional
-    // Chinese, Japanese+Korean (the CJK collection), Thai, and Devanagari.
-    // HarmonyOS Sans itself covers Latin/Cyrillic/Greek.
-    const paths: string[] = [
-      '/system/fonts/HarmonyOS_Sans_SC.ttf',
-      '/system/fonts/HarmonyOS_Sans_TC.ttf',
-      '/system/fonts/NotoSansCJK-Regular.ttc',
-      '/system/fonts/NotoSansThai[wdth,wght].ttf',
-      '/system/fonts/NotoSansDevanagariUI-Regular.ttf',
-    ];
-    for (const path of paths) {
-      try {
-        const stat = fs.statSync(path);
-        const file = fs.openSync(path, fs.OpenMode.READ_ONLY);
-        const bytes = new ArrayBuffer(stat.size);
-        fs.readSync(file.fd, bytes);
-        fs.closeSync(file);
-        const status: number = napi.registerFont(this.engine, bytes);
-        hilog.info(
-          DOMAIN,
-          TAG,
-          'system font registered %{public}s',
-          `${path} (${stat.size} bytes) status=${status}`
-        );
-      } catch (error) {
-        hilog.warn(DOMAIN, TAG, 'system font unavailable %{public}s', `${path}: ${error}`);
-      }
-    }
-  }
 
   /** Applies the persisted UI locale right after engine create. */
   applyLocale(tag: string): number {
@@ -536,6 +507,11 @@ export class EngineHost implements PointerRouterHost, ImeConduitHost {
       case OpShellAction.EXPORT_DOCUMENT:
         if (sink !== null) {
           sink.onExportDocument();
+        }
+        break;
+      case OpShellAction.SAVE_DOCUMENT:
+        if (sink !== null) {
+          sink.onSaveDocument();
         }
         break;
       case OpShellAction.OPEN_ACCOUNT_CENTER:

@@ -45,6 +45,7 @@ class MainActivity : ComponentActivity() {
     private var documentOpenInProgress = false
     private var exportStagedFile: File? = null
     private var exportStagingDir: File? = null
+    private lateinit var documentSave: DocumentSaveCoordinator
 
     private val openDocumentLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocument(),
@@ -69,6 +70,16 @@ class MainActivity : ComponentActivity() {
         } else {
             copyStagedExport(staged, uri)
         }
+    }
+
+    private val saveDocumentLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        // A result restored after process death can arrive before onCreate
+        // finished wiring the coordinator; there is no save to report then.
+        if (!::documentSave.isInitialized) return@registerForActivityResult
+        val uri = if (result.resultCode == RESULT_OK) result.data?.data else null
+        documentSave.onPickerResult(uri)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -114,6 +125,17 @@ class MainActivity : ComponentActivity() {
                 ViewGroup.LayoutParams.MATCH_PARENT,
             ),
         )
+        // Save / Save As go through the system file picker: nothing the app
+        // writes to its own directory is browsable on Android 11+, and `.op`
+        // is a document format, not an export format.
+        documentSave = DocumentSaveCoordinator(
+            context = this,
+            surfaceView = surfaceView,
+            launchPicker = { intent -> saveDocumentLauncher.launch(intent) },
+            onError = { if (!isFinishing && !isDestroyed) showSaveError() },
+        )
+        surfaceView.setSaveDocumentHandler { documentSave.begin() }
+
         val regionStore = surfaceView.authRuntime.regionStore()
         loginBackCallback = object : OnBackPressedCallback(false) {
             override fun handleOnBackPressed() {
@@ -182,6 +204,7 @@ class MainActivity : ComponentActivity() {
         if (::nativeLogin.isInitialized) nativeLogin.destroy()
         if (::accountCenter.isInitialized) accountCenter.destroy()
         cleanupExportStaging()
+        if (::documentSave.isInitialized) documentSave.cancelForTeardown()
         // Teardown unconditionally (rotation never reaches here thanks to
         // configChanges).
         if (::surfaceView.isInitialized) surfaceView.destroy()
@@ -318,6 +341,10 @@ class MainActivity : ComponentActivity() {
 
     private fun showExportError() {
         Toast.makeText(this, R.string.document_export_failed, Toast.LENGTH_SHORT).show()
+    }
+
+    private fun showSaveError() {
+        Toast.makeText(this, R.string.document_save_failed, Toast.LENGTH_SHORT).show()
     }
 
     private fun readAndOpenDocument(uri: Uri) {

@@ -162,6 +162,12 @@ only trust the fields when `status === 0`.
 | `editorExportFileName` | `engine: number` | `string \| null` — does NOT consume the export |
 | `editorExportToPath` | `engine: number, path: string` | `number` — target must not exist |
 | `editorCancelExport` | `engine: number` | `number` |
+| `editorConfigureSavePicker` | `engine: number, enabled: boolean` | `number` — declares that this shell routes Save / Save As through `DocumentViewPicker.save`; call once after `create` |
+| `editorSaveFileName` | `engine: number` | `string \| null` — the pending save's suggested `<stem>.op`; does NOT consume it |
+| `editorSaveTarget` | `engine: number` | `string \| null` — the bound destination URI a plain Save rewrites; `null` = show the picker |
+| `editorStageSaveToPath` | `engine: number, path: string` | `number` — writes canonical `.op` bytes to a NEW app-private staging file; does NOT mark the document saved |
+| `editorCommitSave` | `engine: number, handle: string, displayName: string` | `number` — the staged bytes reached the picked file; binds it and marks the document saved |
+| `editorCancelSave` | `engine: number, failed: boolean` | `number` — picker dismissed (`false`) or the copy failed (`true`); the document stays dirty |
 | `editorAccountSnapshot` | `engine: number` | `string \| null` — JSON, re-read per call |
 | `editorSignOut` | `engine: number` | `number` |
 | `editorBeginLogin` | `engine: number` | `number` — `10` (NotReady) = stub backend, see below |

@@ -107,7 +107,11 @@ fn type_text(pointer: *mut OpEngine, text: &str) {
 }
 
 fn saved_path(engine: &mut OpEngine) -> Option<PathBuf> {
-    engine.session_mut_for_test().document_save.path.clone()
+    engine
+        .session_mut_for_test()
+        .document_save
+        .bound_path()
+        .map(std::path::Path::to_path_buf)
 }
 
 #[test]

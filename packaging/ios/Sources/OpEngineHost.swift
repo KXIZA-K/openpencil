@@ -28,6 +28,7 @@ final class OpEngineHost: NSObject {
     private let displayLinkTarget = OpDisplayLinkTarget()
     private var observers: [NSObjectProtocol] = []
     private lazy var documentExportCoordinator = DocumentExportCoordinator(host: self)
+    private lazy var documentSaveCoordinator = DocumentSaveCoordinator(host: self)
     /// Editor mode (full desktop chrome) vs bare viewer.
     let editorMode: Bool
 
@@ -115,6 +116,7 @@ final class OpEngineHost: NSObject {
         displayLink?.invalidate()
         displayLink = nil
         documentExportCoordinator.cancelForTeardown()
+        documentSaveCoordinator.cancelForTeardown()
 
         if let engine {
             let suspendStatus = op_suspend(engine)
@@ -210,6 +212,7 @@ final class OpEngineHost: NSObject {
             return
         }
         engine = created
+        if editorMode { DocumentSaveCoordinator.declareCapability(engine: created, host: self) }
         registerBundledFonts(engine: created)
         var surfaceDesc = OpSurfaceDesc()
         surfaceDesc.size = MemoryLayout<OpSurfaceDesc>.size
@@ -472,13 +475,13 @@ final class OpEngineHost: NSObject {
                 DispatchQueue.main.async { [weak self] in
                     self?.documentExportCoordinator.beginExport()
                 }
+            } else if action == Int32(OpShellAction_SaveDocument.rawValue) {
+                DispatchQueue.main.async { [weak self] in
+                    self?.documentSaveCoordinator.beginSave()
+                }
             }
         }
     }
-
-
-
-
 
     /// Polls the engine's IME focus after every frame; the view shows or
     /// hides the system keyboard on transitions.

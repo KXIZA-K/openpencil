@@ -3,6 +3,7 @@
     <string name="document_open_failed">打开文件失败。</string>
     <string name="document_type_unsupported">请选择 .op 或 .pen 文件。</string>
     <string name="document_export_failed">导出文件失败。</string>
+    <string name="document_save_failed">保存文档失败。</string>
     <string name="native_login_title">登录 OpenPencil</string>
     <string name="native_login_close">关闭</string>
     <string name="native_login_email">邮箱</string>

@@ -25,6 +25,10 @@
       "value": "导出文件失败。"
     },
     {
+      "name": "document_save_failed",
+      "value": "保存文档失败。"
+    },
+    {
       "name": "engine_start_failed",
       "value": "无法启动 OpenPencil 引擎。"
     },

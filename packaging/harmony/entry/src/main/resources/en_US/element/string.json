@@ -25,6 +25,10 @@
       "value": "Couldn't export this file."
     },
     {
+      "name": "document_save_failed",
+      "value": "Couldn't save this document."
+    },
+    {
       "name": "engine_start_failed",
       "value": "Couldn't start the OpenPencil engine."
     },

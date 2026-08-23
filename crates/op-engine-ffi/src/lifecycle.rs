@@ -369,9 +369,11 @@ impl Session {
                 op_editor_host_core::settings_io::save(host.editor_state());
             }
         }
-        // Same last-reliable-moment rule for the document itself: a doc
-        // already bound to a sandbox file is flushed when dirty. A doc that
-        // was never saved is left alone (no silent file invention).
+        // Same last-reliable-moment rule for the document itself: a doc bound
+        // to an engine-writable path is flushed when dirty; one bound to a
+        // shell-owned picker destination gets a private shadow copy and stays
+        // dirty until the shell rewrites the real file on the next drain. A
+        // doc that was never saved is left alone (no silent file invention).
         #[cfg(feature = "editor")]
         crate::editor_document::flush_on_suspend(self);
         self.surface = SurfaceSlot::None;

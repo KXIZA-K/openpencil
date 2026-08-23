@@ -215,6 +215,26 @@ export const editorOpenDocument: (engine: number, bytes: ArrayBuffer, name: stri
 export const editorExportFileName: (engine: number) => string | null;
 export const editorExportToPath: (engine: number, path: string) => number;
 export const editorCancelExport: (engine: number) => number;
+/**
+ * Picker-backed Save / Save As. `editorConfigureSavePicker` is declared once
+ * after `create`; the engine then emits `OpShellAction.SAVE_DOCUMENT` instead
+ * of painting its own name dialog. See `DocumentShell.saveDocument`.
+ */
+export const editorConfigureSavePicker: (engine: number, enabled: boolean) => number;
+/** Suggested `<stem>.op` for the picker; null when no save is pending. */
+export const editorSaveFileName: (engine: number) => string | null;
+/** Bound destination URI a plain Save rewrites; null = present the picker. */
+export const editorSaveTarget: (engine: number) => string | null;
+/** Writes canonical `.op` bytes into a NEW app-private staging file. */
+export const editorStageSaveToPath: (engine: number, path: string) => number;
+/** The staged bytes reached the picked file: bind it and mark it saved. */
+export const editorCommitSave: (
+  engine: number,
+  handle: string,
+  displayName: string,
+) => number;
+/** Picker dismissed (`false`) or the copy failed (`true`); stays dirty. */
+export const editorCancelSave: (engine: number, failed: boolean) => number;
 export const editorAccountSnapshot: (engine: number) => string | null;
 export const editorSignOut: (engine: number) => number;
 export const editorBeginLogin: (engine: number) => number;

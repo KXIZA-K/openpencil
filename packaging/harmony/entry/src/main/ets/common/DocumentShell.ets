@@ -2,6 +2,7 @@ import { common } from '@kit.AbilityKit';
 import { fileIo as fs, picker } from '@kit.CoreFileKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { DocumentExportSupport } from './DocumentExportSupport';
+import { DocumentSaveBridge } from './DocumentSaveBridge';
 import { EngineHost } from './EngineHost';
 import { OpStatus } from './OpNative';
 
@@ -172,6 +173,127 @@ export class DocumentShell {
       return ShellOutcome.FAILED;
     } finally {
       DocumentShell.removeStaging(stagingDir);
+    }
+  }
+
+  /**
+   * Shell action 11: place the document where the user's file manager can
+   * reach it.
+   *
+   * HarmonyOS public directories are not path-writable, so the engine cannot
+   * save anywhere visible on its own — and `.op` is a document format, not an
+   * export format, so there is no other way out either. The engine stages the
+   * canonical bytes into an app-private file and this method copies them into
+   * the picked destination.
+   *
+   * A plain Save on an already-placed document skips the picker entirely: the
+   * engine hands back the bound file URI and the copy goes straight there. If
+   * that URI can no longer be written (the file was deleted, or the grant did
+   * not survive), the round trip falls back to asking for a new destination
+   * rather than reporting a failed save.
+   *
+   * Every terminal path either commits or cancels the engine's pending save
+   * and removes the staging directory.
+   */
+  static async saveDocument(
+    context: common.UIAbilityContext,
+    host: EngineHost
+  ): Promise<ShellOutcome> {
+    const filename: string | null =
+      DocumentExportSupport.validatedFilename(DocumentSaveBridge.fileName(host));
+    if (filename === null) {
+      hilog.warn(DOMAIN, TAG, 'engine offered no usable save file name');
+      DocumentSaveBridge.cancel(host, true);
+      return ShellOutcome.FAILED;
+    }
+
+    const stagingDir: string = `${context.cacheDir}/saves/${Date.now()}`;
+    const stagedPath: string = `${stagingDir}/${filename}`;
+    try {
+      fs.mkdirSync(stagingDir, true);
+    } catch (error) {
+      hilog.warn(DOMAIN, TAG, 'could not create save staging directory');
+      DocumentSaveBridge.cancel(host, true);
+      return ShellOutcome.FAILED;
+    }
+
+    // Rust writes the canonical `.op` bytes so a multi-megabyte document
+    // never crosses NAPI as a byte array.
+    const status: number = DocumentSaveBridge.stageToPath(host, stagedPath);
+    if (status !== OpStatus.OK) {
+      hilog.warn(
+        DOMAIN,
+        TAG,
+        "could not stage save '%{public}s', status=%{public}d: %{public}s",
+        filename,
+        status,
+        host.lastError()
+      );
+      DocumentSaveBridge.cancel(host, true);
+      DocumentShell.removeStaging(stagingDir);
+      return ShellOutcome.FAILED;
+    }
+
+    try {
+      const bound: string | null = DocumentSaveBridge.target(host);
+      if (bound !== null && bound.length > 0 && DocumentShell.copyInto(stagedPath, bound)) {
+        DocumentSaveBridge.commit(host, bound, filename);
+        return ShellOutcome.OK;
+      }
+      // No binding yet, or the bound destination refused the write: ask the
+      // user where this document should live.
+      const destination: string | null = await DocumentShell.pickSaveDestination(context, filename);
+      if (destination === null) {
+        DocumentSaveBridge.cancel(host, false);
+        return ShellOutcome.CANCELLED;
+      }
+      if (!DocumentShell.copyInto(stagedPath, destination)) {
+        DocumentSaveBridge.cancel(host, true);
+        return ShellOutcome.FAILED;
+      }
+      DocumentSaveBridge.commit(host, destination, DocumentShell.displayNameOf(destination));
+      return ShellOutcome.OK;
+    } finally {
+      DocumentShell.removeStaging(stagingDir);
+    }
+  }
+
+  /** `DocumentViewPicker.save`, returning the picked URI or null. */
+  private static async pickSaveDestination(
+    context: common.UIAbilityContext,
+    filename: string
+  ): Promise<string | null> {
+    try {
+      const viewPicker = new picker.DocumentViewPicker(context);
+      const options = new picker.DocumentSaveOptions();
+      options.newFileNames = [filename];
+      options.fileSuffixChoices = ['.op'];
+      const result: string[] = await viewPicker.save(options);
+      return result.length === 0 ? null : result[0];
+    } catch (error) {
+      hilog.warn(DOMAIN, TAG, 'save picker failed: %{public}s', JSON.stringify(error));
+      return null;
+    }
+  }
+
+  /** Truncating copy of the staged file into a picked URI. */
+  private static copyInto(stagedPath: string, destination: string): boolean {
+    try {
+      const dest = fs.openSync(destination, fs.OpenMode.READ_WRITE | fs.OpenMode.TRUNC);
+      try {
+        fs.copyFileSync(stagedPath, dest.fd);
+      } finally {
+        fs.closeSync(dest);
+      }
+      return true;
+    } catch (error) {
+      hilog.warn(
+        DOMAIN,
+        TAG,
+        'could not write the save destination: %{public}s',
+        JSON.stringify(error)
+      );
+      return false;
     }
   }
 
