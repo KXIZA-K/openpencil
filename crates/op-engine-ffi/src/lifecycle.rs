@@ -65,6 +65,9 @@ pub(crate) struct Session {
     /// Frozen file payload waiting for the platform save UI.
     #[cfg(feature = "editor")]
     pub(crate) export_shell: crate::editor_export::EditorExportShellState,
+    /// Sandbox path binding for the mobile Save / Save As flow.
+    #[cfg(feature = "editor")]
+    pub(crate) document_save: crate::editor_document::DocumentSaveShellState,
     /// Background provider-catalog jobs. Workers never own or call back into
     /// this session; results land from the engine-thread frame pump only.
     #[cfg(feature = "editor")]
@@ -190,6 +193,8 @@ impl Session {
             auth_shell: Default::default(),
             #[cfg(feature = "editor")]
             export_shell: Default::default(),
+            #[cfg(feature = "editor")]
+            document_save: Default::default(),
             #[cfg(feature = "editor")]
             model_discovery: Default::default(),
             #[cfg(feature = "editor")]
@@ -349,6 +354,11 @@ impl Session {
                 op_editor_host_core::settings_io::save(host.editor_state());
             }
         }
+        // Same last-reliable-moment rule for the document itself: a doc
+        // already bound to a sandbox file is flushed when dirty. A doc that
+        // was never saved is left alone (no silent file invention).
+        #[cfg(feature = "editor")]
+        crate::editor_document::flush_on_suspend(self);
         self.surface = SurfaceSlot::None;
         self.suspended = true;
         self.gesture.reset();

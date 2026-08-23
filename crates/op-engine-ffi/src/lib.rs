@@ -48,6 +48,10 @@ mod editor_chat_turn;
 #[cfg(feature = "editor")]
 mod editor_collab;
 #[cfg(feature = "editor")]
+mod editor_document;
+#[cfg(all(feature = "editor", test))]
+mod editor_document_save_tests;
+#[cfg(feature = "editor")]
 mod editor_export;
 #[cfg(feature = "editor")]
 mod editor_image_search;

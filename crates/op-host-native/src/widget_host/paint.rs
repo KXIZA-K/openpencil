@@ -736,6 +736,10 @@ impl WidgetHostNative {
             );
         }
 
+        // 13b. Mobile save-name dialog — modal above every touch surface;
+        //      matches its tier-0 position in the press ladder.
+        self.paint_save_name_dialog(frame, viewport_width, viewport_height);
+
         // Top-most overlay band — the diagnostics notice, the toast banner and
         // the missing-font modal, in that z-order. Split into a sibling at the
         // 800-line cap; pure code motion.

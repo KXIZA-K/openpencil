@@ -109,6 +109,35 @@ impl WidgetHostNative {
         }
     }
 
+    /// Mobile save-name dialog — scrim + centred card, painted with the
+    /// top-most modal band so it covers every sheet and panel. Only the
+    /// FFI hosts ever open it; on desktop the state stays closed.
+    pub(in crate::widget_host) fn paint_save_name_dialog(
+        &mut self,
+        frame: &mut NativeFrameBackend<'_>,
+        viewport_width: f32,
+        viewport_height: f32,
+    ) {
+        if !self.editor_state.editor_ui.save_name_dialog.open {
+            return;
+        }
+        frame.fill_rect(
+            Rect {
+                origin: Point2D::new(0.0, 0.0),
+                size: Point2D::new(viewport_width, viewport_height),
+            },
+            op_editor_ui::widgets::save_name_dialog::save_name_scrim_color(),
+        );
+        let dialog = op_editor_ui::widgets::SaveNameDialog::anchored(
+            viewport_width,
+            canvas_geometry::touch_app_bar_height(&self.editor_state),
+        );
+        let mut cx = PaintCx {
+            backend: &mut *frame,
+        };
+        dialog.paint(&mut cx, &self.editor_state.editor_ui, self.now_ms);
+    }
+
     /// Paint the modal dimming layer after the canvas and before any touch
     /// sheet. Tablet popovers use their own outlined surface and keep the
     /// surrounding editor readable; phone sheets get a restrained scrim.

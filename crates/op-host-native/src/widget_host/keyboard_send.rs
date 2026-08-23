@@ -8,6 +8,19 @@ use super::WidgetHostNative;
 
 impl WidgetHostNative {
     pub fn apply_send(&mut self) -> bool {
+        // Enter in the save-name dialog confirms (mobile keyboards send it
+        // as the "done" action); a blank name swallows the key instead.
+        if self.editor_state.editor_ui.save_name_dialog.open {
+            if self
+                .editor_state
+                .editor_ui
+                .save_name_dialog
+                .request_confirm()
+            {
+                self.mark_dirty();
+            }
+            return true;
+        }
         if self.editor_state.editor_ui.prompt_center.open {
             return true;
         }

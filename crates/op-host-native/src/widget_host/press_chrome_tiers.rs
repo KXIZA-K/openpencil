@@ -496,6 +496,53 @@ impl WidgetHostNative {
         None
     }
 
+    /// Mobile save-name dialog (Save / Save As file-name prompt): fully
+    /// modal while open — every press is consumed. Confirm raises the
+    /// one-shot confirmation the FFI host drains; Cancel and an outside
+    /// tap dismiss the dialog like the touch sheets' scrim. `None` when
+    /// the dialog is closed.
+    pub(in crate::widget_host) fn press_save_name_dialog_tier(
+        &mut self,
+        x: f32,
+        y: f32,
+        viewport_width: f32,
+        _viewport_height: f32,
+    ) -> Option<bool> {
+        if !self.editor_state.editor_ui.save_name_dialog.open {
+            return None;
+        }
+        let point = Point2D::new(x, y);
+        let dialog = op_editor_ui::widgets::SaveNameDialog::anchored(
+            viewport_width,
+            op_editor_ui::widgets::host_canvas_geometry::touch_app_bar_height(&self.editor_state),
+        );
+        if dialog.contains(point) {
+            match dialog.hit_test(point) {
+                Some(op_editor_ui::widgets::SaveNameDialogHit::Confirm) => {
+                    if self
+                        .editor_state
+                        .editor_ui
+                        .save_name_dialog
+                        .request_confirm()
+                    {
+                        self.mark_dirty();
+                    }
+                }
+                Some(op_editor_ui::widgets::SaveNameDialogHit::Cancel) => {
+                    self.editor_state.editor_ui.save_name_dialog.close();
+                    self.mark_dirty();
+                }
+                // The field owns the IME already; a tap inside it (or on
+                // the card's blank chrome) keeps the dialog as-is.
+                Some(op_editor_ui::widgets::SaveNameDialogHit::Input) | None => {}
+            }
+            return Some(true);
+        }
+        self.editor_state.editor_ui.save_name_dialog.close();
+        self.mark_dirty();
+        Some(true)
+    }
+
     /// Mobile More sheet: row presses + close. `None` when no More sheet
     /// is open or the press is outside it.
     pub(in crate::widget_host) fn press_mobile_more_sheet_tier(
@@ -621,13 +668,30 @@ impl WidgetHostNative {
                         self.now_ms,
                     );
                 }
+                op_editor_ui::widgets::MobileMoreEntry::SaveFile
+                | op_editor_ui::widgets::MobileMoreEntry::SaveAsFile => {
+                    // Mirror the desktop file menu's collaboration gating:
+                    // Save keeps the shared session, Save As detaches a fork.
+                    let (gate, action) =
+                        if entry == op_editor_ui::widgets::MobileMoreEntry::SaveFile {
+                            (
+                                op_editor_core::CollabGateAction::SaveShared,
+                                op_editor_core::editor_ui_state::FileAction::Save,
+                            )
+                        } else {
+                            (
+                                op_editor_core::CollabGateAction::SaveFork,
+                                op_editor_core::editor_ui_state::FileAction::SaveAs,
+                            )
+                        };
+                    if self.collab_allows_user_action(gate) {
+                        // Drained by the FFI host, which writes into the app
+                        // sandbox (prompting for a name on the first save).
+                        self.editor_state.editor_ui.pending_file_action = Some(action);
+                    }
+                }
                 op_editor_ui::widgets::MobileMoreEntry::Variables => {
                     self.editor_state.editor_ui.toggle_variables_panel();
-                }
-                op_editor_ui::widgets::MobileMoreEntry::Preview => {
-                    let (_, _, cw, ch) =
-                        self.canvas_region(ctx.viewport_width, ctx.viewport_height);
-                    self.toggle_preview((cw, ch));
                 }
                 op_editor_ui::widgets::MobileMoreEntry::Export => {
                     self.editor_state.editor_ui.open_export_dialog();

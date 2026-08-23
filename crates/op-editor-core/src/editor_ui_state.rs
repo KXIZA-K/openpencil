@@ -36,8 +36,8 @@ pub use git_panel::{
 };
 pub use groups::{
     AssetCenterTab, CustomPrompt, DesignMdPanelState, PreviewState, PromptCenterFocus,
-    PromptCenterState, PromptFilter, SceneFilter, SceneTemplateCenterState, SceneTemplateFocus,
-    SizeToggleState, StyleImportState,
+    PromptCenterState, PromptFilter, SaveNameDialogState, SceneFilter, SceneTemplateCenterState,
+    SceneTemplateFocus, SizeToggleState, StyleImportState,
 };
 pub use pickers::{
     CanvasDropIndicator, CanvasOverlayLine, CanvasOverlayRect, CompositingPickerTarget,
@@ -144,6 +144,8 @@ pub struct EditorUiState {
     /// One-shot request for the mobile shell to present its native language
     /// picker (set by the touch more-panel's Language tile).
     pub pending_language_picker: bool,
+    /// Mobile Save / Save As file-name prompt (touch shells only).
+    pub save_name_dialog: SaveNameDialogState,
     /// One-shot request for the embedded shell to drive the window from the
     /// TopBar's painted traffic-light dots (desktop chrome only).
     pub pending_window_control: Option<WindowControlRequest>,

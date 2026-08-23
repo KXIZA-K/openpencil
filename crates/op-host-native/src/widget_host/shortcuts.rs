@@ -181,6 +181,10 @@ impl WidgetHostNative {
     }
 
     fn apply_input_select_all(&mut self) -> bool {
+        if op_editor_core::save_name_keyboard::select_all(&mut self.editor_state, self.now_ms) {
+            self.mark_dirty();
+            return true;
+        }
         if self.editor_state.editor_ui.collab_join_input_active() {
             if op_editor_ui::widgets::collab_ui::join_address_select_all(
                 &mut self.editor_state.editor_ui,

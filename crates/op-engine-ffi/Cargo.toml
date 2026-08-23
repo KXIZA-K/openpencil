@@ -76,6 +76,10 @@ op-builtin-model-discovery = { path = "../op-builtin-model-discovery", optional 
 op-collab-host = { path = "../op-collab-host", optional = true }
 op-collab-transport = { path = "../op-collab-transport", optional = true }
 op-config-store = { path = "../op-config-store" }
+# Locale table lookup for the sandbox Save flow's localized default file
+# name (`common.untitled`). Dependency-free; already in the build graph
+# through op-editor-core.
+op-i18n = { path = "../op-i18n" }
 # Shared desktop settings persistence (`settings.json` load / save /
 # fingerprint) — the mobile editor persists agent/provider settings into
 # the shell's private storage root through the exact desktop code path.

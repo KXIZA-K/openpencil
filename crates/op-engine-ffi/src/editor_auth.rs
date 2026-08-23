@@ -308,62 +308,9 @@ pub(crate) fn take_shell_action(session: &mut Session) -> FfiResult<i32> {
         }
     }
 
-    let pending = session
-        .editor_mut()?
-        .editor_state()
-        .editor_ui
-        .pending_file_action;
-    match pending {
-        Some(op_editor_core::FileAction::New) => {
-            install_new_document(session)?;
-            Ok(SHELL_ACTION_NONE)
-        }
-        Some(op_editor_core::FileAction::Open) => {
-            let host = session.editor_mut()?;
-            host.editor_state_mut().editor_ui.pending_file_action = None;
-            host.mark_editor_state_dirty();
-            Ok(SHELL_ACTION_OPEN_DOCUMENT)
-        }
-        #[cfg(any(target_os = "ios", target_os = "android", target_env = "ohos", test))]
-        Some(op_editor_core::FileAction::ExportImageConfirm)
-        | Some(op_editor_core::FileAction::ExportDeckPdfSelection) => {
-            crate::editor_export::stage_export(session, pending)
-        }
-        _ => Ok(SHELL_ACTION_NONE),
-    }
-}
-
-fn install_new_document(session: &mut Session) -> FfiResult<()> {
-    let starter_document = op_editor_core::EditorState::starter().doc;
-    {
-        let host = session.editor_mut()?;
-        // Consume the one-shot request even when collaboration starts between
-        // the press and this drain. A rejected replacement must not retry on
-        // every later frame.
-        host.editor_state_mut().editor_ui.pending_file_action = None;
-        host.install_open_document(starter_document, None, None)
-            .map_err(|_| {
-                FfiError::new(
-                    OpStatus::Busy,
-                    "new document is blocked by the collaboration session",
-                )
-            })?;
-    }
-
-    session.selected = None;
-    session.gesture.reset();
-    session.user_interacted = false;
-    session.fit_content_to_viewports();
-    // Fitting mutates the host-owned viewport. Clone only afterwards so the
-    // lightweight state used by page APIs remains identical to the live host.
-    session.state = session
-        .editor()
-        .ok_or_else(|| FfiError::new(OpStatus::NotReady, "engine is not in editor mode"))?
-        .editor_state()
-        .clone();
-    session.scene = op_pen_loader::editor_state_to_active_page_layout_scene(&session.state);
-    session.request_redraw();
-    Ok(())
+    // Document-lifecycle drains (confirmed save-name dialog + queued file
+    // actions) live with the sandbox save flow in `editor_document`.
+    crate::editor_document::drain_document_actions(session)
 }
 
 fn take_auth_shell_action(state: &mut EditorAuthShellState) -> Option<i32> {

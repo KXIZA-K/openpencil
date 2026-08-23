@@ -633,3 +633,74 @@ impl SceneTemplateCenterState {
         self.pending_generate.take()
     }
 }
+
+/// Modal file-name prompt for the mobile Save / Save As flow.
+///
+/// The touch shells keep documents inside the app sandbox, so the first
+/// save of an untitled document (and every Save As) needs a file name but
+/// no directory picker. The dialog is engine-painted like the other touch
+/// modals; the owning FFI host opens it, drains the confirmation, and
+/// performs the actual canonical write. Desktop never opens it — its Save
+/// flow keeps the native rfd picker.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct SaveNameDialogState {
+    /// Whether the modal is visible (and owns keyboard + IME input).
+    pub open: bool,
+    /// True for Save As — always writes a new file and switches the
+    /// current document to it. False for a first Save of an untitled doc.
+    pub save_as: bool,
+    /// File-name text (without the `.op` extension), caret + IME state.
+    pub input: jian_core::text_input::TextInputState,
+    /// Raised by the confirm affordance (button press or Enter); drained
+    /// by the owning host, which sanitizes the name and writes the file.
+    pub confirmed: bool,
+}
+
+impl SaveNameDialogState {
+    /// Open the dialog seeded with `name`, selected for quick replacement.
+    pub fn open_with(&mut self, name: &str, save_as: bool, now_ms: u64) {
+        self.open = true;
+        self.save_as = save_as;
+        self.confirmed = false;
+        self.input.set_text(name);
+        self.input.select_all();
+        self.input.touch(now_ms);
+    }
+
+    /// Close the dialog, dropping any unconfirmed draft.
+    pub fn close(&mut self) {
+        self.open = false;
+        self.confirmed = false;
+        self.input.set_text("");
+    }
+
+    /// Whether the confirm affordance is actionable.
+    pub fn confirm_enabled(&self) -> bool {
+        self.open && !self.input.text().trim().is_empty()
+    }
+
+    /// Raise the confirmation for the host to drain. No-op when the
+    /// trimmed draft is empty.
+    pub fn request_confirm(&mut self) -> bool {
+        if !self.confirm_enabled() {
+            return false;
+        }
+        self.confirmed = true;
+        true
+    }
+
+    /// Drain a raised confirmation, returning the trimmed file name.
+    /// The dialog stays open; the host closes it once the write lands
+    /// (or reports the failure).
+    pub fn take_confirmed_name(&mut self) -> Option<String> {
+        if !(self.open && self.confirmed) {
+            return None;
+        }
+        self.confirmed = false;
+        let name = self.input.text().trim().to_string();
+        if name.is_empty() {
+            return None;
+        }
+        Some(name)
+    }
+}

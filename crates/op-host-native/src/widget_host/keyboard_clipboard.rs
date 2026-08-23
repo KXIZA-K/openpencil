@@ -31,6 +31,16 @@ impl WidgetHostNative {
     /// field's `!cloning` lock) still applies. Returns `true` if anything was
     /// inserted.
     pub fn apply_input_paste(&mut self, text: &str) -> bool {
+        // The save-name dialog is modal and filters characters a file name
+        // cannot carry, so it takes the paste as a unit.
+        if let Some(changed) =
+            op_editor_core::save_name_keyboard::paste(&mut self.editor_state, text, self.now_ms)
+        {
+            if changed {
+                self.mark_dirty();
+            }
+            return true;
+        }
         // The Asset Center takes a paste as a unit: its style-import box
         // receives a whole DESIGN.md, and the char-by-char route below drops
         // control characters, which would flatten the markdown to one line.

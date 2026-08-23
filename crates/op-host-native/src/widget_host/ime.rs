@@ -26,6 +26,11 @@ impl WidgetHostNative {
     /// conditions `apply_text` routes on (keep in sync with
     /// `keyboard.rs::apply_text`).
     pub fn text_input_focus_active(&self) -> bool {
+        // The save-name dialog opens with its field focused, so the mobile
+        // shell raises the software keyboard as soon as it appears.
+        if self.editor_state.editor_ui.save_name_dialog.open {
+            return true;
+        }
         if self.editor_state.editor_ui.prompt_center.open {
             return true;
         }
@@ -45,6 +50,14 @@ impl WidgetHostNative {
     /// other inputs keep the legacy no-floating-overlay behavior.
     pub fn apply_ime_preedit(&mut self, text: &str, cursor: Option<(usize, usize)>) -> bool {
         let had = self.editor_state.editor_ui.ime_preedit.take().is_some();
+        // Save-name dialog: consume composition updates like the other
+        // chrome inputs (text lands on `Ime::Commit`).
+        if self.editor_state.editor_ui.save_name_dialog.open {
+            if had {
+                self.mark_dirty();
+            }
+            return had;
+        }
         if self.editor_state.editor_ui.prompt_center.open {
             if had {
                 self.mark_dirty();
@@ -103,6 +116,16 @@ impl WidgetHostNative {
     pub fn apply_ime_commit(&mut self, text: &str) -> bool {
         if self.editor_state.editor_ui.ime_preedit.take().is_some() {
             self.mark_dirty();
+        }
+        // Modal save-name dialog first — same priority as `apply_text`.
+        if self.editor_state.editor_ui.save_name_dialog.open {
+            let mut consumed = false;
+            for ch in text.chars() {
+                if !ch.is_control() && self.apply_text(ch) {
+                    consumed = true;
+                }
+            }
+            return consumed;
         }
         if self.editor_state.editor_ui.prompt_center.open {
             let mut consumed = false;

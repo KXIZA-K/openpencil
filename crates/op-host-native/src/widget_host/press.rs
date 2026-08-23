@@ -183,6 +183,13 @@ impl WidgetHostNative {
     ) -> bool {
         self.last_viewport_w = viewport_width;
         self.last_viewport_h = viewport_height;
+        // Tier 0 — the mobile save-name dialog is fully modal while open
+        // (only the FFI hosts ever open it; desktop state stays closed).
+        if let Some(consumed) =
+            self.press_save_name_dialog_tier(x, y, viewport_width, viewport_height)
+        {
+            return consumed;
+        }
         let presenting = self.preview_slideshow_active();
         if !presenting
             && self.begin_agent_settings_touch_gesture(x, y, viewport_width, viewport_height)

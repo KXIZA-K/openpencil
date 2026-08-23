@@ -207,6 +207,9 @@ pub unsafe extern "C" fn op_editor_open_document(
             session.state = next_state;
             session.scene = next_scene;
             session.selected = None;
+            // Picker documents arrive as bytes without a writable path —
+            // the next Save prompts for a sandbox file name.
+            crate::editor_document::forget_current_document(session);
             // Whole-document replacement: forget in-flight image-search jobs
             // bound to the outgoing document's node ids (id aliasing — see
             // MobileImageSearch::reset).
@@ -541,7 +544,7 @@ mod tests {
     }
 
     #[test]
-    fn shell_action_drains_open_but_leaves_unowned_actions_queued() {
+    fn shell_action_drains_open_and_save_opens_the_name_dialog() {
         let mut engine = editor_engine(SAMPLE_DOC);
         let pointer = &mut engine as *mut OpEngine;
         engine
@@ -568,6 +571,9 @@ mod tests {
         );
         assert_eq!(action, SHELL_ACTION_NONE);
 
+        // Save is engine-owned on mobile: with no sandbox binding yet, it
+        // consumes the queued action and opens the save-name dialog instead
+        // of emitting any shell action.
         let host = engine.session_mut_for_test().editor_mut().unwrap();
         host.editor_state_mut().editor_ui.pending_file_action =
             Some(op_editor_core::FileAction::Save);
@@ -576,16 +582,15 @@ mod tests {
             OpStatus::Ok
         );
         assert_eq!(action, SHELL_ACTION_NONE);
-        assert_eq!(
-            engine
-                .session_mut_for_test()
-                .editor_mut()
-                .unwrap()
-                .editor_state()
-                .editor_ui
-                .pending_file_action,
-            Some(op_editor_core::FileAction::Save)
-        );
+        let ui = &engine
+            .session_mut_for_test()
+            .editor_mut()
+            .unwrap()
+            .editor_state()
+            .editor_ui;
+        assert_eq!(ui.pending_file_action, None);
+        assert!(ui.save_name_dialog.open);
+        assert!(!ui.save_name_dialog.save_as);
     }
 
     #[test]

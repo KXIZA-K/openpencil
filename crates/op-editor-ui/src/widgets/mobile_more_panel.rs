@@ -18,10 +18,10 @@ const PANEL_PADDING: f32 = 12.0;
 const GRID_GAP: f32 = 8.0;
 const TILE_HEIGHT: f32 = 76.0;
 const PORTRAIT_COLUMN_COUNT: usize = 3;
-// Eleven visible actions fit in two rows on a landscape phone. Keeping the
+// Thirteen visible actions fit in two rows on a landscape phone. Keeping the
 // portrait column count would grow the sheet to the full 320pt viewport and
 // leave no useful canvas context behind the modal surface.
-const LANDSCAPE_COLUMN_COUNT: usize = 6;
+const LANDSCAPE_COLUMN_COUNT: usize = 7;
 const PHONE_BOTTOM_PADDING: f32 = 16.0;
 const TABLET_PANEL_WIDTH: f32 = 320.0;
 const TABLET_BOTTOM_PADDING: f32 = 20.0;
@@ -32,6 +32,10 @@ const LABEL_SIDE_PADDING: f32 = 6.0;
 pub enum MobileMoreEntry {
     NewFile,
     OpenFile,
+    /// Save into the app sandbox (first save prompts for a file name).
+    SaveFile,
+    /// Save a copy under a new name and switch the document to it.
+    SaveAsFile,
     Templates,
     Assets,
     Ai,
@@ -41,16 +45,17 @@ pub enum MobileMoreEntry {
     Collaboration,
     Settings,
     Variables,
-    Preview,
     Export,
 }
 
 impl MobileMoreEntry {
     /// Exhaustive semantic entries. Paint and hit-test use [`Self::visible`]
     /// because Sign in and Account are mutually exclusive states of one tile.
-    pub const ALL: [MobileMoreEntry; 13] = [
+    pub const ALL: [MobileMoreEntry; 14] = [
         MobileMoreEntry::NewFile,
         MobileMoreEntry::OpenFile,
+        MobileMoreEntry::SaveFile,
+        MobileMoreEntry::SaveAsFile,
         MobileMoreEntry::Templates,
         MobileMoreEntry::Assets,
         MobileMoreEntry::Ai,
@@ -60,17 +65,22 @@ impl MobileMoreEntry {
         MobileMoreEntry::Language,
         MobileMoreEntry::Settings,
         MobileMoreEntry::Variables,
-        MobileMoreEntry::Preview,
         MobileMoreEntry::Export,
     ];
 
     /// Entries visible for the current account state. This is the canonical
     /// list for layout, paint and hit-testing so a signed-in account cannot
     /// leave an invisible Sign-in target behind (or vice versa).
+    ///
+    /// Run (Preview) is deliberately absent: the mobile editor has no
+    /// preview mode — see `press_mobile_more_sheet_tier`, which no longer
+    /// carries a Preview arm either.
     pub fn visible(state: &EditorState) -> Vec<MobileMoreEntry> {
         vec![
             MobileMoreEntry::NewFile,
             MobileMoreEntry::OpenFile,
+            MobileMoreEntry::SaveFile,
+            MobileMoreEntry::SaveAsFile,
             MobileMoreEntry::Templates,
             MobileMoreEntry::Assets,
             MobileMoreEntry::Ai,
@@ -83,7 +93,6 @@ impl MobileMoreEntry {
             MobileMoreEntry::Language,
             MobileMoreEntry::Settings,
             MobileMoreEntry::Variables,
-            MobileMoreEntry::Preview,
             MobileMoreEntry::Export,
         ]
     }
@@ -92,6 +101,8 @@ impl MobileMoreEntry {
         let key = match self {
             MobileMoreEntry::NewFile => "fileMenu.newFile",
             MobileMoreEntry::OpenFile => "fileMenu.openFile",
+            MobileMoreEntry::SaveFile => "fileMenu.save",
+            MobileMoreEntry::SaveAsFile => "fileMenu.saveAs",
             MobileMoreEntry::Templates => "sceneTemplate.title",
             MobileMoreEntry::Assets => "assetCenter.title",
             MobileMoreEntry::Ai => "a11y.aiChat",
@@ -101,11 +112,13 @@ impl MobileMoreEntry {
             MobileMoreEntry::Language => "tooltip.topbar.language",
             MobileMoreEntry::Settings => "settings.title",
             MobileMoreEntry::Variables => "toolbar.variables",
-            MobileMoreEntry::Preview => "tooltip.topbar.preview",
             MobileMoreEntry::Export => "common.export",
         };
         let label = translate(ui, key);
-        if self == MobileMoreEntry::OpenFile {
+        if matches!(
+            self,
+            MobileMoreEntry::OpenFile | MobileMoreEntry::SaveAsFile
+        ) {
             label.trim_end_matches(['.', '…'])
         } else {
             label
@@ -116,6 +129,8 @@ impl MobileMoreEntry {
         match self {
             MobileMoreEntry::NewFile => Icon::FilePlus,
             MobileMoreEntry::OpenFile => Icon::from_name("folder-open").unwrap_or(Icon::FolderOpen),
+            MobileMoreEntry::SaveFile => Icon::from_name("save").unwrap_or(Icon::Save),
+            MobileMoreEntry::SaveAsFile => Icon::from_name("copy").unwrap_or(Icon::Copy),
             MobileMoreEntry::Templates => Icon::LayoutDashboard,
             MobileMoreEntry::Assets => Icon::Palette,
             MobileMoreEntry::Ai => Icon::from_name("sparkles").unwrap_or(Icon::Sparkles),
@@ -124,7 +139,6 @@ impl MobileMoreEntry {
             MobileMoreEntry::Language => Icon::Globe,
             MobileMoreEntry::Settings => Icon::from_name("settings").unwrap_or(Icon::Settings),
             MobileMoreEntry::Variables => Icon::from_name("braces").unwrap_or(Icon::Braces),
-            MobileMoreEntry::Preview => Icon::from_name("play").unwrap_or(Icon::Play),
             MobileMoreEntry::Export => Icon::from_name("download").unwrap_or(Icon::Download),
         }
     }
@@ -390,9 +404,9 @@ mod tests {
     }
 
     #[test]
-    fn compact_landscape_uses_a_six_by_two_sheet() {
+    fn compact_landscape_uses_a_seven_by_two_sheet() {
         let state = touch_state(EditorSizeClass::Compact);
-        assert_grid(&state, 568.0, 320.0, 6, PHONE_BOTTOM_PADDING);
+        assert_grid(&state, 568.0, 320.0, 7, PHONE_BOTTOM_PADDING);
     }
 
     #[test]
@@ -413,12 +427,16 @@ mod tests {
     #[test]
     fn restored_entries_reuse_localized_labels_and_desktop_icons() {
         let mut state = EditorState::starter();
-        assert_eq!(MobileMoreEntry::ALL.len(), 13);
-        assert_eq!(MobileMoreEntry::visible(&state).len(), 12);
+        assert_eq!(MobileMoreEntry::ALL.len(), 14);
+        assert_eq!(MobileMoreEntry::visible(&state).len(), 13);
         assert_eq!(MobileMoreEntry::ALL[0], MobileMoreEntry::NewFile);
         assert_eq!(MobileMoreEntry::ALL[1], MobileMoreEntry::OpenFile);
+        assert_eq!(MobileMoreEntry::ALL[2], MobileMoreEntry::SaveFile);
+        assert_eq!(MobileMoreEntry::ALL[3], MobileMoreEntry::SaveAsFile);
         assert_eq!(MobileMoreEntry::NewFile.icon(), Icon::FilePlus);
         assert_eq!(MobileMoreEntry::OpenFile.icon(), Icon::FolderOpen);
+        assert_eq!(MobileMoreEntry::SaveFile.icon(), Icon::Save);
+        assert_eq!(MobileMoreEntry::SaveAsFile.icon(), Icon::Copy);
         assert_eq!(MobileMoreEntry::Templates.icon(), Icon::LayoutDashboard);
         assert_eq!(MobileMoreEntry::Assets.icon(), Icon::Palette);
 
@@ -433,6 +451,14 @@ mod tests {
             assert!(!label.ends_with('…'));
             assert_ne!(label, "fileMenu.openFile");
             assert_ne!(
+                MobileMoreEntry::SaveFile.label(&state.editor_ui),
+                "fileMenu.save"
+            );
+            let save_as = MobileMoreEntry::SaveAsFile.label(&state.editor_ui);
+            assert!(!save_as.ends_with('.'));
+            assert!(!save_as.ends_with('…'));
+            assert_ne!(save_as, "fileMenu.saveAs");
+            assert_ne!(
                 MobileMoreEntry::Templates.label(&state.editor_ui),
                 "sceneTemplate.title"
             );
@@ -443,14 +469,24 @@ mod tests {
         }
     }
 
+    /// The mobile editor has no Run/Preview mode; the sheet must not offer
+    /// one (the tile was removed together with its press arm).
+    #[test]
+    fn run_preview_is_not_offered_on_touch() {
+        let state = touch_state(EditorSizeClass::Compact);
+        for entry in MobileMoreEntry::visible(&state) {
+            assert_ne!(entry.icon(), Icon::Play, "{entry:?} looks like Run");
+        }
+    }
+
     #[test]
     fn account_state_swaps_one_tile_without_moving_collaboration_or_changing_count() {
         let mut state = touch_state(EditorSizeClass::Compact);
         let anonymous = MobileMoreEntry::visible(&state);
-        assert_eq!(anonymous.len(), 12);
+        assert_eq!(anonymous.len(), 13);
         assert!(anonymous.contains(&MobileMoreEntry::SignIn));
         assert!(!anonymous.contains(&MobileMoreEntry::Account));
-        assert_eq!(anonymous[5], MobileMoreEntry::Collaboration);
+        assert_eq!(anonymous[7], MobileMoreEntry::Collaboration);
         assert_eq!(MobileMoreEntry::SignIn.icon(), Icon::User);
         assert_eq!(MobileMoreEntry::Collaboration.icon(), Icon::Users);
         assert_ne!(
@@ -470,7 +506,7 @@ mod tests {
         assert_eq!(signed_in.len(), anonymous.len());
         assert!(!signed_in.contains(&MobileMoreEntry::SignIn));
         assert!(signed_in.contains(&MobileMoreEntry::Account));
-        assert_eq!(signed_in[5], MobileMoreEntry::Collaboration);
+        assert_eq!(signed_in[7], MobileMoreEntry::Collaboration);
         assert_eq!(
             signed_in
                 .iter()

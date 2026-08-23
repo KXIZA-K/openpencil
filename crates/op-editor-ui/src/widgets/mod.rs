@@ -388,6 +388,7 @@ pub mod mobile_more_panel;
 pub mod property_panel_color_variables;
 #[cfg(test)]
 mod property_panel_color_variables_tests;
+pub mod save_name_dialog;
 pub(crate) mod settings_form;
 pub mod shape_picker;
 pub mod slides_panel;
@@ -474,6 +475,7 @@ pub use prompt_center_panel::{
     PromptCenterCard, PromptCenterHit, PromptCenterPanel, PROMPT_CENTER_MIN_H, PROMPT_CENTER_MIN_W,
     PROMPT_CENTER_VIEWPORT_H_RATIO, PROMPT_CENTER_VIEWPORT_W_RATIO,
 };
+pub use save_name_dialog::{SaveNameDialog, SaveNameDialogHit};
 pub use shape_picker::{ShapeChoice, ShapePicker, SHAPE_PICKER_WIDTH};
 pub use slides_panel::{
     SlidesPanel, SlidesPanelLayout, SlidesPanelTabs, SLIDES_TAB_ROW_HEIGHT, SLIDE_THUMB_RADIUS,

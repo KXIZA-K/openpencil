@@ -5,8 +5,8 @@
 
 use super::{
     DesignMdPanelState, EditorUiState, EmbedHost, ExportFormat, FlexLayout, GitPanelState, Locale,
-    PencilCursorStyle, PreviewState, PromptCenterState, PropertyTab, SceneTemplateCenterState,
-    SizeToggleState, ThemeMode, UpdateStatus,
+    PencilCursorStyle, PreviewState, PromptCenterState, PropertyTab, SaveNameDialogState,
+    SceneTemplateCenterState, SizeToggleState, ThemeMode, UpdateStatus,
 };
 use crate::tool::Tool;
 use std::collections::HashSet;
@@ -36,6 +36,7 @@ impl Default for EditorUiState {
             pending_account_center: false,
             pending_mobile_login: false,
             pending_language_picker: false,
+            save_name_dialog: SaveNameDialogState::default(),
             pending_window_control: None,
             recent_files: Vec::new(),
             file_name_display: None,

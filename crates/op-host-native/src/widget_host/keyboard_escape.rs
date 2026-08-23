@@ -23,6 +23,12 @@ impl WidgetHostNative {
             self.exit_preview();
             return true;
         }
+        // The save-name dialog is modal: Escape cancels it and nothing else.
+        if self.editor_state.editor_ui.save_name_dialog.open {
+            self.editor_state.editor_ui.save_name_dialog.close();
+            self.mark_dirty();
+            return true;
+        }
         if self.editor_state.editor_ui.escape_scene_template_center() {
             self.mark_dirty();
             return true;
