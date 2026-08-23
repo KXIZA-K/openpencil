@@ -4595,6 +4595,7 @@ dependencies = [
  "op-ai-skills",
  "op-editor-core",
  "op-host-services",
+ "op-image-enrich",
  "op-mcp",
  "op-orchestrator",
  "op-pen-loader",

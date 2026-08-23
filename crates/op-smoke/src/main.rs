@@ -46,6 +46,7 @@ use std::sync::Arc;
 
 mod audit_rubric;
 mod best_of;
+mod image_fill;
 mod llm_clients;
 mod loop_mode;
 mod loop_seed;
@@ -308,6 +309,21 @@ async fn run_loop_mode(prompt: String) -> std::process::ExitCode {
             return std::process::ExitCode::from(1);
         }
     };
+
+    // Image-fill post-loop step (OPENPENCIL_SMOKE_FILL_IMAGES=1): resolve
+    // pending image-search queries to real URLs from Openverse BEFORE the `.op`
+    // is persisted so the saved document contains the filled `src` values.
+    let image_config = image_fill::ImageFillConfig::from_env();
+    // On a plain thread, never inline: the fetch bridge builds its own small
+    // runtime, which panics with "Cannot start a runtime from within a runtime"
+    // when driven from this tokio-hosted main (measured on the first benchmark
+    // run, which lost its whole image pass to the abort).
+    std::thread::scope(|scope| {
+        scope.spawn(|| {
+            let mut guard = state.lock().expect("EditorState mutex poisoned");
+            image_fill::fill_images(&mut guard, &image_config, dump);
+        });
+    });
 
     let guard = state.lock().expect("EditorState mutex poisoned");
     let total_nodes = guard.active_children().len();
