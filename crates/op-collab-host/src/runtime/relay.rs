@@ -314,6 +314,31 @@ impl OwnerRelayRuntime {
     pub(super) const fn path(&self) -> CollabConnectionPathUi {
         self.path
     }
+
+    /// Coarse, credential-free relay-pool state for the owner network worker's
+    /// diagnostics. A session that keeps losing peers is almost always a lane
+    /// pool that is empty or degraded, and nothing else in the owner path can
+    /// see that.
+    pub(super) fn bridge_diagnostic(&self) -> OwnerRelayBridgeReport {
+        let status = self.bridge.status();
+        OwnerRelayBridgeReport {
+            phase: status.phase,
+            waiting_lanes: status.waiting_lanes,
+            active_tunnels: status.active_tunnels,
+            last_error: status.last_error,
+        }
+    }
+}
+
+/// Owner relay-pool snapshot. Every field is a bounded enum or counter — never
+/// endpoints, invites, identities, or raw transport errors — because its
+/// `Debug`/`Display` output is written to the local terminal.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) struct OwnerRelayBridgeReport {
+    pub(super) phase: op_collab_relay_client::RelayBridgePhase,
+    pub(super) waiting_lanes: usize,
+    pub(super) active_tunnels: usize,
+    pub(super) last_error: Option<op_collab_relay_client::RelayFailureKind>,
 }
 
 impl std::fmt::Debug for OwnerRelayRuntime {

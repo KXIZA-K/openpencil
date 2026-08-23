@@ -16,7 +16,7 @@ use socket2::{Domain, Protocol, Socket, Type};
 use super::super::auth::{
     production_verifier, unix_time_ms, LocalAdmission, LocalTicketRenewer, ProductionTicketVerifier,
 };
-use super::super::relay::{OwnerRelayRuntime, RelayOwnerRequest};
+use super::super::relay::{OwnerRelayBridgeReport, OwnerRelayRuntime, RelayOwnerRequest};
 use super::super::types::{
     CollabRuntimeFailure, NetworkEvent, OwnerNetworkCommand, PeerNetworkCommand,
     TerminalNetworkEvent,
@@ -24,7 +24,9 @@ use super::super::types::{
 use super::connection::{drive_owner_peer, runtime_failure, DriverControl, DriverIdentity};
 use super::owner_lifecycle::{PeerControl, PeerPhase, PeerRegistry};
 use super::share_endpoint::select_share_endpoint;
-use super::transport_diagnostic::report_owner_secure_transport_failure;
+use super::transport_diagnostic::{
+    report_owner_relay_bridge, report_owner_secure_transport_failure,
+};
 use super::EventSink;
 
 const ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(25);
@@ -147,9 +149,20 @@ fn run_inner(
     let (done_sender, done_receiver) = mpsc::channel();
     let mut peers = PeerRegistry::new();
     let mut next_connection = Some(2_u64);
+    let mut relay_bridge_report: Option<OwnerRelayBridgeReport> = None;
 
     loop {
         let now = Instant::now();
+        // The relay pool runs on its own tasks; this accept turn is the only
+        // owner-side place that can observe it, and an empty pool is exactly
+        // what a guest experiences as "the session will not let me in".
+        if let Some(relay) = relay.as_ref() {
+            let next = relay.bridge_diagnostic();
+            if relay_bridge_report != Some(next) {
+                relay_bridge_report = Some(next);
+                report_owner_relay_bridge(next);
+            }
+        }
         match shutdown.try_recv() {
             Ok(reason) => {
                 peers.set_exit_reason(reason);

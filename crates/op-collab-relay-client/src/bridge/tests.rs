@@ -94,6 +94,7 @@ fn test_limits() -> RelayLimits {
         connect: Duration::from_secs(1),
         hello: Duration::from_secs(1),
         pair: Duration::from_secs(1),
+        owner_pair: Duration::from_secs(1),
         idle: Duration::from_secs(2),
         lifetime: Duration::from_secs(5),
         retry: Duration::from_millis(10),
@@ -702,3 +703,6 @@ async fn wait_for_phase(
     .await
     .unwrap()
 }
+
+#[path = "owner_pool_tests.rs"]
+mod owner_pool;

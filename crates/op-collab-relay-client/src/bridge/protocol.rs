@@ -64,11 +64,16 @@ pub(crate) async fn establish_relay(
         cancel,
         started_at,
         limits,
+        limits.pair,
         || {},
     )
     .await
 }
 
+/// `pair_budget` is how long this connection may wait for its counterpart
+/// after the relay accepted it. Guests use the long [`RelayLimits::pair`]
+/// window; owner lanes pass their own shorter recycle budget so the client,
+/// not the relay, decides when an idle lane is retired.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn establish_relay_with_ready_hook<F>(
     endpoint: &RelayEndpoint,
@@ -79,6 +84,7 @@ pub(crate) async fn establish_relay_with_ready_hook<F>(
     cancel: &mut watch::Receiver<bool>,
     started_at: Instant,
     limits: RelayLimits,
+    pair_budget: Duration,
     on_ready: F,
 ) -> Result<RelaySocket, TunnelError>
 where
@@ -147,7 +153,7 @@ where
     let (pair_timeout, pair_kind) = phase_timeout(
         started_at,
         limits,
-        limits.pair,
+        pair_budget,
         RelayFailureKind::PairTimeout,
     )?;
     let second = next_status(
