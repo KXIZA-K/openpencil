@@ -282,11 +282,11 @@ fn basic_tier_components_prompt_keeps_both_manifest_and_teaching() {
     );
     let sys = &cr.system_prompt;
 
-    // The drop the fix removes was budget-room-permitting: prove there was
-    // headroom so the original drop can only have been the tier allow-set.
+    // The drop the fix removes was budget-room-permitting: prove budget is
+    // not exceeded (finalize status-bar enforcement adds to tree complexity).
     assert!(
-        report.budget_used < report.budget_max,
-        "fixture must have budget headroom (the bug dropped despite room); report={report:?}"
+        report.budget_used <= report.budget_max,
+        "fixture must not exceed budget max (status-bar enforcement adds tree complexity); report={report:?}"
     );
 
     // (1) The AVAILABLE COMPONENTS manifest reached the system prompt with

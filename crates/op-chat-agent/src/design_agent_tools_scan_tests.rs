@@ -228,3 +228,41 @@ fn empty_frame_under_vertical_layout_still_reported() {
     assert_eq!(issues.len(), 1, "{issues:?}");
     assert!(issues[0].contains("Back Layer 1"));
 }
+
+/// The injected status bar is OS chrome we author, and its battery is a
+/// named frame of named childless rectangles. Descending into it reported
+/// Border / Cap / Capacity as unfinished shells on every mobile screen —
+/// blockers the model cannot act on and must not be asked to.
+#[test]
+fn status_bar_internals_are_not_empty_shells() {
+    let nodes: Vec<PenNode> = serde_json::from_value(serde_json::json!([
+        { "type": "frame", "id": "root", "name": "Home", "layout": "vertical",
+          "width": 390, "height": 844,
+          "children": [
+            { "type": "frame", "id": "n3-status-bar", "name": "Status Bar",
+              "role": "status-bar", "width": 390, "height": 62, "layout": "none",
+              "children": [
+                { "type": "frame", "id": "n3-status-bar-battery", "name": "Battery",
+                  "x": 300, "y": 24, "width": 27, "height": 13, "layout": "none",
+                  "children": [
+                    { "type": "rectangle", "id": "n3-status-bar-battery-border",
+                      "name": "Border", "x": 0, "y": 0, "width": 24, "height": 13,
+                      "children": [] },
+                    { "type": "rectangle", "id": "n3-status-bar-battery-capacity",
+                      "name": "Capacity", "x": 2, "y": 2, "width": 18, "height": 9,
+                      "children": [] }
+                  ] }
+              ] },
+            { "type": "frame", "id": "empty-section", "name": "Empty Section",
+              "x": 0, "y": 200, "width": 390, "height": 120, "children": [] }
+          ] }
+    ]))
+    .expect("nodes");
+    let issues = scan_empty_shells(&nodes);
+    assert_eq!(
+        issues.len(),
+        1,
+        "only the authored empty section is a shell: {issues:?}"
+    );
+    assert!(issues[0].contains("Empty Section"), "{issues:?}");
+}

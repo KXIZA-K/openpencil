@@ -62,6 +62,8 @@ mod cleanup_slide_padding;
 #[path = "cleanup_status_bar.rs"]
 mod cleanup_status_bar;
 pub(crate) use cleanup_status_bar::{is_status_bar, is_status_bar_from_json};
+#[path = "finalize_enforce_status_bar.rs"]
+mod finalize_enforce_status_bar;
 
 use cleanup_bottom_nav_repairs::*;
 use cleanup_clip_row_stroke::*;
@@ -694,6 +696,14 @@ fn run_cleanup_passes_with_summary_and_policy(
     // already has it. Same "reuse, don't redraw" shape, same shared choke
     // point, so both the classic and loop-finalize paths pick it up.
     crate::unify_shared_status_bar::unify_shared_status_bar(sink);
+
+    // Finalize-time enforcement of the OS status-bar contract: every mobile
+    // screen root must carry exactly one canonical status bar (role="status-bar"
+    // with Levels child) as its first child. Runs after unify_shared_status_bar
+    // to enforce the contract even when root-seeding was escaped (model-built
+    // bar, fit_content root, or later batches). Three cases: missing → insert,
+    // non-canonical → replace, canonical → untouched.
+    finalize_enforce_status_bar::finalize_enforce_status_bar_contract(sink);
 
     // Establish final screen routes first. The cleanup-only semantic pass can
     // then persist only fact-proven back/card interactions against those real

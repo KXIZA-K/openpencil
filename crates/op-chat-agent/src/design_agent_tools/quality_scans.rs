@@ -121,11 +121,17 @@ pub fn scan_empty_shells(nodes: &[PenNode]) -> Vec<String> {
             if out.len() >= 12 {
                 return;
             }
+            // OS chrome is ours, not the model's unfinished work. Skipping the
+            // whole subtree — not just the bar node — is the point: the
+            // scaffold's battery is a named frame of named childless
+            // rectangles (Border / Cap / Capacity), so descending reported
+            // three empty shells per screen that no author could act on.
+            if node.base().role.as_deref() == Some("status-bar") {
+                continue;
+            }
             if let Some(children) = node.children() {
                 let named = node.base().name.as_deref().unwrap_or("");
-                let is_candidate = children.is_empty()
-                    && !named.is_empty()
-                    && node.base().role.as_deref() != Some("status-bar");
+                let is_candidate = children.is_empty() && !named.is_empty();
                 if is_candidate {
                     // A childless named frame under `layout:none` that
                     // substantially overlaps a non-empty sibling of near-
