@@ -796,6 +796,3 @@ impl WidgetHostNative {
         }
     }
 }
-
-/// Grace period after pan/zoom before full-quality painting resumes.
-const INTERACTION_HOT_MS: u64 = 150;

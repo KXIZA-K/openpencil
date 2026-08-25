@@ -238,9 +238,9 @@ fn canvas_pan_gesture_opens_and_closes_the_interactive_degrade_window() {
     let deadline = host
         .next_animation_deadline_ms()
         .expect("hot gesture schedules a wake-up");
-    assert!(deadline <= 1_000 + super::INTERACTION_HOT_MS);
+    assert!(deadline <= 1_000 + super::host_requests::INTERACTION_HOT_MS);
 
-    host.set_now_ms(1_000 + super::INTERACTION_HOT_MS);
+    host.set_now_ms(1_000 + super::host_requests::INTERACTION_HOT_MS);
     assert!(!host.fast_interaction_active());
 }
 

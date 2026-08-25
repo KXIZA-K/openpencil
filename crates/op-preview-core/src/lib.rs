@@ -768,7 +768,7 @@ pub(crate) fn test_measure() -> Rc<dyn MeasureBackend> {
     Rc::new(jian_skia::SkiaMeasure::new())
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_os = "windows")))]
 pub(crate) mod font_registry_test_support {
     use std::sync::{LazyLock, Mutex, MutexGuard};
 

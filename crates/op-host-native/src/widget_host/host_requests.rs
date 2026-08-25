@@ -7,6 +7,9 @@
 
 use super::*;
 
+/// Grace period after pan/zoom before full-quality painting resumes.
+pub(in crate::widget_host) const INTERACTION_HOT_MS: u64 = 150;
+
 impl WidgetHostNative {
     /// Drain a queued Component-Browser insert: place the chosen
     /// UIKit component at the viewport's centre (top-left = centre −
