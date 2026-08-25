@@ -30,6 +30,7 @@
 //! tail-growable: missing trailing fields read as zero/null; a size
 //! larger than the current `sizeof` is invalid.
 
+mod background;
 mod desc;
 #[cfg(feature = "editor")]
 mod editor;
@@ -38,6 +39,8 @@ mod editor_auth;
 #[cfg(all(feature = "editor", test))]
 mod editor_auth_window_tests;
 #[cfg(feature = "editor")]
+mod editor_builtin_provider;
+#[cfg(feature = "editor")]
 mod editor_chat;
 #[cfg(feature = "editor")]
 mod editor_chat_design;
@@ -45,6 +48,8 @@ mod editor_chat_design;
 mod editor_chat_design_tools;
 #[cfg(feature = "editor")]
 mod editor_chat_turn;
+#[cfg(feature = "editor")]
+mod editor_codegen;
 #[cfg(feature = "editor")]
 mod editor_collab;
 #[cfg(feature = "editor")]
@@ -57,6 +62,8 @@ mod editor_document_shell;
 mod editor_document_shell_tests;
 #[cfg(feature = "editor")]
 mod editor_export;
+#[cfg(feature = "editor")]
+mod editor_image_import;
 #[cfg(feature = "editor")]
 mod editor_image_search;
 #[cfg(feature = "editor")]
@@ -84,6 +91,7 @@ mod system_chrome;
 mod text;
 mod viewport;
 
+pub use background::{op_background_tick, op_cancel_background_work, op_has_background_work};
 pub use desc::{
     OpCallbacks, OpCreateDesc, OpCredentialLoad, OpCredentialStoreIfAbsent, OpPointerPhase,
     OpRuntimeError, OpSurfaceDesc, OpTextState,
@@ -116,6 +124,8 @@ pub use editor_export::{
     op_editor_cancel_export, op_editor_copy_export_file_name, op_editor_export_to_path,
     SHELL_ACTION_EXPORT_DOCUMENT,
 };
+#[cfg(feature = "editor")]
+pub use editor_image_import::{op_editor_import_image_or_svg, SHELL_ACTION_IMPORT_IMAGE_OR_SVG};
 #[cfg(feature = "editor")]
 pub use editor_ime::{
     op_editor_ime_commit, op_editor_ime_focused, op_editor_ime_preedit, op_editor_paste_text,

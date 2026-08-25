@@ -143,6 +143,26 @@ adb shell am start -n tech.zseven.openpencil/.MainActivity
 adb logcat -s OpenPencilPlayer:V OpJni:V AndroidRuntime:E libEGL:W
 ```
 
+## Background generation
+
+User-started AI generation starts a same-process `dataSync` foreground service
+while the editor Activity is still visible. After Android removes the render
+surface, a single non-main worker advances the render-free engine tick and an
+ongoing notification returns to the editor. The worker stops at completion and
+posts a result notification when completion happened in the background.
+
+Lock-screen work uses a bounded partial wake lock only while the render surface
+is suspended. The lock is renewed in short segments while work remains active
+and is released on resume, completion, failure, service timeout, and teardown.
+Android 13+ may hide drawer notifications when the user denies notification
+permission, although the foreground service remains visible in Task Manager.
+
+This keeps ordinary Home/app-switcher and lock-screen transitions running, but
+it cannot override Android or vendor power policy. A force-stop, process death,
+device shutdown, OEM task killer, or the Android 15+ `dataSync` quota can still
+end background execution; OpenPencil never claims guaranteed execution across
+those terminal OS events.
+
 The full editor starts with a new untitled `.op` document instead of loading
 demo content. Pass an asset name without the `.op` suffix in the existing
 `doc` intent extra to load a bundled document. For example, load the six-slide,
@@ -164,6 +184,8 @@ payloads never cross JNI as a byte array) and then presents the system
 create-document UI; the chosen destination receives a plain copy and the
 staging directory is removed on every terminal path. WebP is hidden on mobile
 because the pinned Skia archive does not include its encoder.
+The desktop-class **Code** panel reuses that action and staging flow for
+framework source files and generated/AI bundle ZIPs.
 
 Sign-in is platform-native: the engine's device-login flow hands its
 verification URL to a programmatic-View overlay that performs email/password
@@ -192,8 +214,9 @@ runtime initializes once per process.
   backdrop; four-sided system-bar/cutout insets move only interactive editor
   chrome while IME occlusion remains a separate logical-pixel channel. This
   covers portrait/landscape cutouts plus gesture and three-button navigation
-  without padding or resizing the `SurfaceView`; `nativeDestroy` runs on
-  destroy.
+  without padding or resizing the `SurfaceView`; teardown releases the View's
+  process-owned engine lease, while active generation or an unread background
+  result keeps that engine alive for bounded foreground recovery.
 - `OpNative` / `OpCallbacks` — the JNI surface contract with
   `crates/op-engine-jni` (engine-thread upcalls, blocking barriers for
   lifecycle calls).

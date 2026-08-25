@@ -1,8 +1,11 @@
 package tech.zseven.openpencil
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.provider.OpenableColumns
 import android.util.Log
@@ -12,6 +15,7 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import java.io.File
 import java.io.FileOutputStream
@@ -33,7 +37,8 @@ private data class DocumentMetadata(
 /**
  * Hosts the [OpSurfaceView]. Edge-to-edge so the surface spans the full
  * window; `configChanges` on the activity (manifest) keeps the engine alive
- * across rotation. `onDestroy` always tears the engine down.
+ * across rotation. `onDestroy` detaches the View; active service-owned work
+ * retains an adoptable engine lease, while inactive engines tear down.
  */
 class MainActivity : ComponentActivity() {
 
@@ -43,9 +48,19 @@ class MainActivity : ComponentActivity() {
     private lateinit var accountCenter: AccountCenterOverlay
     private lateinit var loginBackCallback: OnBackPressedCallback
     private var documentOpenInProgress = false
+    private var imageImportInProgress = false
     private var exportStagedFile: File? = null
     private var exportStagingDir: File? = null
     private lateinit var documentSave: DocumentSaveCoordinator
+    private var backgroundNotificationPermissionRequested = false
+
+    private val backgroundNotificationPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (!granted) {
+            Log.i(TAG, "notification permission denied; FGS remains visible in Task Manager")
+        }
+    }
 
     private val openDocumentLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocument(),
@@ -54,6 +69,16 @@ class MainActivity : ComponentActivity() {
             documentOpenInProgress = false
         } else {
             readAndOpenDocument(uri)
+        }
+    }
+
+    private val imageImportLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri == null) {
+            imageImportInProgress = false
+        } else {
+            readAndImportImageOrSvg(uri)
         }
     }
 
@@ -109,10 +134,12 @@ class MainActivity : ComponentActivity() {
         surfaceView = OpSurfaceView(this).apply {
             configure(doc, editorMode, fonts)
             setOpenDocumentHandler(::launchDocumentPicker)
+            setImportImageOrSvgHandler(::launchImageOrSvgPicker)
             setExportDocumentHandler(::beginDocumentExport)
             setSystemChromeAppearanceHandler { prefersLightIcons ->
                 updateSystemChromeAppearance(window, prefersLightIcons)
             }
+            setBackgroundWorkActivationHandler(::requestBackgroundNotificationPermission)
         }
         // Do not pad or resize the SurfaceView: its background should remain
         // visually continuous below transparent system bars. The Rust host
@@ -189,6 +216,24 @@ class MainActivity : ComponentActivity() {
         installEditorInsets(rootView, surfaceView)
     }
 
+    override fun onStart() {
+        super.onStart()
+        BackgroundGenerationController.setActivityVisible(this, true)
+    }
+
+    override fun onPause() {
+        // Probe while Android still considers this a foreground-originated
+        // transition, so Android 12+ permits starting the FGS before Home or
+        // the lock screen removes the visible-activity exemption.
+        if (::surfaceView.isInitialized) surfaceView.prepareForBackground()
+        super.onPause()
+    }
+
+    override fun onStop() {
+        BackgroundGenerationController.setActivityVisible(this, false)
+        super.onStop()
+    }
+
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         if (!::surfaceView.isInitialized) return
@@ -205,10 +250,23 @@ class MainActivity : ComponentActivity() {
         if (::accountCenter.isInitialized) accountCenter.destroy()
         cleanupExportStaging()
         if (::documentSave.isInitialized) documentSave.cancelForTeardown()
-        // Teardown unconditionally (rotation never reaches here thanks to
-        // configChanges).
+        // Rotation never reaches here thanks to configChanges. Other teardown
+        // detaches the View; active background generation retains the engine.
         if (::surfaceView.isInitialized) surfaceView.destroy()
         super.onDestroy()
+    }
+
+    private fun requestBackgroundNotificationPermission() {
+        if (
+            Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            backgroundNotificationPermissionRequested ||
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) ==
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            return
+        }
+        backgroundNotificationPermissionRequested = true
+        backgroundNotificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
     }
 
     private fun launchDocumentPicker() {
@@ -223,6 +281,23 @@ class MainActivity : ComponentActivity() {
             documentOpenInProgress = false
             Log.w(TAG, "could not launch document picker", e)
             showOpenDocumentError()
+        }
+    }
+
+    private fun launchImageOrSvgPicker() {
+        if (imageImportInProgress || isFinishing || isDestroyed) return
+        imageImportInProgress = true
+        try {
+            // OpenDocument uses EXTRA_MIME_TYPES when more than one type is
+            // supplied. Keep SVG explicit because it is not included by all
+            // providers in their `image/*` filter.
+            imageImportLauncher.launch(
+                arrayOf("image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml"),
+            )
+        } catch (e: Exception) {
+            imageImportInProgress = false
+            Log.w(TAG, "could not launch image picker", e)
+            showImageImportError()
         }
     }
 
@@ -404,6 +479,89 @@ class MainActivity : ComponentActivity() {
         showOpenDocumentError()
     }
 
+    private fun readAndImportImageOrSvg(uri: Uri) {
+        val metadata = queryDocumentMetadata(uri)
+        val displayName = imageImportDisplayName(uri, metadata.displayName)
+        if (metadata.size != null && metadata.size > MAX_DOCUMENT_BYTES) {
+            imageImportInProgress = false
+            Log.w(TAG, "image '$displayName' exceeds the 32 MiB mobile input limit")
+            showImageImportError()
+            return
+        }
+
+        Thread({
+            val result = try {
+                Result.success(readDocumentBytes(uri, metadata.size))
+            } catch (e: Exception) {
+                Result.failure(e)
+            } catch (e: OutOfMemoryError) {
+                Result.failure(IOException("not enough memory to import the image", e))
+            }
+
+            runOnUiThread {
+                imageImportInProgress = false
+                if (isFinishing || isDestroyed || !::surfaceView.isInitialized) return@runOnUiThread
+                result.fold(
+                    onSuccess = { bytes -> importImageOrSvg(bytes, displayName) },
+                    onFailure = { error ->
+                        Log.w(TAG, "could not read image '$displayName'", error)
+                        showImageImportError()
+                    },
+                )
+            }
+        }, "OpenPencilImageImporter").start()
+    }
+
+    private fun importImageOrSvg(bytes: ByteArray, displayName: String) {
+        val status = surfaceView.importImageOrSvg(bytes, displayName)
+        if (status == 0) {
+            Log.i(TAG, "imported image '$displayName'")
+            return
+        }
+        if (status == OpNative.STATUS_CLOSING) {
+            Log.w(TAG, "image import ignored because the engine is closing")
+            return
+        }
+        Log.w(
+            TAG,
+            "could not import image '$displayName', status=$status: " +
+                OpNative.nativeLastError(surfaceView.engine),
+        )
+        // Busy is the collaboration race gate. Rust already painted the
+        // precise rejection notice, so a generic platform toast would hide it.
+        if (status != OpNative.STATUS_BUSY) showImageImportError()
+    }
+
+    private fun imageImportDisplayName(uri: Uri, providerName: String?): String {
+        val mime = contentResolver.getType(uri)
+            ?.substringBefore(';')
+            ?.trim()
+            ?.lowercase(Locale.ROOT)
+        val fallbackExtension = when (mime) {
+            "image/png" -> "png"
+            "image/jpeg" -> "jpg"
+            "image/gif" -> "gif"
+            "image/webp" -> "webp"
+            "image/svg+xml" -> "svg"
+            else -> "img"
+        }
+        val candidate = providerName
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+            ?: uri.lastPathSegment
+                ?.substringAfterLast('/')
+                ?.trim()
+                ?.takeIf { it.isNotEmpty() }
+            ?: "image.$fallbackExtension"
+        // Rust deliberately uses the extension to select the editable SVG
+        // importer; preserve that path even when a provider omits the suffix.
+        return if (mime == "image/svg+xml" && !candidate.endsWith(".svg", ignoreCase = true)) {
+            "$candidate.svg"
+        } else {
+            candidate
+        }
+    }
+
     private fun queryDocumentMetadata(uri: Uri): DocumentMetadata = try {
         contentResolver.query(
             uri,
@@ -491,6 +649,10 @@ class MainActivity : ComponentActivity() {
 
     private fun showOpenDocumentError() {
         Toast.makeText(this, R.string.document_open_failed, Toast.LENGTH_SHORT).show()
+    }
+
+    private fun showImageImportError() {
+        Toast.makeText(this, R.string.image_import_failed, Toast.LENGTH_LONG).show()
     }
 
     // Reads every fonts/*.ttf asset (from the APK assets dir) for the engine's font registry.

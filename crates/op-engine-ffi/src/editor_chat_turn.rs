@@ -26,6 +26,11 @@ use serde_json::json;
 /// surface as an error, not an eternal "Thinking…" bubble.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(300);
+/// A provider may omit newlines forever or split one event across many
+/// `data:` lines. Bound both buffers at the same hard ceiling as the codegen
+/// response collector so malformed SSE cannot grow mobile memory without
+/// limit before the outer pipeline sees a delta.
+const MAX_SSE_EVENT_BYTES: usize = 2 * 1024 * 1024;
 
 /// Everything one worker task needs to run a turn. A value snapshot — the
 /// worker never touches the live editor state.
@@ -209,7 +214,7 @@ async fn run_streaming_request(
 /// delta. Synchronous-`Sender` twin of
 /// `op_host_services::chat_builtin_http_wire::pump_sse_response` — keep the
 /// two line-splitting loops in step when touching either.
-async fn pump_sse_response(
+pub(crate) async fn pump_sse_response(
     response: reqwest::Response,
     tx: &Sender<ChatDelta>,
     parse: fn(&str) -> Option<ChatDelta>,
@@ -225,6 +230,7 @@ async fn pump_sse_response(
         })?;
         buf.extend_from_slice(&bytes);
         while let Some(nl_pos) = buf.iter().position(|&b| b == b'\n') {
+            ensure_sse_size(nl_pos)?;
             let line: Vec<u8> = buf.drain(..=nl_pos).collect();
             let line = String::from_utf8_lossy(&line);
             let line = line.trim_end_matches('\n').trim_end_matches('\r');
@@ -236,12 +242,12 @@ async fn pump_sse_response(
                 continue;
             }
             if let Some(data) = line.strip_prefix("data:") {
-                if !event_data.is_empty() {
-                    event_data.push('\n');
-                }
-                event_data.push_str(data.trim_start());
+                append_sse_data(&mut event_data, data.trim_start())?;
             }
         }
+        // Only the unterminated suffix remains. Complete short lines above
+        // do not count against each other; one never-terminated line does.
+        ensure_sse_size(buf.len())?;
         if emitted_done {
             break;
         }
@@ -251,10 +257,7 @@ async fn pump_sse_response(
         let line = String::from_utf8_lossy(&buf);
         let line = line.trim_end_matches('\n').trim_end_matches('\r');
         if let Some(data) = line.strip_prefix("data:") {
-            if !event_data.is_empty() {
-                event_data.push('\n');
-            }
-            event_data.push_str(data.trim_start());
+            append_sse_data(&mut event_data, data.trim_start())?;
         }
     }
     if !emitted_done && emit_sse_event(&mut event_data, tx, parse) {
@@ -262,6 +265,35 @@ async fn pump_sse_response(
     }
 
     Ok(emitted_done)
+}
+
+fn append_sse_data(event_data: &mut String, data: &str) -> Result<(), MobileChatTurnError> {
+    let separator = usize::from(!event_data.is_empty());
+    let next_len = event_data
+        .len()
+        .checked_add(separator)
+        .and_then(|length| length.checked_add(data.len()))
+        .ok_or_else(sse_size_error)?;
+    ensure_sse_size(next_len)?;
+    if separator != 0 {
+        event_data.push('\n');
+    }
+    event_data.push_str(data);
+    Ok(())
+}
+
+fn ensure_sse_size(size: usize) -> Result<(), MobileChatTurnError> {
+    if size <= MAX_SSE_EVENT_BYTES {
+        Ok(())
+    } else {
+        Err(sse_size_error())
+    }
+}
+
+fn sse_size_error() -> MobileChatTurnError {
+    MobileChatTurnError::SseStream {
+        message: format!("event exceeded the {MAX_SSE_EVENT_BYTES}-byte safety limit"),
+    }
 }
 
 /// Forward one buffered event. Returns true when the turn is over (a
@@ -296,3 +328,7 @@ fn emit_sse_event(
     event_data.clear();
     emitted_done
 }
+
+#[cfg(test)]
+#[path = "editor_chat_turn_tests.rs"]
+mod tests;

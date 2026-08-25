@@ -3,6 +3,8 @@ use super::WidgetHostNative;
 mod mobile_ai_sheet_tests;
 #[path = "mobile_auth_collab_tests.rs"]
 mod mobile_auth_collab_tests;
+#[path = "mobile_codegen_entry_tests.rs"]
+mod mobile_codegen_entry_tests;
 #[path = "mobile_layer_drag_tests.rs"]
 mod mobile_layer_drag_tests;
 #[path = "mobile_more_actions_tests.rs"]
@@ -63,7 +65,19 @@ fn press_more_entry(
     width: f32,
     height: f32,
 ) -> bool {
-    host.editor_state_mut().editor_ui.mobile_sheet = Some(MobileSheetKind::More);
+    if host.editor_state().editor_ui.mobile_sheet != Some(MobileSheetKind::More) {
+        let app_bar = host_canvas_geometry::touch_app_bar_rect(host.editor_state(), width);
+        let overflow = center(MobileAppBar::overflow_rect(app_bar));
+        assert!(
+            host.apply_press(overflow.x, overflow.y, width, height),
+            "the app-bar More button must consume its press"
+        );
+        assert_eq!(
+            host.editor_state().editor_ui.mobile_sheet,
+            Some(MobileSheetKind::More),
+            "the app-bar More button must open the overflow surface"
+        );
+    }
     let panel = host.mobile_sheet_rect(width, height, MobileSheetKind::More);
     let index = MobileMoreEntry::visible(host.editor_state())
         .into_iter()

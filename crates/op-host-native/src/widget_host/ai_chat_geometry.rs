@@ -40,9 +40,9 @@ impl WidgetHostNative {
         viewport_h: f32,
     ) -> Option<Rect> {
         let (cx0, cy0, cw, ch) = self.canvas_region(viewport_w, viewport_h);
-        // Native touch chrome owns a modal AI surface. Phones use a bottom
-        // sheet; tablets use a bounded trailing panel so the canvas remains
-        // legible and the IME cannot turn the whole screen into a black slab.
+        // Native touch chrome uses a modal bottom sheet on phones and a
+        // non-modal bounded trailing assistant on tablets. The latter keeps
+        // the canvas legible and interactive while the chat remains open.
         if self.editor_state.editor_ui.touch_chrome() {
             if self.editor_state.editor_ui.mobile_sheet
                 != Some(op_editor_core::size_class::MobileSheetKind::Ai)

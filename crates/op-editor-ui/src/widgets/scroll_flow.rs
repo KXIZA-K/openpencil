@@ -209,7 +209,7 @@ pub fn scroll_property_panel_body_2d(
         return None;
     }
     if matches!(
-        state.editor_ui.property_tab,
+        state.editor_ui.effective_property_tab(),
         op_editor_core::PropertyTab::Code
     ) {
         let logical_rect = panel.logical_rect(property_rect);

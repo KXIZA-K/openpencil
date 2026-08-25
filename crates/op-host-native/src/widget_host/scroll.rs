@@ -607,9 +607,7 @@ impl WidgetHostNative {
         if self.try_scroll_layer_panel(x, y, layer_dx, layer_dy, viewport_width, viewport_height) {
             return true;
         }
-        if self.editor_state.editor_ui.touch_chrome()
-            && self.editor_state.editor_ui.mobile_sheet.is_some()
-        {
+        if self.mobile_sheet_owns_point(Point2D::new(x, y), viewport_width, viewport_height) {
             return true;
         }
         // A device frame owns every wheel over the canvas. Branch on
@@ -769,9 +767,7 @@ impl WidgetHostNative {
         if self.try_scroll_layer_panel(x, y, dx, dy, viewport_width, viewport_height) {
             return true;
         }
-        if self.editor_state.editor_ui.touch_chrome()
-            && self.editor_state.editor_ui.mobile_sheet.is_some()
-        {
+        if self.mobile_sheet_owns_point(Point2D::new(x, y), viewport_width, viewport_height) {
             return true;
         }
         if self.device_mode_active() && self.over_canvas(x, y, viewport_width, viewport_height) {

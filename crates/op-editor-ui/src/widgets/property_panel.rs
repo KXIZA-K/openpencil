@@ -206,6 +206,9 @@ pub struct PropertyPanel {
     pub tab: op_editor_core::PropertyTab,
     /// Header tab currently hovered. Used only for the pinned tab strip.
     pub tab_hover: Option<op_editor_core::PropertyTab>,
+    /// Whether this responsive layout exposes the generated-code tab.
+    /// Compact touch layouts hide it; tablet, desktop, and web keep it.
+    pub code_tab_available: bool,
     /// Current export format + scale, shown on the Export section's
     /// two dropdowns. Clicking a dropdown opens its inline select
     /// popup (NOT the Export modal).

@@ -2,15 +2,7 @@ import Foundation
 import Metal
 import QuartzCore
 import UIKit
-
-/// Drives the OpenPencil engine C ABI on the main thread. Owns the
-/// `CAMetalLayer` borrow (the layer outlives the engine), the
-/// `CADisplayLink` frame pump, and the lifecycle transitions
-/// (background suspend / foreground resume / teardown).
-///
-/// In editor mode (`OpCreateDesc.mode == 1`) the shell is a thin
-/// forwarding layer: every mutation goes through the `op_editor_*` ABI
-/// and the engine paints the complete desktop chrome each frame.
+/// Main-thread owner of the engine, Metal surface, lifecycle, and shell bridges.
 final class OpEngineHost: NSObject {
     weak var view: OpPlayerView?
     var authStorageURL: URL?
@@ -29,9 +21,10 @@ final class OpEngineHost: NSObject {
     private var observers: [NSObjectProtocol] = []
     private lazy var documentExportCoordinator = DocumentExportCoordinator(host: self)
     private lazy var documentSaveCoordinator = DocumentSaveCoordinator(host: self)
+    private lazy var imageImportCoordinator = ImageImportCoordinator(host: self)
+    private lazy var generationBackgroundCoordinator = GenerationBackgroundCoordinator(host: self)
     /// Editor mode (full desktop chrome) vs bare viewer.
     let editorMode: Bool
-
     private var imeFocused = false
     private var prefersLightSystemIcons: Bool?
     private var didReportSystemChromeFailure = false
@@ -117,6 +110,8 @@ final class OpEngineHost: NSObject {
         displayLink = nil
         documentExportCoordinator.cancelForTeardown()
         documentSaveCoordinator.cancelForTeardown()
+        imageImportCoordinator.cancelForTeardown()
+        generationBackgroundCoordinator.teardown()
 
         if let engine {
             let suspendStatus = op_suspend(engine)
@@ -263,6 +258,7 @@ final class OpEngineHost: NSObject {
             reportFailure(status, operation: "op_editor_press", engine: engine)
         } else if status == OpStatus_Ok {
             drainShellActions()
+            generationBackgroundCoordinator.observeEngineWork()
         }
     }
 
@@ -280,6 +276,7 @@ final class OpEngineHost: NSObject {
         if status != OpStatus_Ok && status != OpStatus_Suspended {
             reportFailure(status, operation: "op_editor_release", engine: engine)
         }
+        if status == OpStatus_Ok { generationBackgroundCoordinator.observeEngineWork() }
     }
 
     func editorCancelGesture() {
@@ -343,6 +340,7 @@ final class OpEngineHost: NSObject {
         if status != OpStatus_Ok && status != OpStatus_Suspended {
             reportFailure(status, operation: "op_editor_key", engine: engine)
         }
+        if status == OpStatus_Ok { generationBackgroundCoordinator.observeEngineWork() }
     }
 
     func editorImePreedit(_ text: String, selection: Range<Int>) {
@@ -479,6 +477,8 @@ final class OpEngineHost: NSObject {
                 DispatchQueue.main.async { [weak self] in
                     self?.documentSaveCoordinator.beginSave()
                 }
+            } else if action == Int32(OpShellAction_ImportImageOrSvg.rawValue) {
+                DispatchQueue.main.async { [weak self] in self?.imageImportCoordinator.beginImport() }
             }
         }
     }
@@ -612,6 +612,7 @@ final class OpEngineHost: NSObject {
         } else if status != OpStatus_Ok && status != OpStatus_Suspended {
             reportFailure(status, operation: "op_frame", engine: engine)
         }
+        generationBackgroundCoordinator.observeEngineWork()
         if editorMode {
             syncImeFocus()
             drainCopyText()
@@ -647,6 +648,7 @@ final class OpEngineHost: NSObject {
         let status = op_suspend(engine)
         if status == OpStatus_Ok {
             isSuspended = true
+            generationBackgroundCoordinator.didEnterBackground()
         } else {
             reportFailure(status, operation: "op_suspend", engine: engine)
         }
@@ -654,6 +656,7 @@ final class OpEngineHost: NSObject {
 
     private func resumeFromForeground() {
         precondition(Thread.isMainThread)
+        generationBackgroundCoordinator.willEnterForeground()
         guard let engine, isSuspended, let surfaceLayer else { return }
         var desc = OpSurfaceDesc()
         desc.size = MemoryLayout<OpSurfaceDesc>.size

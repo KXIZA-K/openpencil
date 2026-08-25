@@ -76,7 +76,7 @@ Common conventions:
 
 | Function | Arguments | Returns |
 | --- | --- | --- |
-| `create` | `doc: Uint8Array \| null, w: number, h: number, dpr: number, callbacks: EngineCallbacks, storageRoot: string, mode: number` | `number` — engine handle, `0` on failure |
+| `create` | `doc: ArrayBuffer \| null, w: number, h: number, dpr: number, callbacks: EngineCallbacks, storageRoot: string, mode: number` | `number` — engine handle, `0` on failure |
 | `lastError` | `engine: number` | `string` — last error text; pass `0` to read the create failure |
 | `attachSurface` | `engine: number, xcomponentId: string` | `number` |
 | `suspend` | `engine: number` | `number` — blocking barrier; the GPU surface is gone when it returns |
@@ -87,6 +87,8 @@ Common conventions:
 | `setKeyboard` | `engine: number, h: number` | `number` |
 | `prefersLightSystemIcons` | `engine: number` | `boolean` — false on any failure |
 | `frame` | `engine: number, tMs: number` | `number` — blocking barrier; the TRUE frame status |
+| `hasBackgroundWork` | `engine: number` | `boolean` — render-free generation services are active; false on failure |
+| `backgroundTick` | `engine: number, tMs: number` | `boolean` — pumps generation services once without a GPU frame and returns whether work remains |
 | `pointer` | `engine: number, id: number, phase: number, x, y: number, tMs: number` | `number` |
 | `destroy` | `engine: number` | `void` |
 
@@ -130,8 +132,8 @@ only trust the fields when `status === 0`.
 
 | Function | Arguments | Returns |
 | --- | --- | --- |
-| `remoteImageResult` | `engine: number, requestId: number, bytes: Uint8Array \| null` | `number` — `null`/empty reports a failed fetch |
-| `registerFont` | `engine: number, bytes: Uint8Array` | `number` |
+| `remoteImageResult` | `engine: number, requestId: number, bytes: ArrayBuffer \| null` | `number` — `null`/empty reports a failed fetch |
+| `registerFont` | `engine: number, bytes: ArrayBuffer` | `number` |
 | `getPageCount` | `engine: number` | `number` — the count, or an `OpStatus`/`-1` |
 | `setActivePage` | `engine: number, index: number` | `number` |
 
@@ -158,7 +160,8 @@ only trust the fields when `status === 0`.
 | `editorTakeLoginUrl` | `engine: number` | `string \| null` — CONSUMES the pending URL |
 | `editorCancelLogin` | `engine: number` | `number` |
 | `editorTakeShellAction` | `engine: number` | `number` — an `OpShellAction`; negative = engine failure |
-| `editorOpenDocument` | `engine: number, bytes: Uint8Array, name: string \| null` | `number` |
+| `editorOpenDocument` | `engine: number, bytes: ArrayBuffer, name: string` | `number` |
+| `editorImportImageOrSvg` | `engine: number, bytes: ArrayBuffer, fileName: string` | `number` — one shell-picked PNG/JPEG/GIF/WebP/SVG, bounded to 32 MiB |
 | `editorExportFileName` | `engine: number` | `string \| null` — does NOT consume the export |
 | `editorExportToPath` | `engine: number, path: string` | `number` — target must not exist |
 | `editorCancelExport` | `engine: number` | `number` |
@@ -185,7 +188,7 @@ Shell action codes (`editorTakeShellAction`), from `op_engine.h`:
 `0` None · `1` OpenDocument · `2` OpenLoginWebView · `3` CloseLoginWebView ·
 `4` ExportDocument · `5` OpenAccountCenter · `6` RequestLogin ·
 `7` OpenLanguagePicker · `8` WindowClose · `9` WindowMinimize ·
-`10` WindowZoom.
+`10` WindowZoom · `11` SaveDocument · `12` ImportImageOrSvg.
 
 `8`/`9`/`10` come from the TopBar's painted traffic-light dots and only reach
 desktop-class shells that hid the platform title bar; touch chrome paints no
@@ -278,6 +281,11 @@ No Android counterpart — these cover the XComponent surface model and the
 export OHOS_NDK_HOME="$HOME/command-line-tools/sdk/default/openharmony"
 scripts/build-ohos.sh          # aarch64, release, --features gl,editor
 ```
+
+After a successful build, the script validates the mobile import/background
+NAPI markers and atomically installs the ABI payload at
+`packaging/harmony/entry/libs/arm64-v8a/libopenpencil.so`. The HarmonyOS
+project contract fails closed if that packaged ELF is missing or stale.
 
 Features: `gl` (EGL/GLES rendering), `editor` (full editor mode),
 `mobile-auth-dev` (debug-only local auth), `pinned-skia-binaries`

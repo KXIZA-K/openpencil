@@ -87,6 +87,7 @@ impl PropertyPanel {
             panel_rect.origin.y,
             point,
             self.snapshot.widget.is_some(),
+            self.code_tab_available,
             self.density_scale > 1.0,
         ) {
             return Some(PropertyPanelAction::SetPropertyTab(tab));
@@ -489,6 +490,7 @@ impl PropertyPanel {
             panel_rect.origin.y,
             point,
             self.snapshot.widget.is_some(),
+            self.code_tab_available,
             self.density_scale > 1.0,
         )
     }

@@ -58,7 +58,7 @@ export class DocumentShell {
 
     let bytes: ArrayBuffer;
     try {
-      bytes = DocumentShell.readBoundedFile(uri);
+      bytes = DocumentShell.readBoundedFile(uri, 'document');
     } catch (error) {
       hilog.warn(
         DOMAIN,
@@ -91,6 +91,78 @@ export class DocumentShell {
   }
 
   /**
+   * Shell action 12: pick exactly one raster image or editable SVG and
+   * return its bounded bytes plus display name to Rust. An empty picker
+   * result is terminal and silent: the action was already consumed by the
+   * shell-action drain, and image import has no pending engine artifact to
+   * cancel. The SDK documents no exception code for dismissal, so rejected
+   * picker promises remain visible failures rather than being swallowed.
+   */
+  static async importImageOrSvg(
+    context: common.UIAbilityContext,
+    host: EngineHost
+  ): Promise<ShellOutcome> {
+    let uri: string = '';
+    try {
+      const viewPicker = new picker.DocumentViewPicker(context);
+      const options = new picker.DocumentSelectOptions();
+      options.maxSelectNumber = 1;
+      options.fileSuffixFilters = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg'];
+      const result: string[] = await viewPicker.select(options);
+      if (result.length === 0) {
+        return ShellOutcome.CANCELLED;
+      }
+      uri = result[0];
+    } catch (error) {
+      hilog.warn(DOMAIN, TAG, 'image picker failed: %{public}s', JSON.stringify(error));
+      return ShellOutcome.FAILED;
+    }
+
+    const displayName: string = DocumentShell.displayNameOf(uri);
+    if (!DocumentShell.hasSupportedImageExtension(displayName)) {
+      return ShellOutcome.UNSUPPORTED_TYPE;
+    }
+
+    let bytes: ArrayBuffer;
+    try {
+      bytes = DocumentShell.readBoundedFile(uri, 'image');
+    } catch (error) {
+      hilog.warn(
+        DOMAIN,
+        TAG,
+        "could not read image '%{public}s': %{public}s",
+        displayName,
+        JSON.stringify(error)
+      );
+      return ShellOutcome.FAILED;
+    }
+
+    const status: number = host.importImageOrSvg(bytes, displayName);
+    if (status === OpStatus.OK || status === OpStatus.BUSY) {
+      // Busy means Rust painted the collaboration race explanation itself.
+      host.requestFrame();
+    }
+    if (status === OpStatus.OK) {
+      hilog.info(DOMAIN, TAG, "imported image '%{public}s'", displayName);
+      return ShellOutcome.OK;
+    }
+    if (status === OpStatus.CLOSING || status === OpStatus.BUSY) {
+      // Closing needs no stale page alert. Busy is the collaboration race
+      // gate, whose precise explanation is already painted by Rust.
+      return ShellOutcome.CANCELLED;
+    }
+    hilog.warn(
+      DOMAIN,
+      TAG,
+      "could not import image '%{public}s', status=%{public}d: %{public}s",
+      displayName,
+      status,
+      host.lastError()
+    );
+    return ShellOutcome.FAILED;
+  }
+
+  /**
    * Shell action 4: name the frozen export, let the user place it, then
    * stage it app-privately and copy it into the chosen file. Every terminal
    * path either consumes or explicitly cancels the frozen artifact so the
@@ -111,8 +183,9 @@ export class DocumentShell {
       const viewPicker = new picker.DocumentViewPicker(context);
       const options = new picker.DocumentSaveOptions();
       options.newFileNames = [filename];
-      // PNG / JPEG / SVG / PDF only — WebP stays hidden because the pinned
-      // mobile Skia archive has no WebP encoder.
+      // The engine-derived suffix covers rendered media and Code-panel
+      // source/bundle artifacts. WebP stays hidden because the pinned mobile
+      // Skia archive has no WebP encoder.
       options.fileSuffixChoices = DocumentExportSupport.saveSuffixesFor(filename);
       const result: string[] = await viewPicker.save(options);
       if (result.length === 0) {
@@ -297,15 +370,15 @@ export class DocumentShell {
     }
   }
 
-  private static readBoundedFile(uri: string): ArrayBuffer {
+  private static readBoundedFile(uri: string, kind: string): ArrayBuffer {
     const file = fs.openSync(uri, fs.OpenMode.READ_ONLY);
     try {
       const size: number = fs.statSync(file.fd).size;
       if (size <= 0) {
-        throw new Error('document is empty');
+        throw new Error(`${kind} is empty`);
       }
       if (size > MAX_DOCUMENT_BYTES) {
-        throw new Error('document exceeds the 32 MiB mobile input limit');
+        throw new Error(`${kind} exceeds the 32 MiB mobile input limit`);
       }
       const buffer = new ArrayBuffer(size);
       // `ReadOptions.offset` is the FILE offset, and every read fills the
@@ -314,7 +387,7 @@ export class DocumentShell {
       // truncated/racing document and must be rejected rather than opened.
       const read: number = fs.readSync(file.fd, buffer, { offset: 0, length: size });
       if (read !== size) {
-        throw new Error('document changed while it was being read');
+        throw new Error(`${kind} changed while it was being read`);
       }
       return buffer;
     } finally {
@@ -351,5 +424,15 @@ export class DocumentShell {
     }
     const extension: string = name.substring(dot + 1).toLowerCase();
     return extension === 'op' || extension === 'pen';
+  }
+
+  private static hasSupportedImageExtension(name: string): boolean {
+    const dot: number = name.lastIndexOf('.');
+    if (dot < 0 || dot === name.length - 1) {
+      return false;
+    }
+    const extension: string = name.substring(dot + 1).toLowerCase();
+    return extension === 'png' || extension === 'jpg' || extension === 'jpeg' ||
+      extension === 'gif' || extension === 'webp' || extension === 'svg';
   }
 }

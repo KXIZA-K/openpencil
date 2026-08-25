@@ -4,6 +4,7 @@
     <string name="document_type_unsupported">请选择 .op 或 .pen 文件。</string>
     <string name="document_export_failed">导出文件失败。</string>
     <string name="document_save_failed">保存文档失败。</string>
+    <string name="image_import_failed">请选择不超过 32 MiB 的 PNG、JPEG、GIF、WebP 或 SVG 文件。</string>
     <string name="native_login_title">登录 OpenPencil</string>
     <string name="native_login_close">关闭</string>
     <string name="native_login_email">邮箱</string>
@@ -66,4 +67,13 @@
     <string name="sso_region_later">稍后</string>
     <string name="sso_region_restart_now">立即重启</string>
     <string name="language_picker_title">语言</string>
+    <string name="background_generation_channel">AI 生成</string>
+    <string name="background_generation_channel_description">OpenPencil 在后台生成时显示进度</string>
+    <string name="background_generation_result_channel">生成结果</string>
+    <string name="background_generation_running_title">OpenPencil 正在生成</string>
+    <string name="background_generation_running_body">你可以使用其他应用，生成会在后台继续。</string>
+    <string name="background_generation_complete_title">生成完成</string>
+    <string name="background_generation_complete_body">点按返回 OpenPencil 查看结果。</string>
+    <string name="background_generation_paused_title">后台生成已暂停</string>
+    <string name="background_generation_paused_body">已达到 Android 后台运行时限，请返回 OpenPencil 继续。</string>
 </resources>

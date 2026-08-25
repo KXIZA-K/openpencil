@@ -7,6 +7,8 @@ use op_editor_ui::Point2D;
 
 const VIEWPORT_W: f32 = 390.0;
 const VIEWPORT_H: f32 = 844.0;
+const IPAD_VIEWPORT_W: f32 = 834.0;
+const IPAD_VIEWPORT_H: f32 = 1_112.0;
 
 fn document_with_rects(count: usize) -> PenDocument {
     serde_json::from_value(serde_json::json!({
@@ -182,6 +184,7 @@ fn find_property_action(
 
 fn touch_code_host() -> WidgetHostNative {
     let mut host = touch_host(1, MobileSheetKind::Properties);
+    host.editor_state_mut().editor_ui.size_class = EditorSizeClass::Medium;
     host.editor_state_mut().editor_ui.property_tab = op_editor_core::PropertyTab::Code;
     host
 }
@@ -189,8 +192,8 @@ fn touch_code_host() -> WidgetHostNative {
 fn code_framework_strip_point(host: &WidgetHostNative) -> Point2D {
     let rect = op_editor_ui::widgets::host_canvas_geometry::property_panel_rect(
         host.editor_state(),
-        VIEWPORT_W,
-        VIEWPORT_H,
+        IPAD_VIEWPORT_W,
+        IPAD_VIEWPORT_H,
     );
     let panel = PropertyPanel::for_selection(host.editor_state()).expect("Code property panel");
     let mut y = rect.origin.y;
@@ -301,11 +304,11 @@ fn code_framework_strip_horizontal_drag_scrolls_without_selecting_a_chip() {
     let point = code_framework_strip_point(&host);
     let selected = host.editor_state().codegen.framework;
 
-    assert!(host.apply_press(point.x, point.y, VIEWPORT_W, VIEWPORT_H));
+    assert!(host.apply_press(point.x, point.y, IPAD_VIEWPORT_W, IPAD_VIEWPORT_H));
     assert!(host.touch_panel_gesture.is_some());
     assert!(host.apply_cursor_move(point.x - 36.0, point.y + 2.0));
     assert!(host.editor_state().codegen.framework_scroll.offset > 0.0);
-    assert!(host.apply_release_with_viewport(VIEWPORT_W, VIEWPORT_H));
+    assert!(host.apply_release_with_viewport(IPAD_VIEWPORT_W, IPAD_VIEWPORT_H));
     assert_eq!(host.editor_state().codegen.framework, selected);
     assert!(host.touch_panel_gesture.is_none());
 }
@@ -316,10 +319,10 @@ fn code_framework_drag_cancel_path_never_replays_the_pending_chip() {
     let point = code_framework_strip_point(&host);
     let selected = host.editor_state().codegen.framework;
 
-    assert!(host.apply_press(point.x, point.y, VIEWPORT_W, VIEWPORT_H));
+    assert!(host.apply_press(point.x, point.y, IPAD_VIEWPORT_W, IPAD_VIEWPORT_H));
     assert!(host.apply_cursor_move(point.x - 24.0, point.y));
     assert!(host.cancel_touch_panel_gesture());
-    assert!(!host.apply_release_with_viewport(VIEWPORT_W, VIEWPORT_H));
+    assert!(!host.apply_release_with_viewport(IPAD_VIEWPORT_W, IPAD_VIEWPORT_H));
     assert_eq!(host.editor_state().codegen.framework, selected);
     assert!(host.touch_panel_gesture.is_none());
 }
@@ -329,17 +332,17 @@ fn code_body_horizontal_drag_keeps_vertical_property_scroll_routing() {
     let mut host = touch_code_host();
     let rect = op_editor_ui::widgets::host_canvas_geometry::property_panel_rect(
         host.editor_state(),
-        VIEWPORT_W,
-        VIEWPORT_H,
+        IPAD_VIEWPORT_W,
+        IPAD_VIEWPORT_H,
     );
     let strip = code_framework_strip_point(&host);
     let body = Point2D::new(rect.origin.x + rect.size.x / 2.0, strip.y + 120.0);
     assert!(rect.contains(body));
 
-    assert!(host.apply_press(body.x, body.y, VIEWPORT_W, VIEWPORT_H));
+    assert!(host.apply_press(body.x, body.y, IPAD_VIEWPORT_W, IPAD_VIEWPORT_H));
     assert!(host.apply_cursor_move(body.x - 36.0, body.y + 2.0));
     assert_eq!(host.editor_state().codegen.framework_scroll.offset, 0.0);
-    assert!(host.apply_release_with_viewport(VIEWPORT_W, VIEWPORT_H));
+    assert!(host.apply_release_with_viewport(IPAD_VIEWPORT_W, IPAD_VIEWPORT_H));
 }
 
 #[test]

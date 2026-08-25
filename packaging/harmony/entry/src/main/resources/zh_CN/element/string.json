@@ -21,6 +21,14 @@
       "value": "请选择 .op 或 .pen 文件。"
     },
     {
+      "name": "image_import_type_unsupported",
+      "value": "请选择 PNG、JPEG、GIF、WebP 或 SVG 文件。"
+    },
+    {
+      "name": "image_import_failed",
+      "value": "无法导入此图片或 SVG。"
+    },
+    {
       "name": "document_export_failed",
       "value": "导出文件失败。"
     },
@@ -31,6 +39,10 @@
     {
       "name": "engine_start_failed",
       "value": "无法启动 OpenPencil 引擎。"
+    },
+    {
+      "name": "background_generation_paused",
+      "value": "系统后台运行时限已结束，生成已暂停；现在已回到 OpenPencil，将继续生成。"
     },
     {
       "name": "native_login_unavailable",

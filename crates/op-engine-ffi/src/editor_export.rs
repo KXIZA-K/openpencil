@@ -5,12 +5,11 @@
 //! once, so large PNG/PDF payloads never cross the C ABI as a second copy.
 
 use crate::error::{read_utf8, FfiError, FfiResult};
-use crate::lifecycle::call_session;
-#[cfg(any(target_os = "ios", target_os = "android", target_env = "ohos", test))]
-use crate::lifecycle::Session;
+use crate::lifecycle::{call_session, Session};
 use crate::OpStatus;
 #[cfg(any(target_os = "ios", target_os = "android", target_env = "ohos", test))]
 use op_editor_core::FileAction;
+use op_editor_host_core::codegen_export::CodegenArtifact;
 use op_render_export::ExportArtifact;
 #[cfg(any(target_os = "ios", target_os = "android", target_env = "ohos", test))]
 use op_render_export::{EditorExportScope, ExportError};
@@ -119,6 +118,62 @@ pub(crate) fn stage_export(session: &mut Session, action: Option<FileAction>) ->
         op_render_export::export_editor_state(&state, &scope).map_err(export_error_to_ffi)?;
     session.export_shell.artifact = Some(artifact);
     Ok(SHELL_ACTION_EXPORT_DOCUMENT)
+}
+
+/// Move one Code-panel artifact into the same frozen export slot used by
+/// rendered files. The existing action 4 ABI then drives every native save UI.
+pub(crate) fn drain_codegen_export(session: &mut Session) -> FfiResult<Option<i32>> {
+    // Do not pop the codegen queue while another file is still owned by a
+    // platform picker; the next shell-action poll can drain it after consume.
+    if session.export_shell.artifact.is_some() {
+        return Ok(None);
+    }
+    let artifact = session
+        .editor
+        .as_mut()
+        .and_then(|host| session.codegen.drain_artifact(host));
+    let Some(artifact) = artifact else {
+        return Ok(None);
+    };
+    stage_codegen_artifact(&mut session.export_shell, artifact)?;
+    Ok(Some(SHELL_ACTION_EXPORT_DOCUMENT))
+}
+
+fn stage_codegen_artifact(
+    state: &mut EditorExportShellState,
+    artifact: CodegenArtifact,
+) -> FfiResult<()> {
+    if state.artifact.is_some() {
+        return Err(FfiError::new(
+            OpStatus::Busy,
+            "the previous export is still waiting for the platform save UI",
+        ));
+    }
+    let CodegenArtifact {
+        file_name,
+        mime_type,
+        bytes,
+    } = artifact;
+    if file_name.is_empty()
+        || file_name.len() > EXPORT_FILENAME_CAP
+        || file_name == "."
+        || file_name == ".."
+        || file_name.contains('/')
+        || file_name.contains('\\')
+        || file_name.chars().any(char::is_control)
+        || Path::new(&file_name).extension().is_none()
+    {
+        return Err(FfiError::new(
+            OpStatus::LayoutError,
+            "code generation produced an invalid export file name",
+        ));
+    }
+    state.artifact = Some(ExportArtifact {
+        mime_type,
+        file_name,
+        bytes,
+    });
+    Ok(())
 }
 
 unsafe fn copy_export_file_name(
@@ -260,6 +315,14 @@ mod tests {
         );
     }
 
+    fn code_artifact(file_name: &str, mime_type: &'static str, bytes: &[u8]) -> CodegenArtifact {
+        CodegenArtifact {
+            file_name: file_name.into(),
+            mime_type,
+            bytes: bytes.to_vec(),
+        }
+    }
+
     #[test]
     fn shell_action_is_emitted_once_while_the_artifact_remains_frozen() {
         let mut session = session();
@@ -333,6 +396,117 @@ mod tests {
         assert!(session.export_shell.artifact.is_none());
         assert!(write_pending_export(&mut session.export_shell, &path).is_err());
         std::fs::remove_dir_all(root).expect("clean temp root");
+    }
+
+    #[test]
+    fn codegen_source_uses_the_same_retry_safe_frozen_slot() {
+        let mut session = session();
+        let source = b"export default function App() {}";
+        stage_codegen_artifact(
+            &mut session.export_shell,
+            code_artifact("component.tsx", "text/plain; charset=utf-8", source),
+        )
+        .expect("stage code source");
+        let artifact = session.export_shell.artifact.as_ref().expect("artifact");
+        assert_eq!(artifact.file_name, "component.tsx");
+        assert_eq!(artifact.mime_type, "text/plain; charset=utf-8");
+
+        let root = std::env::temp_dir().join(format!(
+            "openpencil-ffi-codegen-export-{}-{}",
+            std::process::id(),
+            TEMP_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir(&root).expect("temp root");
+        assert!(write_pending_export(&mut session.export_shell, &root.join("wrong.tsx")).is_err());
+        assert!(session.export_shell.artifact.is_some());
+        let path = root.join("component.tsx");
+        write_pending_export(&mut session.export_shell, &path).expect("write source");
+        assert_eq!(std::fs::read(&path).expect("read source"), source);
+        assert!(session.export_shell.artifact.is_none());
+        std::fs::remove_dir_all(root).expect("clean temp root");
+    }
+
+    #[test]
+    fn invalid_codegen_artifact_name_never_reaches_the_platform() {
+        let mut session = session();
+        let error = stage_codegen_artifact(
+            &mut session.export_shell,
+            code_artifact("../component.tsx", "text/plain", b"source"),
+        )
+        .expect_err("path traversal must be rejected");
+        assert_eq!(error.status, OpStatus::LayoutError);
+        assert!(session.export_shell.artifact.is_none());
+    }
+
+    #[test]
+    fn codegen_staging_never_overwrites_a_frozen_export() {
+        let mut session = session();
+        stage_codegen_artifact(
+            &mut session.export_shell,
+            code_artifact("component.tsx", "text/plain", b"first"),
+        )
+        .expect("first artifact");
+        let error = stage_codegen_artifact(
+            &mut session.export_shell,
+            code_artifact("bundle.zip", "application/zip", b"second"),
+        )
+        .expect_err("frozen slot must stay exclusive");
+        assert_eq!(error.status, OpStatus::Busy);
+        let frozen = session
+            .export_shell
+            .artifact
+            .as_ref()
+            .expect("first remains");
+        assert_eq!(frozen.file_name, "component.tsx");
+        assert_eq!(frozen.bytes, b"first");
+    }
+
+    #[test]
+    fn queued_codegen_export_waits_for_the_frozen_slot_and_retries() {
+        let mut session = session();
+        stage_codegen_artifact(
+            &mut session.export_shell,
+            code_artifact("component.tsx", "text/plain", b"first"),
+        )
+        .expect("first artifact");
+        session
+            .editor_mut()
+            .expect("editor host")
+            .editor_state_mut()
+            .codegen
+            .pending_export_bundle = true;
+        session.pump_editor_codegen(1);
+
+        assert_eq!(
+            drain_codegen_export(&mut session).expect("busy drain"),
+            None
+        );
+        let frozen = session
+            .export_shell
+            .artifact
+            .as_ref()
+            .expect("first remains");
+        assert_eq!(frozen.file_name, "component.tsx");
+        assert_eq!(frozen.bytes, b"first");
+
+        session.export_shell.artifact = None;
+        assert_eq!(
+            drain_codegen_export(&mut session).expect("retry drain"),
+            Some(SHELL_ACTION_EXPORT_DOCUMENT)
+        );
+        assert_eq!(
+            session
+                .export_shell
+                .artifact
+                .as_ref()
+                .expect("bundle")
+                .file_name,
+            "bundle.zip"
+        );
+        assert_eq!(
+            drain_codegen_export(&mut session).expect("terminal drain"),
+            None
+        );
     }
 
     #[test]

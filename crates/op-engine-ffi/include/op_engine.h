@@ -168,6 +168,9 @@ typedef enum OpShellAction {
      * never declares the capability keeps the engine-owned destination
      * directory and the engine-painted name dialog. */
     OpShellAction_SaveDocument = 11,
+    /* Present a bounded image picker and return one PNG, JPEG, GIF, WebP, or
+     * SVG through op_editor_import_image_or_svg. Append-only ABI value. */
+    OpShellAction_ImportImageOrSvg = 12,
 } OpShellAction;
 
 /* Regional SSO deployments for op_editor_configure_auth. Both map to pinned
@@ -207,6 +210,14 @@ OpStatus op_attach_surface(OpEngine *engine, const OpSurfaceDesc *desc);
 
 /* Suspend rendering and synchronously stop using a borrowed surface. */
 OpStatus op_suspend(OpEngine *engine);
+
+/* Render-free owner-thread pump for a user-started mobile generation. The
+ * platform shell calls this only while it holds its OS background-execution
+ * grant; `active` says whether another tick is needed. */
+OpStatus op_background_tick(OpEngine *engine, uint64_t now_ms, bool *active);
+OpStatus op_has_background_work(OpEngine *engine, bool *active);
+/* Cancel the user-started generation and retire its render-free work. */
+OpStatus op_cancel_background_work(OpEngine *engine);
 
 /* Resume rendering, optionally with a new borrowed GPU surface. */
 OpStatus op_resume(OpEngine *engine, const OpSurfaceDesc *desc);
@@ -356,6 +367,14 @@ OpStatus op_editor_ime_focused(OpEngine *engine, bool *out);
 /* Drain the next platform-shell action. File actions not owned by the mobile
  * shell stay queued for their host integration. */
 OpStatus op_editor_take_shell_action(OpEngine *engine, int32_t *out);
+
+/* Insert one file selected for OpShellAction_ImportImageOrSvg. The shell must
+ * bound the borrowed payload to 32 MiB. Raster bytes are embedded as a data
+ * URL; an .svg file becomes editable nodes. The engine re-checks the live
+ * collaboration permission immediately before mutation. */
+OpStatus op_editor_import_image_or_svg(OpEngine *engine,
+                                       const uint8_t *data_ptr, size_t data_len,
+                                       const uint8_t *file_name_ptr, size_t file_name_len);
 
 /* Peek/copy the UTF-8 file name of the frozen export. NULL/0 reports the
  * required length without consuming it. The payload is not NUL-terminated. */

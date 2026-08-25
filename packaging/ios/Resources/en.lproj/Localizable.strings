@@ -61,3 +61,7 @@
 "update.availableBody" = "A newer version of OpenPencil is available.";
 "update.goToStore" = "Update";
 "editMenu.paste" = "Paste";
+"backgroundGeneration.title" = "Creating in OpenPencil";
+"backgroundGeneration.subtitle" = "Your design is still being generated.";
+"imageImport.error.title" = "Unable to Import Image";
+"imageImport.error.body" = "Choose a PNG, JPEG, GIF, WebP, or SVG file up to 32 MiB.";

@@ -15,6 +15,22 @@ scripts/build-ohos.sh                       # aarch64, release, --features gl,ed
 OHOS_TARGET=x86_64-unknown-linux-ohos scripts/build-ohos.sh   # emulator lane
 ```
 
+On success the script verifies the NAPI registration markers required by the
+current ArkTS shell, copies through a temporary file in the destination
+directory, and atomically installs to the ABI-matched HAP payload:
+
+| Rust target | HAP payload |
+| --- | --- |
+| `aarch64-unknown-linux-ohos` | `packaging/harmony/entry/libs/arm64-v8a/libopenpencil.so` |
+| `x86_64-unknown-linux-ohos` | `packaging/harmony/entry/libs/x86_64/libopenpencil.so` |
+| `armv7-unknown-linux-ohos` | `packaging/harmony/entry/libs/armeabi-v7a/libopenpencil.so` |
+
+Build, marker, and copy failures leave the previous payload untouched. Before
+assembling a HAP, run `HarmonyProjectContractTests.rb`: it reads the packaged
+ELF and fails closed if `editorImportImageOrSvg`, `hasBackgroundWork`, or
+`backgroundTick` is missing. A `stale HarmonyOS native artifact` failure means
+the HAP would package an older ABI and must not be released.
+
 ## Where OHOS_NDK_HOME should point
 
 The OpenHarmony SDK lays the toolchain out as `<sdk>/openharmony/native/{llvm,sysroot}`.
@@ -97,28 +113,40 @@ in-repo OHOS work:
    `all(feature = "gl", target_os = "android")` gates (`SurfaceSlot::Egl`
    construction and the `draw_frame` arm) to accept `target_env = "ohos"`.
 
-Until then the OHOS module builds, loads, and drives everything except
-presenting frames.
+Once a complete OHOS module is available, this remaining surface gap still
+prevents it from presenting frames.
 
-## UNVERIFIED-UNTIL-NDK
+## Current cross-build verification status
 
-No OpenHarmony NDK is installed on the machine this was written on, so the
-following are reasoned from vendored sources and public headers but have not
-been executed:
+The build was exercised on macOS with DevEco Studio's bundled OpenHarmony
+Native SDK at
+`/Applications/DevEco-Studio.app/Contents/sdk/default/openharmony` (API 24,
+HarmonyOS 6.1.1, package `6.1.1.125`; clang 15.0.4). It reached rust-skia's
+source build but did not produce a new `libopenpencil.so`: Skia's GN command
+did not include the existing Homebrew Freetype headers under
+`/opt/homebrew/include/freetype2`, and a later archive rule selected the host
+`ar` with an incompatible response-file invocation. Therefore the local HAP
+payload must remain failed by the artifact contract until a complete
+cross-build replaces it.
 
-* **The full `cargo build -p op-engine-napi --target aarch64-unknown-linux-ohos`.**
-  Everything downstream of `skia-bindings`' build script is unexecuted. What
-  HAS been verified here is the NAPI/NDK-facing Rust: every module in
+The HAP project itself remains pinned to **HarmonyOS 5.0.0(12)**. Install that
+SDK's **Ets (ArkTS)**, **Toolchains**, and **Native** components through
+DevEco's SDK Manager before the release build; the bundled API 24 SDK above is
+evidence from this development host, not a replacement for the pinned SDK
+lane.
+
+The following still require a successful matching-SDK build/device run:
+
+* **The final NAPI link and ArkTS load.** The attempted Cargo build stopped in
+  `skia-bindings`, so everything downstream of that build script is
+  unexecuted. What HAS been verified here is the NAPI/NDK-facing Rust: every module in
   `op-engine-napi` type-checks and passes `clippy -D warnings` for
   `aarch64-unknown-linux-ohos` against stubbed `op-engine-ffi` /
   `op-engine-jni` crates (see the crate README).
-* **NDK directory layout.** `llvm/bin/{clang,clang++,llvm-ar,llvm-ranlib}` and
-  `sysroot/` under `native/` are assumed from the SDK layout skia-bindings
-  encodes. `build-ohos.sh` fails loudly with the exact missing path rather
-  than proceeding.
-* **API level.** skia-bindings' own comment recommends API 12 as the minimum.
-  Nothing here pins one; if the sysroot is older, expect link failures in
-  Skia rather than in this crate.
+* **HarmonyOS 5.0.0(12) Native cross-build.** The exact SDK lane used by the
+  HAP profile has not completed the Skia/NAPI link. `build-ohos.sh` validates
+  the SDK directory layout and fails with the exact missing path rather than
+  proceeding.
 * **Library names.** `libace_ndk.z.so` (XComponent) and `libhilog_ndk.z.so`
   (HiLog) are declared via `#[link(name = "ace_ndk.z")]` /
   `#[link(name = "hilog_ndk.z")]`. The symbol declarations themselves are

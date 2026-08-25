@@ -251,6 +251,10 @@ fn suspend_blocks_pointer_and_frame_until_resume() {
 
     let status = unsafe { op_suspend(engine) };
     assert_eq!(status, OpStatus::Ok);
+    // A stale platform display callback must not advance runtime work after
+    // suspend; only `op_background_tick` is legal until resume.
+    let status = unsafe { op_frame(engine, 0) };
+    assert_eq!(status, OpStatus::Suspended);
     // Pointer input is refused while suspended.
     let status = unsafe { op_pointer(engine, 1, 0, 10.0, 10.0, 0) };
     assert_eq!(status, OpStatus::Suspended);
@@ -282,4 +286,43 @@ fn null_destroy_is_invalid() {
     // the null path is testable.
     let status = unsafe { op_destroy(ptr::null_mut()) };
     assert_eq!(status, OpStatus::InvalidArg);
+}
+
+#[cfg(feature = "editor")]
+#[test]
+fn image_import_action_code_and_abi_entrypoint_are_stable() {
+    assert_eq!(op_engine_ffi::SHELL_ACTION_IMPORT_IMAGE_OR_SVG, 12);
+    let desc = OpCreateDesc {
+        size: std::mem::size_of::<OpCreateDesc>(),
+        doc_ptr: ptr::null(),
+        doc_len: 0,
+        width: 1_024.0,
+        height: 768.0,
+        dpr: 1.0,
+        callbacks: ptr::null(),
+        asset_base_ptr: ptr::null(),
+        asset_base_len: 0,
+        mode: 1,
+        storage_root_ptr: ptr::null(),
+        storage_root_len: 0,
+        documents_root_ptr: ptr::null(),
+        documents_root_len: 0,
+    };
+    let mut engine = ptr::null_mut();
+    assert_eq!(unsafe { op_create(&desc, &mut engine) }, OpStatus::Ok);
+    let png = b"\x89PNG\r\n\x1a\nabi-image";
+    let name = b"abi.png";
+    assert_eq!(
+        unsafe {
+            op_engine_ffi::op_editor_import_image_or_svg(
+                engine,
+                png.as_ptr(),
+                png.len(),
+                name.as_ptr(),
+                name.len(),
+            )
+        },
+        OpStatus::Ok
+    );
+    assert_eq!(unsafe { op_destroy(engine) }, OpStatus::Ok);
 }

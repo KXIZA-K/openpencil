@@ -1,9 +1,9 @@
 # frozen_string_literal: true
 
 # Source contracts for the HarmonyOS project skeleton: identity, device
-# coverage, the XComponent <-> native-library binding, the lifecycle-only
-# render contract, and the resource wiring. DevEco/hvigor cannot run on this
-# host, so these checks are the local build gate.
+# coverage, the XComponent <-> native-library binding, the foreground/background
+# render contract, and the resource wiring. The final section also checks the
+# exact prebuilt native artifact that hvigor will package.
 
 require "json"
 
@@ -77,6 +77,31 @@ entry_package = parse_json5(File.join(player_dir, "entry/oh-package.json5"))
 raise "the native module type package must be wired" unless entry_package["dependencies"]["libopenpencil.so"] ==
   "file:./src/main/cpp/types/libopenpencil"
 
+# The native build entry point owns installation of the exact ABI payload.
+# It must validate the freshly-built NAPI surface before atomically replacing
+# the file hvigor will package; printing a manual copy hint is not sufficient.
+ohos_build = read(repo_dir, "scripts/build-ohos.sh")
+raise "aarch64 must install into the HAP arm64-v8a ABI" unless ohos_build.match?(
+  /aarch64-unknown-linux-ohos\).*?hap_abi="arm64-v8a"/m,
+)
+raise "the OHOS build must target entry\/libs\/<abi>" unless ohos_build.include?(
+  'install_dir="$repo_root/packaging/harmony/entry/libs/$hap_abi"',
+)
+raise "the OHOS install temp file must share the destination filesystem" unless ohos_build.include?(
+  'mktemp "$install_dir/.libopenpencil.so.tmp.XXXXXX"',
+)
+raise "the OHOS payload must be installed by atomic rename" unless ohos_build.include?(
+  'mv -f "$install_tmp" "$install_path"',
+)
+required_napi_markers = %w[editorImportImageOrSvg hasBackgroundWork backgroundTick].freeze
+missing_build_markers = required_napi_markers.reject { |name| ohos_build.include?(name) }
+raise "the OHOS build omits NAPI artifact markers: #{missing_build_markers.join(', ')}" unless missing_build_markers.empty?
+build_call = ohos_build.index('cargo "${cargo_args[@]}" "$@"')
+marker_gate = ohos_build.index('required_napi_exports=')
+atomic_move = ohos_build.index('mv -f "$install_tmp" "$install_path"')
+raise "the OHOS install must follow build and artifact validation" unless
+  build_call && marker_gate && atomic_move && build_call < marker_gate && marker_gate < atomic_move
+
 # ---- XComponent <-> libopenpencil.so binding -------------------------------
 
 index = read(ets_dir, "pages/Index.ets")
@@ -107,6 +132,52 @@ frame_calls = Dir.glob(File.join(ets_dir, "**/*.ets")).sum do |source|
   File.read(source).scan(/napi\.frame\s*\(/).length
 end
 raise "exactly one frame call site (the pump tick), found #{frame_calls}" unless frame_calls == 1
+
+# Generation is a transient, render-free background task. The delay must be
+# armed by the foreground pump as soon as work becomes active; page/surface
+# suspension only switches pumps. Expiry promptly releases its grant and then
+# pauses honestly until foreground resume.
+background = read(ets_dir, "common/BackgroundGenerationCoordinator.ets")
+raise "transient tasks must use BackgroundTasksKit" unless background.include?(
+  "import { backgroundTaskManager } from '@kit.BackgroundTasksKit'",
+)
+raise "foreground work must pre-arm requestSuspendDelay" unless background.match?(
+  /observeForegroundWork\(\).*?ensureSuspendDelay\(\)/m,
+) && engine_host.include?("this.backgroundGeneration.observeForegroundWork()")
+raise "the suspend path must not first request a background grant" if background.match?(
+  /prepareForBackground\(\).*?ensureSuspendDelay\(\).*?enterBackground\(\)/m,
+)
+raise "GPU frames must stop before background ticking" unless engine_host.match?(
+  /stopFramePump\(\).*?napi\.suspend\(this\.engine\).*?backgroundGeneration\.enterBackground\(\)/m,
+)
+raise "the background coordinator must never call frame" if background.match?(/napi\.frame\s*\(/)
+raise "suspended callbacks must not drain foreground shell work" unless engine_host.match?(
+  /pump\(\): void \{\s*if \(this\.engine === 0 \|\| !this\.editorMode \|\| this\.suspended\)/m,
+)
+raise "background generation must use the render-free ABI" unless background.include?(
+  "napi.backgroundTick(this.engine, now)",
+)
+expiry_start = background.index("private onDelayExpiring")
+expiry_end = background.index("private pauseUntilForeground", expiry_start || 0)
+raise "expiry handler missing" unless expiry_start && expiry_end
+expiry = background[expiry_start...expiry_end]
+raise "expiry must release the transient grant" unless expiry.include?("this.cancelSuspendDelay()")
+raise "expiry callback must not run another potentially-heavy tick" if expiry.include?("napi.backgroundTick")
+raise "resume must stop ticking and cancel the old grant" unless background.match?(
+  /enterForeground\(\).*?stopTickTimer\(\).*?cancelSuspendDelay\(\)/m,
+)
+raise "completion must stop ticking and cancel the grant" unless background.match?(
+  /finishAndCancel\(\).*?stopTickTimer\(\).*?cancelSuspendDelay\(\)/m,
+)
+raise "generation must not misuse a continuous background mode" if background.match?(
+  /startBackgroundRunning|BackgroundMode|DATA_TRANSFER|TASK_KEEPING/,
+)
+raise "transient delay must not add KEEP_BACKGROUND_RUNNING" if module_json["requestPermissions"].any? { |permission|
+  permission["name"] == "ohos.permission.KEEP_BACKGROUND_RUNNING"
+}
+raise "expiry must be disclosed when the page resumes" unless index.match?(
+  /onPageShow\(\).*?takeBackgroundGenerationPaused\(\).*?background_generation_paused/m,
+)
 
 # ---- Input coverage: touch, mouse, keyboard, focus -------------------------
 
@@ -237,5 +308,18 @@ raise "README must document where the engine library lands" unless readme.includ
 raise "README must point at the Rust OHOS build script" unless readme.include?("scripts/build-ohos.sh")
 raise "README must document the signing placeholder" unless readme.match?(/signing/i)
 raise "README must carry a LIMITATIONS section" unless readme.include?("## Limitations")
+
+# This is a release gate, not only a source-contract test: hvigor packages the
+# local prebuilt directly. Fail closed when it is stale even if the ArkTS
+# and Rust sources themselves are correct.
+native_artifact_path = File.join(player_dir, "entry/libs/arm64-v8a/libopenpencil.so")
+raise "HarmonyOS native artifact missing; run scripts/build-ohos.sh" unless File.file?(native_artifact_path)
+native_artifact = File.binread(native_artifact_path)
+raise "HarmonyOS native artifact is not ELF; run scripts/build-ohos.sh" unless native_artifact.start_with?("\x7fELF".b)
+missing_artifact_markers = required_napi_markers.reject { |name| native_artifact.include?(name) }
+raise(
+  "stale HarmonyOS native artifact; run scripts/build-ohos.sh (missing NAPI export markers: " \
+  "#{missing_artifact_markers.join(', ')})",
+) unless missing_artifact_markers.empty?
 
 puts "HarmonyOS project contract validates"

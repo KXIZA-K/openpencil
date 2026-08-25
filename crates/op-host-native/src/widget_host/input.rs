@@ -347,7 +347,7 @@ impl WidgetHostNative {
     ) -> Option<usize> {
         if !self.editor_state.property_panel_visible()
             || !matches!(
-                self.editor_state.editor_ui.property_tab,
+                self.editor_state.editor_ui.effective_property_tab(),
                 op_editor_core::PropertyTab::Code
             )
         {

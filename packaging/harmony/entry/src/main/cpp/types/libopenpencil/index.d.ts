@@ -64,7 +64,7 @@ export interface OpTextState {
 
 /** `mode`: 0 = viewer, 1 = full editor. Returns 0 on failure. */
 export const create: (
-  doc: ArrayBuffer,
+  doc: ArrayBuffer | null,
   w: number,
   h: number,
   dpr: number,
@@ -93,11 +93,14 @@ export const setSafeArea: (engine: number, t: number, r: number, b: number, l: n
 export const setKeyboard: (engine: number, h: number) => number;
 export const prefersLightSystemIcons: (engine: number) => boolean;
 /**
- * Blocking barrier; the TRUE frame status. The OHOS build pumps frames from
- * the native vsync, so the shell does not call this on a timer — it stays on
- * the ABI for parity and for forced single-shot redraws.
+ * Blocking barrier; the TRUE frame status. Only the foreground display-sync
+ * pump calls this; background generation must use `backgroundTick` instead.
  */
 export const frame: (engine: number, tMs: number) => number;
+/** True while render-free generation services have pending work. */
+export const hasBackgroundWork: (engine: number) => boolean;
+/** Pumps render-free generation once; false means complete or failed. */
+export const backgroundTick: (engine: number, tMs: number) => boolean;
 export const pointer: (
   engine: number,
   id: number,
@@ -212,6 +215,15 @@ export const editorTakeLoginUrl: (engine: number) => string | null;
 export const editorCancelLogin: (engine: number) => number;
 export const editorTakeShellAction: (engine: number) => number;
 export const editorOpenDocument: (engine: number, bytes: ArrayBuffer, name: string) => number;
+/**
+ * Inserts one shell-picked PNG, JPEG, GIF, WebP, or SVG. The shell must
+ * bound `bytes` to 32 MiB and preserve the picked display name.
+ */
+export const editorImportImageOrSvg: (
+  engine: number,
+  bytes: ArrayBuffer,
+  fileName: string,
+) => number;
 export const editorExportFileName: (engine: number) => string | null;
 export const editorExportToPath: (engine: number, path: string) => number;
 export const editorCancelExport: (engine: number) => number;

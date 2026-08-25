@@ -345,7 +345,7 @@ impl WidgetHostNative {
         }
         // Tier 9b — shared page switcher (touch layouts).
         if self.editor_state.editor_ui.touch_chrome()
-            && self.editor_state.editor_ui.mobile_sheet.is_none()
+            && !self.mobile_sheet_is_modal()
             && !self.editor_state.editor_ui.variables_panel_open
         {
             let page_count = self
@@ -387,9 +387,7 @@ impl WidgetHostNative {
         // Tier 10 — toolbar + floating align toolbar (desktop); on touch
         // layouts the bottom tool dock replaces the desktop toolbar.
         if self.editor_state.editor_ui.touch_chrome() && !self.preview_slideshow_active() {
-            if self.editor_state.editor_ui.mobile_sheet.is_none()
-                && !self.editor_state.editor_ui.variables_panel_open
-            {
+            if !self.mobile_sheet_is_modal() && !self.editor_state.editor_ui.variables_panel_open {
                 if let Some(consumed) = self.press_mobile_dock_tier(&ctx) {
                     return consumed;
                 }

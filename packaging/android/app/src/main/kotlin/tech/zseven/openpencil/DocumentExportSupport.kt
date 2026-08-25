@@ -35,6 +35,9 @@ internal object DocumentExportSupport {
             "webp" -> "image/webp"
             "svg" -> "image/svg+xml"
             "pdf" -> "application/pdf"
+            "zip" -> "application/zip"
+            "html" -> "text/html"
+            "tsx", "vue", "svelte", "dart", "swift", "kt" -> "text/plain"
             else -> "application/octet-stream"
         }
 }

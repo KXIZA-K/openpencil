@@ -5,6 +5,7 @@
     <string name="document_type_unsupported">Choose an .op or .pen file.</string>
     <string name="document_export_failed">Couldn\'t export this file.</string>
     <string name="document_save_failed">Couldn\'t save this document.</string>
+    <string name="image_import_failed">Choose a PNG, JPEG, GIF, WebP, or SVG file up to 32 MiB.</string>
     <string name="native_login_title">Sign in to OpenPencil</string>
     <string name="native_login_close">Close</string>
     <string name="native_login_email">Email</string>
@@ -67,4 +68,13 @@
     <string name="sso_region_later">Later</string>
     <string name="sso_region_restart_now">Restart now</string>
     <string name="language_picker_title">Language</string>
+    <string name="background_generation_channel">AI generation</string>
+    <string name="background_generation_channel_description">Progress while OpenPencil generates in the background</string>
+    <string name="background_generation_result_channel">Generation results</string>
+    <string name="background_generation_running_title">OpenPencil is generating</string>
+    <string name="background_generation_running_body">You can use other apps while generation continues.</string>
+    <string name="background_generation_complete_title">Generation complete</string>
+    <string name="background_generation_complete_body">Tap to review the result in OpenPencil.</string>
+    <string name="background_generation_paused_title">Background generation paused</string>
+    <string name="background_generation_paused_body">Android’s background time limit was reached. Return to OpenPencil to continue.</string>
 </resources>

@@ -384,7 +384,9 @@ impl WidgetHostNative {
         )?;
         match hit {
             op_editor_ui::widgets::mobile_chrome::SelectionActionHit::Properties => {
-                self.editor_state.editor_ui.property_tab = op_editor_core::PropertyTab::Design;
+                self.editor_state
+                    .editor_ui
+                    .set_property_tab(op_editor_core::PropertyTab::Design);
                 if !self.editor_state.editor_ui.expanded_touch_layout() {
                     self.editor_state.editor_ui.mobile_sheet =
                         Some(op_editor_core::size_class::MobileSheetKind::Properties);
@@ -446,9 +448,9 @@ impl WidgetHostNative {
 }
 
 impl WidgetHostNative {
-    /// Open touch surface modal ownership. A tap outside closes only the
-    /// surface; it never falls through to an app-bar, dock, page or canvas
-    /// action hidden below the scrim.
+    /// Open touch surface ownership. Modal sheets swallow their outside tap;
+    /// the bounded iPad AI panel only releases its IME focus and lets that same
+    /// tap continue to the visible app bar, dock, page controls, or canvas.
     pub(in crate::widget_host) fn press_mobile_modal_surface_tier(
         &mut self,
         ctx: &PressCtx,
@@ -468,6 +470,24 @@ impl WidgetHostNative {
         let kind = self.editor_state.editor_ui.mobile_sheet?;
         let panel = self.mobile_sheet_rect(ctx.viewport_width, ctx.viewport_height, kind);
         let point = Point2D::new(ctx.x, ctx.y);
+
+        if kind == op_editor_core::size_class::MobileSheetKind::Ai
+            && !self.editor_state.editor_ui.compact_layout()
+        {
+            if !panel.contains(point) {
+                let mut changed = self.editor_state.editor_ui.close_chat_model_picker();
+                if self.editor_state.chat.focused
+                    || self.editor_state.chat.input.composition().is_some()
+                {
+                    self.editor_state.chat.blur_input(self.now_ms);
+                    changed = true;
+                }
+                if changed {
+                    self.mark_dirty();
+                }
+            }
+            return None;
+        }
 
         if kind == op_editor_core::size_class::MobileSheetKind::More && panel.contains(point) {
             return self.press_mobile_more_sheet_tier(ctx);
@@ -589,6 +609,18 @@ impl WidgetHostNative {
             self.dismiss_mobile_surface();
             match entry {
                 op_editor_ui::widgets::MobileMoreEntry::Ai => unreachable!("handled above"),
+                op_editor_ui::widgets::MobileMoreEntry::Code => {
+                    let ui = &mut self.editor_state.editor_ui;
+                    ui.set_property_tab(op_editor_core::PropertyTab::Code);
+                    if ui.effective_property_tab() == op_editor_core::PropertyTab::Code {
+                        // Medium tablets use the bounded inspector sheet;
+                        // Expanded tablets already own a persistent right rail.
+                        if !ui.expanded_touch_layout() {
+                            ui.mobile_sheet =
+                                Some(op_editor_core::size_class::MobileSheetKind::Properties);
+                        }
+                    }
+                }
                 op_editor_ui::widgets::MobileMoreEntry::SignIn => {
                     // Touch chrome never opens the engine-painted login
                     // modal: the shell owns the whole sign-in experience.

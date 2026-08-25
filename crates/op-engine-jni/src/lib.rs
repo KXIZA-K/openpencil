@@ -30,6 +30,31 @@ fn system_icon_preference_or_false(status: op_engine_ffi::OpStatus, prefers_ligh
     status == op_engine_ffi::OpStatus::Ok && prefers_light
 }
 
+#[cfg(any(target_os = "android", test))]
+fn background_work_or_false(status: op_engine_ffi::OpStatus, active: bool) -> bool {
+    status == op_engine_ffi::OpStatus::Ok && active
+}
+
+/// Converts an Android `String` offset into the editor ABI's UTF-8 byte unit.
+/// Negative and oversized offsets clamp to the text bounds; a UTF-16 offset
+/// inside a surrogate pair snaps to that scalar's start.
+#[cfg(any(target_os = "android", test))]
+fn utf16_offset_to_utf8_byte(text: &str, offset: i32) -> usize {
+    let target = usize::try_from(offset).unwrap_or(0);
+    let mut utf16_units = 0usize;
+    for (byte, ch) in text.char_indices() {
+        if target <= utf16_units {
+            return byte;
+        }
+        let next = utf16_units.saturating_add(ch.len_utf16());
+        if target < next {
+            return byte;
+        }
+        utf16_units = next;
+    }
+    text.len()
+}
+
 #[cfg(test)]
 mod system_chrome_tests {
     use super::*;
@@ -48,6 +73,53 @@ mod system_chrome_tests {
             op_engine_ffi::OpStatus::Ok,
             true
         ));
+    }
+}
+
+#[cfg(test)]
+mod background_work_tests {
+    use super::*;
+
+    #[test]
+    fn only_a_successful_active_result_keeps_the_platform_service_alive() {
+        assert!(background_work_or_false(op_engine_ffi::OpStatus::Ok, true));
+        assert!(!background_work_or_false(
+            op_engine_ffi::OpStatus::Ok,
+            false
+        ));
+        assert!(!background_work_or_false(
+            op_engine_ffi::OpStatus::InvalidArg,
+            true
+        ));
+        assert!(!background_work_or_false(
+            op_engine_ffi::OpStatus::Poisoned,
+            true
+        ));
+    }
+}
+
+#[cfg(test)]
+mod editor_ime_offset_tests {
+    use super::utf16_offset_to_utf8_byte;
+
+    #[test]
+    fn converts_bmp_utf16_offsets_to_utf8_bytes() {
+        let text = "中a文";
+        assert_eq!(utf16_offset_to_utf8_byte(text, 0), 0);
+        assert_eq!(utf16_offset_to_utf8_byte(text, 1), 3);
+        assert_eq!(utf16_offset_to_utf8_byte(text, 2), 4);
+        assert_eq!(utf16_offset_to_utf8_byte(text, 3), 7);
+    }
+
+    #[test]
+    fn clamps_invalid_offsets_and_snaps_inside_surrogate_pairs() {
+        let text = "a😀中";
+        assert_eq!(utf16_offset_to_utf8_byte(text, -7), 0);
+        assert_eq!(utf16_offset_to_utf8_byte(text, 1), 1);
+        assert_eq!(utf16_offset_to_utf8_byte(text, 2), 1);
+        assert_eq!(utf16_offset_to_utf8_byte(text, 3), 5);
+        assert_eq!(utf16_offset_to_utf8_byte(text, 4), text.len());
+        assert_eq!(utf16_offset_to_utf8_byte(text, i32::MAX), text.len());
     }
 }
 
@@ -74,6 +146,15 @@ mod binding_contract_tests {
     }
 
     #[test]
+    fn java_strings_are_decoded_to_canonical_utf8_before_ffi() {
+        let source = include_str!("bindings.rs");
+        let start = source.find("fn jstring_bytes").expect("JNI string helper");
+        let function = &source[start..];
+        assert!(function.contains("String::from(value).into_bytes()"));
+        assert!(!function.contains("s.to_bytes().to_vec()"));
+    }
+
+    #[test]
     fn atomic_resize_native_forwards_the_complete_tuple_once() {
         let source = include_str!("bindings.rs");
         let start = source
@@ -91,6 +172,33 @@ mod binding_contract_tests {
     }
 
     #[test]
+    fn background_natives_forward_only_through_the_owner_thread_dispatch() {
+        let source = include_str!("bindings.rs");
+        for (export, ffi) in [
+            (
+                "nativeHasBackgroundWork",
+                "op_has_background_work(e, &mut active)",
+            ),
+            (
+                "nativeBackgroundTick",
+                "op_background_tick(e, now_ms.max(0) as u64, &mut active)",
+            ),
+        ] {
+            let signature = format!("fn {CANONICAL_JNI_PREFIX}{export}");
+            let start = source.find(&signature).expect("background JNI export");
+            let tail = &source[start..];
+            let end = tail[1..]
+                .find("#[no_mangle]")
+                .map_or(tail.len(), |offset| offset + 1);
+            let function = &tail[..end];
+            assert!(function.contains("with_engine(engine"));
+            assert!(function.contains(ffi));
+            assert!(function.contains("background_work_or_false"));
+            assert!(!function.contains("op_frame("));
+        }
+    }
+
+    #[test]
     fn editor_transform_begin_native_forwards_the_down_midpoint() {
         let source = include_str!("bindings_editor.rs");
         let start = source
@@ -98,6 +206,42 @@ mod binding_contract_tests {
             .expect("editor transform begin JNI export");
         let function = &source[start..];
         assert!(function.contains("op_engine_ffi::op_editor_begin_transform(e, x, y)"));
+    }
+
+    #[test]
+    fn editor_image_import_native_owns_java_arguments_before_dispatch() {
+        let source = include_str!("bindings_editor.rs");
+        let start = source
+            .find("Java_tech_zseven_openpencil_OpNative_nativeEditorImportImageOrSvg")
+            .expect("image import JNI export");
+        let tail = &source[start..];
+        let end = tail[1..]
+            .find("#[no_mangle]")
+            .map_or(tail.len(), |offset| offset + 1);
+        let function = &tail[..end];
+
+        assert!(function.contains("env.convert_byte_array(&data)"));
+        assert!(function.contains("jstring_bytes(&mut env, &file_name)"));
+        assert!(function.contains("call_status(engine"));
+        assert!(function.contains("op_engine_ffi::op_editor_import_image_or_svg("));
+    }
+
+    #[test]
+    fn editor_preedit_converts_android_utf16_offsets_before_ffi() {
+        let source = include_str!("bindings_editor.rs");
+        let start = source
+            .find("Java_tech_zseven_openpencil_OpNative_nativeEditorImePreedit")
+            .expect("editor preedit JNI export");
+        let tail = &source[start..];
+        let end = tail[1..]
+            .find("#[no_mangle]")
+            .map_or(tail.len(), |offset| offset + 1);
+        let function = &tail[..end];
+
+        assert_eq!(function.matches("utf16_offset_to_utf8_byte").count(), 2);
+        assert!(function.contains("op_engine_ffi::op_editor_ime_preedit("));
+        assert!(!function.contains("sel_start as usize"));
+        assert!(!function.contains("sel_end as usize"));
     }
 
     #[test]

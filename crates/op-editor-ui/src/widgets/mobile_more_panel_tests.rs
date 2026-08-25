@@ -182,9 +182,27 @@ fn medium_and_expanded_keep_a_bounded_three_column_popover() {
 }
 
 #[test]
+fn code_entry_is_visible_only_on_touch_tablets() {
+    let compact = touch_state(EditorSizeClass::Compact);
+    assert!(!MobileMoreEntry::visible(&compact).contains(&MobileMoreEntry::Code));
+
+    for class in [EditorSizeClass::Medium, EditorSizeClass::Expanded] {
+        let state = touch_state(class);
+        let entries = MobileMoreEntry::visible(&state);
+        assert_eq!(entries.len(), 14);
+        assert!(entries.contains(&MobileMoreEntry::Code));
+    }
+
+    // The widget is mobile-only; constructing its model for a desktop state
+    // must not inject a destination that desktop chrome never paints.
+    let desktop = EditorState::starter();
+    assert!(!MobileMoreEntry::visible(&desktop).contains(&MobileMoreEntry::Code));
+}
+
+#[test]
 fn restored_entries_reuse_localized_labels_and_desktop_icons() {
     let mut state = EditorState::starter();
-    assert_eq!(MobileMoreEntry::ALL.len(), 14);
+    assert_eq!(MobileMoreEntry::ALL.len(), 15);
     assert_eq!(MobileMoreEntry::visible(&state).len(), 13);
     assert_eq!(MobileMoreEntry::ALL[0], MobileMoreEntry::NewFile);
     assert_eq!(MobileMoreEntry::ALL[1], MobileMoreEntry::OpenFile);
@@ -196,6 +214,7 @@ fn restored_entries_reuse_localized_labels_and_desktop_icons() {
     assert_eq!(MobileMoreEntry::SaveAsFile.icon(), Icon::Copy);
     assert_eq!(MobileMoreEntry::Templates.icon(), Icon::LayoutDashboard);
     assert_eq!(MobileMoreEntry::Assets.icon(), Icon::Palette);
+    assert_eq!(MobileMoreEntry::Code.icon(), Icon::Braces);
 
     for locale in op_i18n::Locale::ALL {
         state.editor_ui.locale = locale;
@@ -222,6 +241,10 @@ fn restored_entries_reuse_localized_labels_and_desktop_icons() {
         assert_ne!(
             MobileMoreEntry::Assets.label(&state.editor_ui),
             "assetCenter.title"
+        );
+        assert_ne!(
+            MobileMoreEntry::Code.label(&state.editor_ui),
+            "rightPanel.code"
         );
     }
 }

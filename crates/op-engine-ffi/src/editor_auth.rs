@@ -308,6 +308,10 @@ pub(crate) fn take_shell_action(session: &mut Session) -> FfiResult<i32> {
         }
     }
 
+    if let Some(action) = crate::editor_export::drain_codegen_export(session)? {
+        return Ok(action);
+    }
+
     // Document-lifecycle drains (confirmed save-name dialog + queued file
     // actions) live with the sandbox save flow in `editor_document`.
     crate::editor_document::drain_document_actions(session)

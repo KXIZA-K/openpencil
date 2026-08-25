@@ -33,10 +33,12 @@ pub const SHELL_ACTION_WINDOW_MINIMIZE: i32 = 9;
 pub const SHELL_ACTION_WINDOW_ZOOM: i32 = 10;
 /// Save the document through `DocumentViewPicker.save`.
 pub const SHELL_ACTION_SAVE_DOCUMENT: i32 = 11;
+/// Pick one bounded raster image or SVG and return it to the editor.
+pub const SHELL_ACTION_IMPORT_IMAGE_OR_SVG: i32 = 12;
 
 /// Every shell action the engine can hand the OHOS shell, in `OpShellAction`
 /// order. `SHELL_ACTION_NONE` is deliberately absent — it means "no work".
-pub const SHELL_ACTIONS: [i32; 11] = [
+pub const SHELL_ACTIONS: [i32; 12] = [
     SHELL_ACTION_OPEN_DOCUMENT,
     SHELL_ACTION_OPEN_LOGIN_WEBVIEW,
     SHELL_ACTION_CLOSE_LOGIN_WEBVIEW,
@@ -48,6 +50,7 @@ pub const SHELL_ACTIONS: [i32; 11] = [
     SHELL_ACTION_WINDOW_MINIMIZE,
     SHELL_ACTION_WINDOW_ZOOM,
     SHELL_ACTION_SAVE_DOCUMENT,
+    SHELL_ACTION_IMPORT_IMAGE_OR_SVG,
 ];
 
 /// Whether `code` is an action the shell must handle. Negative values are
@@ -373,7 +376,7 @@ mod tests {
         assert!(!is_shell_action(SHELL_ACTION_NONE));
         assert!(!is_shell_action(STATUS_CLOSING));
         assert!(!is_shell_action(-6)); // -(OpStatus::WrongThread)
-        assert!(!is_shell_action(12)); // past the last defined action
+        assert!(!is_shell_action(13)); // past the last defined action
     }
 
     #[test]

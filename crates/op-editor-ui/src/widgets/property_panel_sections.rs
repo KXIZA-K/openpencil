@@ -96,6 +96,7 @@ pub struct TabStripState {
     pub active: op_editor_core::PropertyTab,
     pub hover: Option<op_editor_core::PropertyTab>,
     pub show_interact: bool,
+    pub show_code: bool,
     pub touch_controls: bool,
 }
 
@@ -273,6 +274,7 @@ pub fn tab_strip_rects(
     x: f32,
     y: f32,
     show_interact: bool,
+    show_code: bool,
     touch_controls: bool,
 ) -> Vec<(op_editor_core::PropertyTab, Rect)> {
     use op_editor_core::PropertyTab;
@@ -301,14 +303,16 @@ pub fn tab_strip_rects(
         ));
         cursor_x += interact_w + 6.0;
     }
-    let code_w = (tab_label_width(labels.tab_code) + 24.0).max(48.0);
-    rects.push((
-        PropertyTab::Code,
-        Rect {
-            origin: Point2D::new(cursor_x, tab_y),
-            size: Point2D::new(code_w, tab_height),
-        },
-    ));
+    if show_code {
+        let code_w = (tab_label_width(labels.tab_code) + 24.0).max(48.0);
+        rects.push((
+            PropertyTab::Code,
+            Rect {
+                origin: Point2D::new(cursor_x, tab_y),
+                size: Point2D::new(code_w, tab_height),
+            },
+        ));
+    }
     rects
 }
 
@@ -323,9 +327,10 @@ pub fn tab_strip_hit(
     y: f32,
     point: Point2D,
     show_interact: bool,
+    show_code: bool,
     touch_controls: bool,
 ) -> Option<op_editor_core::PropertyTab> {
-    tab_strip_rects(labels, x, y, show_interact, touch_controls)
+    tab_strip_rects(labels, x, y, show_interact, show_code, touch_controls)
         .into_iter()
         .find(|(_, rect)| rect.contains(point))
         .map(|(tab, _)| tab)
@@ -350,7 +355,14 @@ pub fn paint_tab_strip(
             PropertyTab::Code => labels.tab_code,
         }
     };
-    for (tab, rect) in tab_strip_rects(labels, x, y, state.show_interact, state.touch_controls) {
+    for (tab, rect) in tab_strip_rects(
+        labels,
+        x,
+        y,
+        state.show_interact,
+        state.show_code,
+        state.touch_controls,
+    ) {
         let is_active = tab == active;
         let is_hovered = hover == Some(tab) && !is_active;
         if is_active || is_hovered {

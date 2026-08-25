@@ -93,6 +93,19 @@ impl Default for MobileImageSearch {
 }
 
 impl MobileImageSearch {
+    pub(crate) fn has_background_work(&self) -> bool {
+        !self.jobs.is_empty()
+    }
+
+    /// Drop the result receivers for every in-flight enrichment request.
+    /// Plain worker threads may finish their blocking fetch, but their sends
+    /// then fail and no cancelled result can land in the document. Keep the
+    /// handled/scan sets intact so the next foreground frame does not
+    /// immediately recreate work the user cancelled through system UI.
+    pub(crate) fn cancel_background_work(&mut self) {
+        self.jobs.clear();
+    }
+
     #[cfg(test)]
     pub(crate) fn with_fetcher(fetcher: ImageFetcher) -> Self {
         Self {

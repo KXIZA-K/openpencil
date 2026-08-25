@@ -86,6 +86,12 @@ targets:
         # true. Without them the engine's saves are invisible to the user.
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true
+        # Each foreground generation registers a unique concrete identifier;
+        # this wildcard authorizes its per-generation UUID suffix.
+        BGTaskSchedulerPermittedIdentifiers:
+          - tech.zseven.openpencil.generation.*
+        UIBackgroundModes:
+          - processing
         LSApplicationQueriesSchemes:
           - douyinopensdk
           - douyinliteopensdk
@@ -132,6 +138,7 @@ targets:
           fi
         basedOnDependencyAnalysis: false
     dependencies:
+      - sdk: BackgroundTasks.framework
       - sdk: Metal.framework
       - sdk: QuartzCore.framework
       - sdk: Security.framework

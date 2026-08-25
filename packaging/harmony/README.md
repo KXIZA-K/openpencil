@@ -14,6 +14,11 @@ document picker; selecting an `.op` or `.pen` file validates and opens it in
 the existing engine. The **Export** action renders PNG, JPEG, SVG, or PDF and
 presents the system save picker; WebP is hidden, exactly as on iOS, because
 the pinned mobile Skia archive has no WebP encoder.
+The engine-painted **Import Image or SVG** action presents one system document
+picker for PNG, JPEG, GIF, WebP, or SVG. The shell preserves the picked file
+name and rejects payloads above 32 MiB before returning them to Rust.
+The desktop-class **Code** panel reuses that frozen-export protocol for
+framework source files and generated/AI bundle ZIPs.
 
 ## Layout
 
@@ -33,21 +38,22 @@ packaging/harmony/
 │       ├── ets/pages/Index.ets            the XComponent + shell-action sink
 │       ├── ets/common/*.ets               engine host, input, IME, pickers, dialogs
 │       └── resources/{base,en_US,zh_CN}/
-└── Tests/*.rb                             local source-contract gate
+└── Tests/*.rb                             local source + packaged-artifact gate
 ```
 
 ## Prerequisites
 
-1. **DevEco Studio 5** (5.0 Release or newer) with the **HarmonyOS 5.0.0(12)
-   SDK** installed through *SDK Manager*. The IDE ships the matching
-   `hvigor`, `ohpm`, and `hdc` binaries.
-2. The **OpenHarmony/HarmonyOS NDK** from the same SDK package, exported for
-   the Rust build:
+1. **DevEco Studio 5** with the **HarmonyOS 5.0.0(12) SDK** installed through
+   *SDK Manager*. Select its **Ets (ArkTS)**, **Toolchains**, and **Native**
+   components; the project profile is pinned to
+   `compatibleSdkVersion: "5.0.0(12)"`.
+2. Export the matching SDK's OpenHarmony root (the directory that contains
+   `native/`) for the Rust build:
 
    ```bash
-   # macOS default location; adjust for Windows/Linux installs.
-   export OHOS_NDK_HOME="$HOME/Library/Huawei/Sdk/HarmonyOS-NEXT-DP1/openharmony/native"
-   export PATH="$OHOS_NDK_HOME/llvm/bin:$PATH"
+   # Replace <HarmonyOS-5.0.0-sdk> with the SDK Manager installation.
+   export OHOS_NDK_HOME="<HarmonyOS-5.0.0-sdk>/openharmony"
+   export PATH="$OHOS_NDK_HOME/native/llvm/bin:$PATH"
    ```
 3. A **Huawei developer account** for signing (see *Signing* below). Nothing
    installs on a real device or on the emulator unsigned.
@@ -59,14 +65,23 @@ The ArkTS shell does **not** compile any native code. It consumes a prebuilt
 
 ```bash
 # From the repository root, with OHOS_NDK_HOME exported.
-bash scripts/build-ohos.sh --release
+bash scripts/build-ohos.sh
 ```
 
-The script must place the artifact at:
+After Cargo succeeds, the script verifies that the new module contains the
+`editorImportImageOrSvg`, `hasBackgroundWork`, and `backgroundTick` NAPI
+registration markers. It then installs the library through a temporary file
+and an atomic rename to:
 
 ```text
 packaging/harmony/entry/libs/arm64-v8a/libopenpencil.so
 ```
+
+A failed build, marker check, or copy leaves the previous HAP payload
+untouched. That does **not** make an old payload releasable: the project
+contract below reads the packaged ELF and fails with `stale HarmonyOS native
+artifact` until all three markers are present. Do not assemble a HAP while
+that gate is red.
 
 hvigor packages everything under `entry/libs/<abi>/` into the HAP, so no
 `externalNativeOptions`/CMake entry is declared in `entry/build-profile.json5`.
@@ -84,10 +99,34 @@ XComponent id (`string`, resolved natively through `OH_NativeXComponent`), and
 handle is a `number` (an int64 crossing NAPI becomes a JS double, exact up to
 2^53; aarch64 user-space pointers stay inside 48 bits).
 
-Frames are pumped on the **native** side from `OH_NativeVSync` — the native
-layer already owns the surface through `OH_NativeXComponent`. ArkTS never
-calls `frame()`; it forwards lifecycle only and drains the engine's
-shell-action queue after every interaction plus on a 100 ms safety-net timer.
+Foreground frames are coalesced onto ArkUI `displaySync`; `frame()` has one
+call site and is stopped before the XComponent surface is suspended. The
+ArkTS shell also drains engine shell actions after every interaction plus on a
+100 ms safety-net timer.
+
+## Background generation
+
+When render-free AI generation becomes active, the foreground shell asks
+HarmonyOS for a transient suspension delay with `requestSuspendDelay`. On page
+hide or surface loss it first stops `displaySync`, then suspends the GPU
+surface, and only then starts a 100 ms `backgroundTick` timer. That tick pumps
+chat/image-search services and persists generated document revisions without
+calling `frame()` or touching the suspended GPU surface.
+
+This is intentionally a **finite** continuation window, not an indefinite
+keepalive. HarmonyOS grants at most 3 minutes normally and at most 1 minute on
+low battery, and may refuse a request when the app's transient-task quota is
+unavailable. Completion, foreground resume, teardown, and the system expiry
+callback all stop the timer and cancel the grant immediately. Regular 100 ms
+ticks have already persisted each applied revision, so the deadline callback
+does no additional tool or file work. It leaves unfinished generation pending;
+returning to OpenPencil resumes it and shows an honest "background time ended"
+notice.
+
+Transient suspension delay needs no manifest permission or persistent
+notification. OpenPencil does not mislabel AI generation as a `DATA_TRANSFER`
+continuous task, and does not use `TASK_KEEPING`, which is limited to eligible
+2-in-1 computing-task scenarios.
 
 ## Signing
 
@@ -157,9 +196,10 @@ handles signing interactively.
 
 ## Local verification
 
-DevEco/hvigor cannot run on the development host used to write this shell, so
-a HAP build is not part of the local gate. The gate is a pair of Ruby
-source-contract tests in the style of `packaging/android/Tests/*.rb`:
+The local gate is a pair of Ruby contracts in the style of
+`packaging/android/Tests/*.rb`. The project contract also inspects the exact
+prebuilt ELF that hvigor will package, so it intentionally fails on a stale
+library rather than validating sources alone:
 
 ```bash
 ruby packaging/harmony/Tests/HarmonyProjectContractTests.rb
@@ -167,11 +207,13 @@ ruby packaging/harmony/Tests/HarmonyShellContractTests.rb
 ```
 
 They pin the XComponent ↔ `libopenpencil.so` binding, the device-type list,
-the bundle name, all seven shell action codes against
+the bundle name, the render-free transient background-generation lifecycle,
+all shell action codes against
 `crates/op-engine-ffi/include/op_engine.h`, the empty-conduit backspace
-contract, the 15-locale table (cross-checked against the Android shell), the
-export format set without WebP, and the rule that the ArkTS NAPI declaration
-matches the Android JNI surface function-for-function.
+contract, the bounded one-shot image/SVG picker, the 15-locale table
+(cross-checked against the Android shell), the export format set without WebP,
+and the rule that the ArkTS NAPI declaration matches the Android JNI surface
+function-for-function.
 
 The SSO section pins the parts that are easy to break silently: origins may
 appear only in `SsoRegion.ets` (cross-checked against `SsoRegion.kt`, probe
@@ -182,6 +224,10 @@ an in-memory `Map`, and nothing in the auth path logs a credential.
 
 ## Limitations
 
+- **Background generation is time-bounded by HarmonyOS.** It continues under
+  a transient grant for up to 3 minutes normally (1 minute on low battery),
+  then pauses safely until OpenPencil returns to the foreground. It is not a
+  promise of unlimited background execution.
 - **Sign-in is native, and splits by form factor.** Shell actions 2
   (OpenLoginWebView), 5 (OpenAccountCenter), and 6 (RequestLogin) are wired
   to the ZSeven SSO flow, mirroring the Android shell.

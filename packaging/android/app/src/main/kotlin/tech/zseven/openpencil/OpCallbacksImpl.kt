@@ -2,6 +2,7 @@ package tech.zseven.openpencil
 
 import android.os.SystemClock
 import android.util.Log
+import java.lang.ref.WeakReference
 
 private const val TAG = "OpenPencilPlayer"
 
@@ -10,19 +11,44 @@ private const val TAG = "OpenPencilPlayer"
  * Choreographer work to the main thread. Credential methods may run on
  * collaboration workers and touch only the thread-safe platform store.
  */
-class OpCallbacksImpl(private val view: OpSurfaceView) : OpCallbacks {
-    private val credentialStore = AndroidCollaborationCredentialStore(view.context)
+class OpCallbacksImpl(context: android.content.Context) : OpCallbacks {
+    private val credentialStore =
+        AndroidCollaborationCredentialStore(context.applicationContext)
+
+    @Volatile
+    private var viewRef = WeakReference<OpSurfaceView>(null)
+
+    @Volatile
+    private var engine = 0L
+
+    fun attach(view: OpSurfaceView) {
+        viewRef = WeakReference(view)
+    }
+
+    fun detach(view: OpSurfaceView) {
+        if (viewRef.get() === view) viewRef = WeakReference(null)
+    }
+
+    fun attachEngine(handle: Long) {
+        engine = handle
+    }
+
+    fun clearEngine(handle: Long) {
+        if (engine == handle) engine = 0L
+    }
+
+    fun engineHandle(): Long = engine
 
     override fun onNeedsRedraw(hasNextWake: Boolean, nextWakeMs: Long) {
         // The viewer engine only fires this from mutations (pointer /
         // resize / attach / resume) — draw promptly. `hasNextWake` is
         // reserved for future animation deadlines.
         if (!hasNextWake) {
-            view.requestFrame()
+            viewRef.get()?.requestFrame()
             return
         }
         val delay = nextWakeMs - SystemClock.uptimeMillis()
-        view.scheduleFrame(delay)
+        viewRef.get()?.scheduleFrame(delay)
     }
 
     override fun onRuntimeError(kind: Int, message: String, source: String?) {
@@ -36,7 +62,31 @@ class OpCallbacksImpl(private val view: OpSurfaceView) : OpCallbacks {
     }
 
     override fun onRemoteImageRequest(requestId: Long, url: String) {
-        view.fetchRemoteImage(requestId, url)
+        // Remote image enrichment is part of generation and must survive an
+        // Activity/View recreation. Keep this fetch on the stable callback
+        // receiver instead of routing it through the currently attached view.
+        Thread {
+            val bytes = runCatching {
+                val connection =
+                    java.net.URL(url).openConnection() as java.net.HttpURLConnection
+                connection.connectTimeout = 10_000
+                connection.readTimeout = 15_000
+                connection.instanceFollowRedirects = true
+                try {
+                    if (connection.responseCode in 200..299) {
+                        connection.inputStream.use { it.readBytes() }
+                    } else {
+                        ByteArray(0)
+                    }
+                } finally {
+                    connection.disconnect()
+                }
+            }.getOrElse { ByteArray(0) }
+            val current = engine
+            if (current != 0L) {
+                OpNative.nativeRemoteImageResult(current, requestId, bytes)
+            }
+        }.apply { name = "OpenPencilRemoteImage" }.start()
     }
 
     override fun onCredentialLoad(): ByteArray? = credentialStore.load()

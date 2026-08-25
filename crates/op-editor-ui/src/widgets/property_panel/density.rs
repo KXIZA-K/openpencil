@@ -503,10 +503,10 @@ mod tests {
     }
 
     #[test]
-    fn touch_code_framework_targets_are_at_least_44pt() {
+    fn medium_tablet_code_framework_targets_are_at_least_44pt() {
         let mut state = EditorState::sample();
         state.editor_ui.touch = true;
-        state.editor_ui.size_class = EditorSizeClass::Compact;
+        state.editor_ui.size_class = EditorSizeClass::Medium;
         state.editor_ui.property_tab = PropertyTab::Code;
         let panel = PropertyPanel::for_selection(&state).unwrap();
         let physical = Rect::xywh(0.0, 56.0, 411.6, 882.0);

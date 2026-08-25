@@ -60,6 +60,9 @@ pub fn apply_codegen_action(
     action: &CodegenAction,
     now_ms: u64,
 ) -> CodegenFollowUp {
+    if !state.editor_ui.code_property_tab_available() {
+        return CodegenFollowUp::None;
+    }
     use op_editor_core::codegen::CodegenPhase;
     let property_panel_width = state.editor_ui.property_panel_width;
     let density = PropertyPanel::for_selection(state);

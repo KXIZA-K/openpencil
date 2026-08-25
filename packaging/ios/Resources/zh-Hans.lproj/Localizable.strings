@@ -61,3 +61,7 @@
 "update.availableBody" = "OpenPencil 有可用的新版本。";
 "update.goToStore" = "去更新";
 "editMenu.paste" = "粘贴";
+"backgroundGeneration.title" = "OpenPencil 正在创作";
+"backgroundGeneration.subtitle" = "你的设计仍在生成中。";
+"imageImport.error.title" = "无法导入图片";
+"imageImport.error.body" = "请选择不超过 32 MiB 的 PNG、JPEG、GIF、WebP 或 SVG 文件。";

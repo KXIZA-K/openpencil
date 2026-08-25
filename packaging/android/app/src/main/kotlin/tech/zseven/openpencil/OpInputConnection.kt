@@ -67,8 +67,7 @@ class OpInputConnection(
         composing = value.ifEmpty { null }
         // newCursorPosition is relative to the composing text (UTF-16):
         // N > 0 → L + N - 1, else N (see the engine's IME docs).
-        val len = value.length
-        val cursor = if (newCursorPosition > 0) len + newCursorPosition - 1 else newCursorPosition
+        val cursor = composingCursorUtf16(value, newCursorPosition)
         OpNative.nativeEditorImePreedit(engine, value, cursor, cursor)
         view.requestFrame()
         return true

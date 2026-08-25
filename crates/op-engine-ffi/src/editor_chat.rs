@@ -104,6 +104,10 @@ impl Drop for MobileChatHost {
 }
 
 impl MobileChatHost {
+    pub(crate) fn has_background_work(&self, host: &WidgetHostNative) -> bool {
+        self.turn.is_some() || host.editor_state().chat.pending_send.is_some()
+    }
+
     fn drop_turn(&mut self) {
         if let Some(job) = self.turn.take() {
             if let Some(abort) = job.abort {

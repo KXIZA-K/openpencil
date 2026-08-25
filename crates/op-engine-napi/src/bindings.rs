@@ -23,9 +23,10 @@ use std::sync::{Arc, OnceLock};
 use napi_derive_ohos::napi;
 use napi_ohos::bindgen_prelude::Buffer;
 use op_engine_ffi::{
-    op_attach_surface, op_create, op_destroy, op_frame, op_get_pixel_size, op_last_error,
-    op_pointer, op_prefers_light_system_icons, op_resize, op_resize_with_safe_area, op_resume,
-    op_set_keyboard, op_set_safe_area, op_suspend, OpCreateDesc, OpEngine, OpStatus, OpSurfaceDesc,
+    op_attach_surface, op_background_tick, op_create, op_destroy, op_frame, op_get_pixel_size,
+    op_has_background_work, op_last_error, op_pointer, op_prefers_light_system_icons, op_resize,
+    op_resize_with_safe_area, op_resume, op_set_keyboard, op_set_safe_area, op_suspend,
+    OpCreateDesc, OpEngine, OpStatus, OpSurfaceDesc,
 };
 use op_engine_jni::registry::{Registry, HANDLE_FAILURE};
 use op_engine_jni::{Dispatch, EngineThread};
@@ -488,6 +489,36 @@ pub fn pixel_size(engine: i64) -> Vec<u32> {
 pub fn frame(engine: i64, t_ms: i64) -> i32 {
     // SAFETY: dispatched onto the engine's owner thread.
     call_status(engine, move |e| unsafe { op_frame(e, t_ms as u64) })
+}
+
+/// `hasBackgroundWork` — whether render-free editor services still need to
+/// run while the surface is suspended. Any invalid/closing/failed engine is
+/// reported as inactive so the shell never holds an OS background grant for
+/// a dead engine.
+#[napi(js_name = "hasBackgroundWork")]
+pub fn has_background_work(engine: i64) -> bool {
+    with_engine(engine, move |e| {
+        let mut active = false;
+        // SAFETY: dispatched onto the engine's owner thread.
+        let status = unsafe { op_has_background_work(e, &mut active) };
+        status == OpStatus::Ok && active
+    })
+    .unwrap_or(false)
+}
+
+/// `backgroundTick` — pumps render-free generation work once and returns
+/// whether more work remains. It deliberately does not call `op_frame` or
+/// touch the suspended GPU surface.
+#[napi(js_name = "backgroundTick")]
+pub fn background_tick(engine: i64, now_ms: i64) -> bool {
+    with_engine(engine, move |e| {
+        let mut active = false;
+        // SAFETY: dispatched onto the engine's owner thread. Negative JS
+        // timestamps are clamped before crossing the unsigned C ABI.
+        let status = unsafe { op_background_tick(e, now_ms.max(0) as u64, &mut active) };
+        status == OpStatus::Ok && active
+    })
+    .unwrap_or(false)
 }
 
 /// `pointer` — one raw pointer event in `OpPointerPhase` terms (0 = down,

@@ -53,6 +53,11 @@ class DocumentExportSupportTest {
         assertEquals("image/webp", DocumentExportSupport.mimeTypeFor("a.webp"))
         assertEquals("image/svg+xml", DocumentExportSupport.mimeTypeFor("a.svg"))
         assertEquals("application/pdf", DocumentExportSupport.mimeTypeFor("a.pdf"))
+        assertEquals("application/zip", DocumentExportSupport.mimeTypeFor("component.zip"))
+        assertEquals("text/html", DocumentExportSupport.mimeTypeFor("component.html"))
+        listOf("tsx", "vue", "svelte", "dart", "swift", "kt").forEach { suffix ->
+            assertEquals("text/plain", DocumentExportSupport.mimeTypeFor("component.$suffix"))
+        }
         assertEquals("application/octet-stream", DocumentExportSupport.mimeTypeFor("a.unknown"))
     }
 }

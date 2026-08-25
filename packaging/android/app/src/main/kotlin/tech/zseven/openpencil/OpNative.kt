@@ -10,6 +10,7 @@ import android.view.Surface
  */
 object OpNative {
     const val STATUS_CLOSING = -1
+    const val STATUS_BUSY = 8
     const val SHELL_ACTION_NONE = 0
     const val SHELL_ACTION_OPEN_DOCUMENT = 1
     const val SHELL_ACTION_OPEN_LOGIN_WEBVIEW = 2
@@ -19,6 +20,7 @@ object OpNative {
     const val SHELL_ACTION_REQUEST_LOGIN = 6
     const val SHELL_ACTION_OPEN_LANGUAGE_PICKER = 7
     const val SHELL_ACTION_SAVE_DOCUMENT = 11
+    const val SHELL_ACTION_IMPORT_IMAGE_OR_SVG = 12
 
     init {
         System.loadLibrary("op_engine_jni")
@@ -53,6 +55,8 @@ object OpNative {
     external fun nativeSetKeyboard(engine: Long, h: Float): Int
     external fun nativePrefersLightSystemIcons(engine: Long): Boolean
     external fun nativeFrame(engine: Long, tMs: Long): Int // blocking barrier; the TRUE frame status
+    external fun nativeHasBackgroundWork(engine: Long): Boolean
+    external fun nativeBackgroundTick(engine: Long, nowMs: Long): Boolean
     external fun nativePointer(engine: Long, id: Int, phase: Int, x: Float, y: Float, tMs: Long): Int
     external fun nativeDestroy(engine: Long)
 
@@ -106,6 +110,7 @@ object OpNative {
     external fun nativeEditorCancelLogin(engine: Long): Int
     external fun nativeEditorTakeShellAction(engine: Long): Int
     external fun nativeEditorOpenDocument(engine: Long, bytes: ByteArray, name: String): Int
+    external fun nativeEditorImportImageOrSvg(engine: Long, bytes: ByteArray, name: String): Int
     external fun nativeEditorExportFileName(engine: Long): String?
     external fun nativeEditorExportToPath(engine: Long, path: String): Int
     external fun nativeEditorCancelExport(engine: Long): Int

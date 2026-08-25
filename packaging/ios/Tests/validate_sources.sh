@@ -20,6 +20,10 @@ required=(
   "$player_dir/Sources/OpPlayerApp.swift"
   "$player_dir/Sources/OpPlayerView.swift"
   "$player_dir/Sources/OpEngineHost.swift"
+  "$player_dir/Sources/ImageImportCoordinator.swift"
+  "$player_dir/Sources/GenerationBackgroundCoordinator.swift"
+  "$player_dir/Sources/GenerationBackgroundRegistration.swift"
+  "$player_dir/Sources/GenerationBackgroundState.swift"
   "$player_dir/Sources/DocumentExportCoordinator.swift"
   "$player_dir/Sources/DocumentSaveCoordinator.swift"
   "$player_dir/Sources/DocumentSaveBinding.swift"
@@ -36,6 +40,8 @@ required=(
   "$player_dir/Sources/SsoRegion.swift"
   "$player_dir/Sources/PinchZoomDelta.swift"
   "$player_dir/Sources/UniversalLink.swift"
+  "$player_dir/Tests/GenerationBackgroundRegistrationTests.swift"
+  "$player_dir/Tests/GenerationBackgroundStateTests.swift"
 )
 
 for path in "${required[@]}"; do
@@ -45,6 +51,18 @@ for path in "${required[@]}"; do
   fi
 done
 
+background_identifier="tech.zseven.openpencil.generation.*"
+if [[ "$(plutil -extract BGTaskSchedulerPermittedIdentifiers.0 raw -o - \
+  "$player_dir/Info.plist" 2>/dev/null)" != "$background_identifier" ]]; then
+  echo "Info.plist must authorize the continued-processing identifier wildcard" >&2
+  exit 1
+fi
+if [[ "$(plutil -extract UIBackgroundModes.0 raw -o - \
+  "$player_dir/Info.plist" 2>/dev/null)" != "processing" ]]; then
+  echo "Info.plist must enable background processing for BGTaskScheduler" >&2
+  exit 1
+fi
+
 plutil -lint \
   "$player_dir/Info.plist" \
   "$player_dir/OpenPencilPlayer.entitlements" \
@@ -52,6 +70,8 @@ plutil -lint \
   "$player_dir/Resources/zh-Hans.lproj/InfoPlist.strings" >/dev/null
 grep -Fq '"NSLocalNetworkUsageDescription"' "$player_dir/Resources/en.lproj/InfoPlist.strings"
 grep -Fq '"NSLocalNetworkUsageDescription"' "$player_dir/Resources/zh-Hans.lproj/InfoPlist.strings"
+grep -Fq '"backgroundGeneration.title"' "$player_dir/Resources/en.lproj/Localizable.strings"
+grep -Fq '"backgroundGeneration.title"' "$player_dir/Resources/zh-Hans.lproj/Localizable.strings"
 
 cmp "$fixture" "$player_dir/Resources/sample.op"
 
@@ -77,6 +97,18 @@ grep -Fq 'picker.directoryURL = DocumentStorage.prepare()' \
 # Only a reported destination write may mark the document saved.
 grep -Fq 'op_editor_commit_save' "$player_dir/Sources/DocumentSaveCoordinator.swift"
 grep -Fq 'op_editor_cancel_save' "$player_dir/Sources/DocumentSaveCoordinator.swift"
+
+# The touch shape picker must cross the shell boundary exactly once and return
+# bounded bytes to Rust, where collaboration permission is checked again.
+grep -Fq 'OpShellAction_ImportImageOrSvg.rawValue' "$player_dir/Sources/OpEngineHost.swift"
+grep -Fq 'op_editor_import_image_or_svg' "$player_dir/Sources/ImageImportCoordinator.swift"
+grep -Fq 'BoundedDocumentReader.read' "$player_dir/Sources/ImageImportCoordinator.swift"
+grep -Fq 'allowsMultipleSelection = false' "$player_dir/Sources/ImageImportCoordinator.swift"
+grep -Fq 'modalPresentationStyle = .formSheet' "$player_dir/Sources/ImageImportCoordinator.swift"
+grep -Fq '"imageImport.error.title"' "$player_dir/Resources/en.lproj/Localizable.strings"
+grep -Fq '"imageImport.error.title"' "$player_dir/Resources/zh-Hans.lproj/Localizable.strings"
+grep -Fq '"imageImport.error.body"' "$player_dir/Resources/en.lproj/Localizable.strings"
+grep -Fq '"imageImport.error.body"' "$player_dir/Resources/zh-Hans.lproj/Localizable.strings"
 
 while IFS= read -r source; do
   lines="$(wc -l < "$source" | tr -d ' ')"
@@ -118,7 +150,7 @@ raise "op_engine.h search path missing" unless settings.fetch("HEADER_SEARCH_PAT
 raise "device staticlib search path missing" unless settings.fetch("LIBRARY_SEARCH_PATHS[sdk=iphoneos*]").include?("aarch64-apple-ios/release")
 raise "simulator staticlib search path missing" unless settings.fetch("LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]").include?("aarch64-apple-ios-sim/release")
 frameworks = target.fetch("dependencies").map { |entry| entry["sdk"] }.compact
-%w[CoreFoundation.framework Metal.framework QuartzCore.framework Security.framework UIKit.framework].each do |framework|
+%w[BackgroundTasks.framework CoreFoundation.framework Metal.framework QuartzCore.framework Security.framework UIKit.framework].each do |framework|
   raise "#{framework} dependency missing" unless frameworks.include?(framework)
 end
 raise "native login must not link WebKit" if frameworks.include?("WebKit.framework")
@@ -136,6 +168,9 @@ info_properties = target.fetch("info").fetch("properties")
 %w[UIFileSharingEnabled LSSupportsOpeningDocumentsInPlace].each do |key|
   raise "#{key} must be declared so saved documents appear in Files" unless info_properties[key] == true
 end
+expected_background_ids = ["tech.zseven.openpencil.generation.*"]
+raise "continued-processing wildcard drifted" unless info_properties["BGTaskSchedulerPermittedIdentifiers"] == expected_background_ids
+raise "background processing mode missing" unless info_properties["UIBackgroundModes"] == ["processing"]
 scripts = target.fetch("preBuildScripts")
 auth_gate = scripts.find { |script| script["name"] == "Validate optional op-auth archive" }
 raise "mobile auth link gate missing" unless auth_gate
@@ -154,6 +189,7 @@ raise "generated project must not contain an export-compliance code" if project.
 ipad_orientations = project.scan(/^\s*INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "([^"]+)";/).flatten
 expected_ipad_orientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
 raise "generated project must preserve all iPad multitasking orientations" unless ipad_orientations == [expected_ipad_orientations, expected_ipad_orientations]
+raise "generated project must link BackgroundTasks" unless project.include?("BackgroundTasks.framework")
 RUBY
 fi
 
@@ -182,6 +218,7 @@ grep -Fq -- "aarch64-apple-ios/release/libop_engine_ffi.a -lc++" "$player_dir/RE
 grep -Fq -- "-framework Metal" "$player_dir/README.md"
 grep -Fq -- "-framework CoreFoundation" "$player_dir/README.md"
 grep -Fq -- "-framework Security" "$player_dir/README.md"
+grep -Fq -- "-framework BackgroundTasks" "$player_dir/README.md"
 grep -Fq -- "UIDocumentPickerViewController" "$player_dir/Sources/OpPlayerView.swift"
 grep -Fq -- "BoundedDocumentReader.read" "$player_dir/Sources/OpPlayerView.swift"
 grep -Fq -- "maximumBytes = 32 * 1024 * 1024" "$player_dir/Sources/BoundedDocumentReader.swift"
@@ -232,6 +269,103 @@ grep -Fq -- 'op_editor_begin_transform(engine' "$player_dir/Sources/OpEngineHost
 grep -Fq -- 'host.editorBeginTransform(x: lastMidpoint.x, y: lastMidpoint.y)' "$player_dir/Sources/OpPlayerView.swift"
 grep -Fq -- 'prefersLightIcons ? .dark : .light' "$player_dir/Sources/OpPlayerView.swift"
 grep -Fq -- 'window.overrideUserInterfaceStyle = systemChromeStyle' "$player_dir/Sources/OpPlayerView.swift"
+
+background_coordinator="$player_dir/Sources/GenerationBackgroundCoordinator.swift"
+grep -Fq -- 'op_has_background_work(engine, &active)' "$background_coordinator"
+grep -Fq -- 'op_background_tick(engine, OpEngineHost.nowMilliseconds(), &active)' \
+  "$background_coordinator"
+grep -Fq -- 'op_cancel_background_work(engine)' "$background_coordinator"
+grep -Fq -- 'BGContinuedProcessingTaskRequest(' "$background_coordinator"
+grep -Fq -- 'request.strategy = .fail' "$background_coordinator"
+grep -Fq -- 'task.progress.totalUnitCount = -1' "$background_coordinator"
+grep -Fq -- 'task.progress.completedUnitCount = 0' "$background_coordinator"
+grep -Fq -- 'beginBackgroundTask(' "$background_coordinator"
+if grep -Fq -- 'op_frame(' "$background_coordinator"; then
+  echo "background generation must never invoke the GPU frame pump" >&2
+  exit 1
+fi
+
+ruby - "$player_dir/Sources/OpEngineHost.swift" "$background_coordinator" \
+  "$player_dir/Sources/GenerationBackgroundState.swift" \
+  "$player_dir/Sources/GenerationBackgroundRegistration.swift" <<'RUBY'
+host = File.read(ARGV.fetch(0))
+coordinator = File.read(ARGV.fetch(1))
+state = File.read(ARGV.fetch(2))
+registration_model = File.read(ARGV.fetch(3))
+suspend = host[/private func suspendForBackground\b.*?(?=\n    private func resumeFromForeground)/m]
+raise "iOS background suspend path missing" unless suspend
+detach = suspend.index("op_suspend(engine)")
+background = suspend.index("generationBackgroundCoordinator.didEnterBackground()")
+raise "Metal must detach before background ticks begin" unless detach && background && detach < background
+resume = host[/private func resumeFromForeground\b.*?(?=\n    \/\/\/ `needs_redraw`)/m]
+raise "iOS foreground resume path missing" unless resume
+stop = resume.index("generationBackgroundCoordinator.willEnterForeground()")
+attach = resume.index("op_resume(engine, &desc)")
+raise "background ticks must stop before Metal reattaches" unless stop && attach && stop < attach
+expiration = state[/mutating func protectionExpired\b.*?(?=\n    mutating func teardown)/m]
+raise "background expiration state missing" unless expiration
+stop_pump = expiration.index("stopPumpIfNeeded()")
+cancel_work = expiration.index("cancelWorkIfNeeded()")
+finish_task = expiration.index(".finishProtection(success: false)")
+raise "expiration must stop pump, cancel engine work, then finish the task" unless stop_pump && cancel_work && finish_task && stop_pump < cancel_work && cancel_work < finish_task
+teardown = state[/mutating func teardown\b.*?(?=\n    private mutating func reconcilePump)/m]
+raise "background teardown state missing" unless teardown
+stop_pump = teardown.index("stopPumpIfNeeded()")
+cancel_work = teardown.index("cancelWorkIfNeeded()")
+finish_task = teardown.index(".finishProtection(success: false)")
+raise "teardown must stop pump, cancel engine work, then finish the task" unless stop_pump && cancel_work && finish_task && stop_pump < cancel_work && cancel_work < finish_task
+raise "foreground frames must observe generation work" unless host[/func displayLinkDidFire\b.*?(?=\n    \/\/\/ Keeps native)/m]&.include?("generationBackgroundCoordinator.observeEngineWork()")
+release = host[/func editorRelease\b.*?(?=\n    func editorCancelGesture)/m]
+raise "pointer release must observe newly submitted generation work" unless release&.include?("generationBackgroundCoordinator.observeEngineWork()")
+raise "continued identifier prefix must match the permitted wildcard" unless coordinator.include?('continuedIdentifierPrefix = "tech.zseven.openpencil.generation."')
+raise "each generation must use a unique identifier suffix" unless coordinator.include?("UUID().uuidString.lowercased()")
+request = coordinator[/private func requestContinuedProtection\b.*?(?=\n    @available\(iOS 26\.0, \*\)\n    private func handleContinuedTask)/m]
+raise "continued-processing request path missing" unless request
+register_task = request.index("scheduler.register(")
+submit_task = request.index("try scheduler.submit(request)")
+mark_submitted = request.index("registration.markSubmitted()")
+start_handoff = request.index("guard startApplicationProtection(")
+unless register_task && submit_task && mark_submitted && start_handoff &&
+       register_task < submit_task && submit_task < mark_submitted && mark_submitted < start_handoff
+  raise "continued request must register, submit, record submission, then acquire its finite handoff"
+end
+raise "registration must capture only weak owner plus generation identity" unless request.include?("[weak self, registration]")
+raise "late handlers without an owner need the recorded terminal result" unless request.include?("registration.completion ?? false")
+raise "submission and handoff failures must close the same registration" unless request.scan("failContinuedProtection(registration: registration)").length >= 2
+handler = coordinator[/private func handleContinuedTask\b.*?(?=\n    private func expireContinuedTask)/m]
+raise "continued handler path missing" unless handler
+raise "handler must bind the system task's exact identifier" unless handler.include?("deliveredIdentifier: task.identifier")
+raise "handler must require the exact current generation identity" unless handler.include?("continuedRegistration === registration && continuedTask == nil")
+task_owner = handler.index("continuedTask = task")
+end_handoff = handler.index("endApplicationProtection(token: registration.token)")
+start_protection = handler.index("apply(state.protectionStarted())")
+unless task_owner && end_handoff && start_protection && task_owner < end_handoff && end_handoff < start_protection
+  raise "continued handler must own the task, end the handoff, then reconcile protection"
+end
+raise "unknown generation progress must use Foundation indeterminate state" unless handler.include?("task.progress.totalUnitCount = -1") && handler.include?("task.progress.completedUnitCount = 0")
+raise "continued progress must never be synthesized from elapsed time" if coordinator.match?(/systemUptime|lastProgressUpdate|advanceProgress/)
+failure = coordinator[/private func failContinuedProtection\b.*?(?=\n    private func requestFallbackProtection)/m]
+raise "continued failure path missing" unless failure
+state_failure = failure.index("apply(state.protectionFailed())")
+release_handoff = failure.index("endApplicationProtection(token: registration.token)")
+terminalize = failure.index("registration.finish(success: false)")
+cancel_request = failure.index("taskRequestWithIdentifier: registration.identifier")
+unless state_failure && release_handoff && terminalize && cancel_request &&
+       state_failure < release_handoff && release_handoff < terminalize && terminalize < cancel_request
+  raise "failure must stop the pump, end handoff, terminalize, then cancel the exact request"
+end
+finish = coordinator[/private func finishProtection\b.*?\n    \}\n\}/m]
+raise "completion path missing" unless finish
+raise "completion must clear the current generation identity" unless finish.include?("continuedRegistration = nil")
+raise "pending continued requests must cancel their unique identifier" unless finish.include?("taskRequestWithIdentifier: registration.identifier")
+raise "every terminal completion must release a pending handoff" unless finish.include?("endApplicationProtection()")
+raise "successful terminal progress must be truthful" unless finish.include?("totalUnitCount = 1") && finish.include?("completedUnitCount = 1")
+raise "registration identity must compose its identifier from the token" unless registration_model.include?("identifier = identifierPrefix + token")
+raise "old handlers must observe terminal completion before current identity" unless registration_model.index("if let completion") < registration_model.index("guard isCurrentRegistration")
+raise "handler identity must include exact identifier equality" unless registration_model.include?("deliveredIdentifier == identifier")
+raise "continued tasks must run their handler on the owner queue" unless coordinator.include?("using: DispatchQueue.main")
+raise "continued tasks must not request background GPU" if coordinator.include?("requiredResources = .gpu")
+RUBY
 
 ruby - "$player_dir/OpenPencilPlayer.entitlements" <<'RUBY'
 source = File.read(ARGV.fetch(0))
@@ -334,6 +468,39 @@ raise "picker cancellation must release the engine's pending save" unless coordi
 raise "a bookmark that cannot be made must not mark the document saved" unless coordinator[/private func bind\(pickedURL.*?(?=\n    \/\/ MARK:)/m]&.include?("cancelPendingEngineRequest(failed: true)")
 RUBY
 
+ruby - "$player_dir/Sources/OpEngineHost.swift" \
+  "$player_dir/Sources/ImageImportCoordinator.swift" <<'RUBY'
+host = File.read(ARGV.fetch(0))
+coordinator = File.read(ARGV.fetch(1))
+
+drain = host[/private func drainShellActions\b.*?(?=\n    \/\/\/ Polls the engine)/m]
+raise "iOS image-import shell-action branch missing" unless drain
+action = drain.index("OpShellAction_ImportImageOrSvg.rawValue")
+defer_to_uikit = drain.index("DispatchQueue.main.async", action || 0)
+begin_import = drain.index("imageImportCoordinator.beginImport()", action || 0)
+unless action && defer_to_uikit && begin_import && action < defer_to_uikit && defer_to_uikit < begin_import
+  raise "image picker presentation must leave the editor ABI stack"
+end
+raise "image-import teardown missing" unless host.include?("imageImportCoordinator.cancelForTeardown()")
+
+begin_method = coordinator[/func beginImport\(\).*?(?=\n    \/\/\/ Teardown)/m]
+raise "image-import coordinator missing" unless begin_method
+%w[png jpeg gif webp svg].each do |kind|
+  raise "#{kind} picker type missing" unless begin_method.downcase.include?(kind)
+end
+raise "image picker must be single selection" unless begin_method.include?("allowsMultipleSelection = false")
+raise "image picker must be a bounded form sheet" unless begin_method.include?("modalPresentationStyle = .formSheet")
+
+read = coordinator.index("BoundedDocumentReader.read")
+return_bytes = coordinator.index("op_editor_import_image_or_svg")
+raise "bounded read must finish before bytes cross the ABI" unless read && return_bytes && read < return_bytes
+raise "picker cancellation must retire UIKit ownership" unless coordinator[/func documentPickerWasCancelled.*?\n    \}/m]&.include?("finishPicker()")
+teardown = coordinator[/func cancelForTeardown\(\).*?(?=\n    private func readPickedFile)/m]
+raise "image-import teardown must invalidate worker completion" unless teardown&.include?("activeReadToken = nil")
+raise "image-import teardown must detach and dismiss the picker" unless teardown&.include?("picker.delegate = nil") && teardown.include?("picker.dismiss(animated: false)")
+raise "collaboration rejection must rely on the engine notice" unless coordinator.include?("status != OpStatus_Busy")
+RUBY
+
 sdk="$(xcrun --sdk iphonesimulator --show-sdk-path)"
 target="arm64-apple-ios15.0-simulator"
 module_cache="${TMPDIR:-/tmp}/op-ios-module-cache"
@@ -379,6 +546,15 @@ xcrun swiftc \
   "$player_dir/Tests/KeyboardOcclusionTests.swift" \
   -o "$keyboard_test"
 "$keyboard_test"
+
+ime_selection_test="$reader_test_dir/ime-selection-offsets-runner"
+xcrun swiftc \
+  -warnings-as-errors \
+  -parse-as-library \
+  "$player_dir/Sources/ImeSelectionOffsets.swift" \
+  "$player_dir/Tests/ImeSelectionOffsetsTests.swift" \
+  -o "$ime_selection_test"
+"$ime_selection_test"
 
 viewport_test="$reader_test_dir/viewport-change-runner"
 xcrun swiftc \
@@ -435,6 +611,24 @@ xcrun swiftc \
   "$player_dir/Tests/UniversalLinkTests.swift" \
   -o "$universal_link_test"
 "$universal_link_test"
+
+background_state_test="$reader_test_dir/generation-background-state-runner"
+xcrun swiftc \
+  -warnings-as-errors \
+  -parse-as-library \
+  "$player_dir/Sources/GenerationBackgroundState.swift" \
+  "$player_dir/Tests/GenerationBackgroundStateTests.swift" \
+  -o "$background_state_test"
+"$background_state_test"
+
+background_registration_test="$reader_test_dir/generation-background-registration-runner"
+xcrun swiftc \
+  -warnings-as-errors \
+  -parse-as-library \
+  "$player_dir/Sources/GenerationBackgroundRegistration.swift" \
+  "$player_dir/Tests/GenerationBackgroundRegistrationTests.swift" \
+  -o "$background_registration_test"
+"$background_registration_test"
 
 ruby "$player_dir/Tests/NativeLoginLifecycleTests.rb" \
   "$player_dir/Sources/OpPlayerView+Login.swift" \

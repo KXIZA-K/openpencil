@@ -20,6 +20,13 @@ extension OpPlayerView {
                 imeTextView.becomeFirstResponder()
             }
         } else {
+            // The engine has already released the input owner. End any
+            // UIKit-side marked range before this conduit is reused so a
+            // cancelled Chinese candidate cannot become the next field's
+            // commit payload.
+            wasComposing = false
+            imeTextView.unmarkText()
+            drainImeConduit(imeTextView)
             if imeTextView.isFirstResponder {
                 imeTextView.resignFirstResponder()
             }
@@ -28,22 +35,37 @@ extension OpPlayerView {
 
     func textViewDidChange(_ textView: UITextView) {
         guard host.editorMode else { return }
+        guard host.editorImeFocusedNow() else {
+            // UIKit may finish an in-flight marked range synchronously while
+            // resigning first responder. The engine has already blurred, so
+            // discard that conduit-only residue instead of sending it to the
+            // next focused editor field.
+            wasComposing = false
+            drainImeConduit(textView)
+            return
+        }
         let marked = markedText(of: textView)
         if let marked {
             // Composition update: forward the marked text + caret.
             wasComposing = true
             let markedRange = textView.markedTextRange
             let selection = textView.selectedTextRange
-            var selStart = 0
-            var selEnd = 0
+            var selectedBytes = 0..<0
             if let markedRange, let selection {
-                let startOffset = textView.offset(from: textView.beginningOfDocument, to: selection.start)
-                let endOffset = textView.offset(from: textView.beginningOfDocument, to: selection.end)
-                let markedStartOffset = textView.offset(from: textView.beginningOfDocument, to: markedRange.start)
-                selStart = max(0, startOffset - markedStartOffset)
-                selEnd = max(0, endOffset - markedStartOffset)
+                // UITextInput positions are UTF-16 code-unit offsets. The
+                // Rust ABI deliberately takes UTF-8 byte offsets, so convert
+                // relative to the marked string rather than forwarding the
+                // UIKit numbers unchanged (which breaks after the first CJK
+                // scalar).
+                let start = textView.offset(from: markedRange.start, to: selection.start)
+                let end = textView.offset(from: markedRange.start, to: selection.end)
+                selectedBytes = ImeSelectionOffsets.utf8Range(
+                    in: marked,
+                    utf16Start: start,
+                    utf16End: end
+                )
             }
-            host.editorImePreedit(marked, selection: selStart..<selEnd)
+            host.editorImePreedit(marked, selection: selectedBytes)
         } else if wasComposing {
             // The composition ended. The conduit is empty outside a
             // composition (drained below and in shouldChangeTextIn), so the
@@ -71,6 +93,7 @@ extension OpPlayerView {
         replacementText text: String
     ) -> Bool {
         guard host.editorMode else { return true }
+        guard host.editorImeFocusedNow() else { return true }
         // While composing, the system owns the edit (preedit updates flow
         // through textViewDidChange).
         if markedText(of: textView) != nil {
@@ -93,8 +116,13 @@ extension OpPlayerView {
                 // — the "typed text cannot be deleted" on-device defect.
                 host.editorKey(Int32(OpKey_Backspace))
             } else {
-                // Plain insertion (typing / paste).
-                host.editorText(text)
+                // Let UIKit apply the insertion first. A Chinese IME's first
+                // pinyin character reaches this delegate BEFORE it installs a
+                // marked range; vetoing it here prevents composition from ever
+                // starting. `textViewDidChange` then sees either the new
+                // marked range (preedit) or a plain insertion, forwards it
+                // exactly once, and drains the conduit.
+                return true
             }
         } else {
             // Deletion fallback for IME paths that edit through the

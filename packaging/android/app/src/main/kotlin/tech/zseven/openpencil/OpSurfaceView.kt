@@ -32,7 +32,8 @@ private const val GPU_ERROR = 4
 
 /**
  * Hosts the engine's rendering surface and drives the frame pump. The
- * engine is created ONCE on the first `surfaceCreated`; the shell owns the
+ * engine is created on the first `surfaceCreated`, or safely re-adopted from
+ * the process service after an Activity recreation. The shell owns the
  * Surface→ANativeWindow pairing only indirectly — the native layer acquires
  * and releases the window on the engine thread.
  *
@@ -79,7 +80,19 @@ class OpSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Call
 
     private val choreographer = Choreographer.getInstance()
     private var frameScheduled = false
+    private var scheduledFrameEpoch = 0L
+    /**
+     * Cross-thread generation token for posted redraw requests. A callback
+     * captured for an older Surface must not become valid merely because a
+     * later Surface has successfully resumed.
+     */
+    @Volatile
+    private var surfaceFrameEpoch = 0L
+    /** nativeFrame is legal only after a successful attach/resume. */
+    @Volatile
+    private var surfaceReady = false
     private var viewportUpdateScheduled = false
+    private var viewportUpdateEpoch = 0L
     private var surfaceWidthPx = 0
     private var surfaceHeightPx = 0
     private val configurationViewportGate = ConfigurationViewportGate()
@@ -88,7 +101,10 @@ class OpSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Call
             if (viewTreeObserver.isAlive) {
                 viewTreeObserver.removeOnPreDrawListener(this)
             }
+            val requestedEpoch = viewportUpdateEpoch
             viewportUpdateScheduled = false
+            viewportUpdateEpoch = 0L
+            if (!surfaceReady || requestedEpoch != surfaceFrameEpoch) return true
             when (
                 configurationViewportGate.evaluatePreDraw(
                     width,
@@ -102,7 +118,7 @@ class OpSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Call
                 ViewportGateDecision.RETRY_NEXT_PRE_DRAW -> {
                     // Only scheduling happens in the next animation phase;
                     // the fallback decision itself is made after traversal.
-                    postOnAnimation { scheduleViewportUpdate() }
+                    postOnAnimation { scheduleViewportUpdate(requestedEpoch) }
                 }
             }
             return true
@@ -120,6 +136,7 @@ class OpSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Call
     private var safeAreaPx = intArrayOf(0, 0, 0, 0) // t, r, b, l
     private var keyboardHeight = 0f
     private var openDocumentHandler: (() -> Unit)? = null
+    private var importImageOrSvgHandler: (() -> Unit)? = null
     private var exportDocumentHandler: (() -> Unit)? = null
     private var saveDocumentHandler: (() -> Unit)? = null
     private var accountCenterHandler: (() -> Unit)? = null
@@ -128,9 +145,9 @@ class OpSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Call
     private var openLoginUiHandler: ((String) -> Unit)? = null
     private var closeLoginUiHandler: (() -> Unit)? = null
     private var systemChromeAppearanceHandler: ((Boolean) -> Unit)? = null
+    private var backgroundWorkActivationHandler: (() -> Unit)? = null
+    private var backgroundPermissionPromptPending = false
     private var prefersLightSystemIcons: Boolean? = null
-
-    private val callbacks = OpCallbacksImpl(this)
 
     init {
         holder.addCallback(this)
@@ -149,6 +166,11 @@ class OpSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Call
     /** Registers the main-thread shell action handler owned by the Activity. */
     fun setOpenDocumentHandler(handler: () -> Unit) {
         openDocumentHandler = handler
+    }
+
+    /** Registers the Activity-owned image / SVG picker handler. */
+    fun setImportImageOrSvgHandler(handler: () -> Unit) {
+        importImageOrSvgHandler = handler
     }
 
     /** Registers the Activity-owned save-UI handler for frozen exports. */
@@ -275,6 +297,11 @@ class OpSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Call
         systemChromeAppearanceHandler = handler
     }
 
+    /** Requests notification permission on the inactive -> active edge. */
+    fun setBackgroundWorkActivationHandler(handler: () -> Unit) {
+        backgroundWorkActivationHandler = handler
+    }
+
     /** Replays the last engine preference after an in-place configuration. */
     fun replaySystemChromeAppearance() {
         val preference = prefersLightSystemIcons ?: return
@@ -339,6 +366,7 @@ class OpSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Call
     // ---- SurfaceHolder.Callback ------------------------------------------
 
     override fun surfaceCreated(holder: SurfaceHolder) {
+        closeSurfaceFrameGate()
         surfaceGeneration++ // a new surface generation refreshes the recovery budget
         markViewportInputPending()
         refreshDensityFromResources()
@@ -348,18 +376,32 @@ class OpSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Call
         val wLogical = width / viewportDensity
         val hLogical = height / viewportDensity
         if (engine == 0L) {
-            engine = OpNative.nativeCreate(
-                docBytes,
-                wLogical,
-                hLogical,
-                viewportDensity,
-                callbacks,
-                privateStorageRoot,
-                if (editorMode) 1 else 0,
-            )
-            if (engine == 0L) {
-                Log.e(TAG, "nativeCreate failed: ${OpNative.nativeLastError(0)}")
-                return
+            val lease = BackgroundGenerationController.adoptEngine(this, editorMode)
+            if (lease != null) {
+                engine = lease.engine
+                attachedOnce = lease.surfaceWasAttached
+                Log.i(TAG, "re-adopted background generation engine")
+            } else {
+                val callbacks = OpCallbacksImpl(context.applicationContext).also { it.attach(this) }
+                engine = OpNative.nativeCreate(
+                    docBytes,
+                    wLogical,
+                    hLogical,
+                    viewportDensity,
+                    callbacks,
+                    privateStorageRoot,
+                    if (editorMode) 1 else 0,
+                )
+                if (engine == 0L) {
+                    callbacks.detach(this)
+                    Log.e(TAG, "nativeCreate failed: ${OpNative.nativeLastError(0)}")
+                    return
+                }
+                BackgroundGenerationController.registerEngine(engine, callbacks, editorMode)
+                Log.i(TAG, "engine created (${wLogical}x$hLogical dpr=$viewportDensity)")
+                for (bytes in fontBytes) {
+                    OpNative.nativeRegisterFont(engine, bytes)
+                }
             }
             authRuntime.configure(engine, editorMode)
             // The Activity may have registered the handler before the engine
@@ -371,12 +413,13 @@ class OpSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Call
             EngineLanguage.storedPreference(context)?.let { tag ->
                 OpNative.nativeEditorSetLocale(engine, tag)
             }
-            Log.i(TAG, "engine created (${wLogical}x$hLogical dpr=$viewportDensity)")
-            for (bytes in fontBytes) {
-                OpNative.nativeRegisterFont(engine, bytes)
-            }
         }
-        attachOrResume(holder.surface)
+        BackgroundGenerationController.markSurfaceResuming(context, engine)
+        if (!attachOrResume(holder.surface)) {
+            BackgroundGenerationController.markSurfaceSuspended(engine)
+            return
+        }
+        openSurfaceFrameGate()
         scheduleViewportUpdate()
         requestFrame()
     }
@@ -389,12 +432,25 @@ class OpSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Call
         surfaceWidthPx = wPx
         surfaceHeightPx = hPx
         if (engine == 0L) return
-        if (extentChanged && holder.surface.isValid) {
+        if (!surfaceReady || extentChanged) {
             // Android may keep the same Surface object across a handled
             // rotation while its EGL window surface remains at the old buffer
-            // extent. Rebind so edge-to-edge rendering covers the new window.
-            OpNative.nativeSuspend(engine)
-            OpNative.nativeResume(engine, holder.surface)
+            // extent. A failed first attach also retries here even when the
+            // dimensions are unchanged.
+            closeSurfaceFrameGate()
+            // Drain any service tick and close its ownership gate before the
+            // suspend/resume pair. This also covers recovery after a failed
+            // first attach, whose state was previously marked suspended.
+            BackgroundGenerationController.markSurfaceResuming(context, engine)
+            // nativeResume is invalid until nativeAttachSurface has succeeded
+            // once; attachOrResume owns that distinction.
+            if (attachedOnce) OpNative.nativeSuspend(engine)
+            val resumed = holder.surface.isValid && attachOrResume(holder.surface)
+            if (resumed) {
+                openSurfaceFrameGate()
+            } else {
+                BackgroundGenerationController.markSurfaceSuspended(engine)
+            }
         }
         markImeForConfigurationRetry()
         scheduleViewportUpdate()
@@ -402,9 +458,19 @@ class OpSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Call
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {
         if (engine == 0L) return
+        // Close and drain the main-thread frame gate BEFORE the blocking
+        // suspend barrier. A callback already queued by a background redraw
+        // can no longer cross the barrier and call nativeFrame afterwards.
+        closeSurfaceFrameGate()
+        resetEditorTouchTracking()
+        // This final foreground-originated observation starts the FGS before
+        // handing pump ownership over. onPause performs the same probe before
+        // Android's visible-activity start exemption can disappear.
+        observeBackgroundGeneration(allowPermissionPrompt = false)
         // Blocking suspend BEFORE returning — the platform reclaims the
         // Surface after this returns.
         OpNative.nativeSuspend(engine)
+        BackgroundGenerationController.markSurfaceSuspended(engine)
     }
 
     /**
@@ -412,16 +478,18 @@ class OpSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Call
      * `nativeResume` is invalid: retry `nativeAttachSurface` on each
      * surfaceCreated until it succeeds, then use `nativeResume` thereafter.
      */
-    private fun attachOrResume(surface: Surface) {
+    private fun attachOrResume(surface: Surface): Boolean {
         if (!attachedOnce) {
             val status = OpNative.nativeAttachSurface(engine, surface)
             if (status == 0) {
                 attachedOnce = true
+                BackgroundGenerationController.markSurfaceAttached(engine)
             } else {
                 Log.w(TAG, "attach failed status=$status: ${OpNative.nativeLastError(engine)}")
             }
+            return status == 0
         } else {
-            OpNative.nativeResume(engine, surface)
+            return OpNative.nativeResume(engine, surface) == 0
         }
     }
 
@@ -494,12 +562,26 @@ class OpSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Call
     }
 
     private fun scheduleViewportUpdate() {
-        if (viewportUpdateScheduled) return
+        val requestedEpoch = surfaceFrameEpoch
+        if (!surfaceReady) return
+        scheduleViewportUpdate(requestedEpoch)
+    }
+
+    private fun scheduleViewportUpdate(requestedEpoch: Long) {
+        if (
+            !surfaceReady || requestedEpoch != surfaceFrameEpoch ||
+            viewportUpdateScheduled
+        ) {
+            return
+        }
         viewportUpdateScheduled = true
+        viewportUpdateEpoch = requestedEpoch
         if (!isAttachedToWindow) {
             post {
+                if (viewportUpdateEpoch != requestedEpoch) return@post
                 viewportUpdateScheduled = false
-                scheduleViewportUpdate()
+                viewportUpdateEpoch = 0L
+                scheduleViewportUpdate(requestedEpoch)
             }
             return
         }
@@ -508,7 +590,7 @@ class OpSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Call
     }
 
     private fun applyViewportTuple() {
-        if (engine == 0L || width <= 0 || height <= 0) return
+        if (!surfaceReady || engine == 0L || width <= 0 || height <= 0) return
         // SurfaceView can receive its backing-surface update during pre-draw.
         // If it has not caught up with the laid-out view yet, surfaceChanged
         // schedules another pre-draw with the authoritative size.
@@ -534,25 +616,64 @@ class OpSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Call
 
     /** Requests a single Choreographer frame; idempotent while one is queued. */
     fun requestFrame() {
+        val requestedEpoch = surfaceFrameEpoch
+        if (!surfaceReady) return
+        requestFrame(requestedEpoch)
+    }
+
+    /** Posts a frame only for the Surface generation that requested it. */
+    private fun requestFrame(requestedEpoch: Long) {
         post {
-            if (frameScheduled || engine == 0L) return@post
+            if (
+                !surfaceReady || requestedEpoch != surfaceFrameEpoch ||
+                frameScheduled || engine == 0L
+            ) {
+                return@post
+            }
             frameScheduled = true
+            scheduledFrameEpoch = requestedEpoch
             choreographer.postFrameCallback(frameCallback)
         }
     }
 
     private val frameCallback = Choreographer.FrameCallback { frameTimeNanos ->
+        val requestedEpoch = scheduledFrameEpoch
         frameScheduled = false
-        if (engine == 0L) return@FrameCallback
-        val status = OpNative.nativeFrame(engine, frameTimeNanos / 1_000_000)
-        if (status == GPU_ERROR) {
-            recoverGpu()
-        } else {
-            syncSystemChromeAppearance()
-            syncIme()
-            drainCopyText()
+        scheduledFrameEpoch = 0L
+        if (
+            !surfaceReady || requestedEpoch == 0L ||
+            requestedEpoch != surfaceFrameEpoch || engine == 0L
+        ) {
+            return@FrameCallback
         }
-        pollShellAction()
+        val status = OpNative.nativeFrame(engine, frameTimeNanos / 1_000_000)
+        when (status) {
+            GPU_ERROR -> recoverGpu()
+            0 -> {
+                syncSystemChromeAppearance()
+                syncIme()
+                drainCopyText()
+                pollShellAction()
+                observeBackgroundGeneration(allowPermissionPrompt = true)
+            }
+        }
+    }
+
+    /** Final active-work probe before MainActivity leaves the foreground. */
+    fun prepareForBackground() {
+        observeBackgroundGeneration(allowPermissionPrompt = false)
+    }
+
+    private fun observeBackgroundGeneration(allowPermissionPrompt: Boolean) {
+        val current = engine
+        if (current == 0L) return
+        if (BackgroundGenerationController.observeForeground(context, current)) {
+            backgroundPermissionPromptPending = true
+        }
+        if (allowPermissionPrompt && backgroundPermissionPromptPending) {
+            backgroundPermissionPromptPending = false
+            backgroundWorkActivationHandler?.invoke()
+        }
     }
 
     /** Outbound clipboard bridge: engine copy buttons (collab invite /
@@ -585,27 +706,74 @@ class OpSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Call
      * onRuntimeError report it.
      */
     private fun recoverGpu() {
+        // Invalidate every queued redraw before inspecting the recovery
+        // target. An invalid/replaced Surface must leave the gate closed.
+        closeSurfaceFrameGate()
+        BackgroundGenerationController.markSurfaceResuming(context, engine)
         val gen = surfaceGeneration
         val surface = holder.surface
         if (gen == lastRecoveredGeneration) {
             Log.w(TAG, "GpuError with recovery budget spent (generation $gen) — pump stopped")
+            OpNative.nativeSuspend(engine)
+            BackgroundGenerationController.markSurfaceSuspended(engine)
             return
         }
-        if (surface == null || !surface.isValid) return // raced surfaceDestroyed wins
+        if (surface == null || !surface.isValid) {
+            OpNative.nativeSuspend(engine)
+            BackgroundGenerationController.markSurfaceSuspended(engine)
+            return // raced surfaceDestroyed wins
+        }
         lastRecoveredGeneration = gen
         Log.i(TAG, "GpuError → suspend/resume recovery (generation $gen)")
         OpNative.nativeSuspend(engine)
-        if (surface.isValid) OpNative.nativeResume(engine, surface)
-        requestFrame()
+        val resumed = surface.isValid && OpNative.nativeResume(engine, surface) == 0
+        if (resumed) {
+            openSurfaceFrameGate()
+            requestFrame()
+        } else {
+            BackgroundGenerationController.markSurfaceSuspended(engine)
+        }
+    }
+
+    /** Main-thread close for every path that may release the native surface. */
+    private fun closeSurfaceFrameGate() {
+        surfaceReady = false
+        surfaceFrameEpoch = nextSurfaceFrameEpoch()
+        if (frameScheduled) {
+            choreographer.removeFrameCallback(frameCallback)
+            frameScheduled = false
+        }
+        scheduledFrameEpoch = 0L
+        if (viewTreeObserver.isAlive) {
+            viewTreeObserver.removeOnPreDrawListener(viewportPreDrawListener)
+        }
+        viewportUpdateScheduled = false
+        viewportUpdateEpoch = 0L
+    }
+
+    /** Opens a fresh generation only after attach/resume returned success. */
+    private fun openSurfaceFrameGate() {
+        surfaceFrameEpoch = nextSurfaceFrameEpoch()
+        surfaceReady = true
+    }
+
+    private fun nextSurfaceFrameEpoch(): Long =
+        if (surfaceFrameEpoch == Long.MAX_VALUE) 1L else surfaceFrameEpoch + 1L
+
+    /** Captures the epoch so a delayed wake cannot target a replacement Surface. */
+    private fun scheduleFrameForEpoch(delayMs: Long, requestedEpoch: Long) {
+        if (delayMs <= 0) {
+            requestFrame(requestedEpoch)
+        } else {
+            postDelayed({ requestFrame(requestedEpoch) }, delayMs)
+        }
     }
 
     /** Schedules a frame `delayMs` from now (the engine's next animation wake). */
     fun scheduleFrame(delayMs: Long) {
-        if (delayMs <= 0) {
-            requestFrame()
-        } else {
-            postDelayed({ requestFrame() }, delayMs)
-        }
+        val requestedEpoch = surfaceFrameEpoch
+        if (!surfaceReady) return
+        scheduleFrameForEpoch(delayMs, requestedEpoch)
     }
 
     // ---- Touch (logical px, top-left origin — like iOS UITouch) ----------
@@ -808,6 +976,7 @@ class OpSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Call
 
     private fun fireLongPress() {
         longPressArmed = false
+        if (!surfaceReady || engine == 0L) return
         longPressFired = true
         val inputDensity = viewportInputState.committedDensity
         // The Down at press time already ran the engine's press ladder, so
@@ -861,6 +1030,9 @@ class OpSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Call
             action == OpNative.SHELL_ACTION_OPEN_DOCUMENT -> post {
                 if (engine != 0L) openDocumentHandler?.invoke()
             }
+            action == OpNative.SHELL_ACTION_IMPORT_IMAGE_OR_SVG -> post {
+                if (engine != 0L) importImageOrSvgHandler?.invoke()
+            }
             action == OpNative.SHELL_ACTION_EXPORT_DOCUMENT -> post {
                 if (engine != 0L) exportDocumentHandler?.invoke()
             }
@@ -906,6 +1078,15 @@ class OpSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Call
         return status
     }
 
+    /** Returns one platform-picked image/SVG to Rust, then repaints success or rejection. */
+    fun importImageOrSvg(bytes: ByteArray, displayName: String): Int {
+        val current = engine
+        if (!editorMode || current == 0L) return OpNative.STATUS_CLOSING
+        val status = OpNative.nativeEditorImportImageOrSvg(current, bytes, displayName)
+        requestFrame()
+        return status
+    }
+
     private fun midpoint(event: MotionEvent): Pair<Float, Float> {
         var sx = 0f
         var sy = 0f
@@ -925,35 +1106,9 @@ class OpSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Call
         return Math.sqrt((dx * dx + dy * dy).toDouble()).toFloat()
     }
 
-    /** Fetches a remote image URL (fired by the engine's request upcall)
-     *  and pushes the bytes back; empty bytes mark a failed fetch. */
-    fun fetchRemoteImage(requestId: Long, url: String) {
-        Thread {
-            val bytes = runCatching {
-                val connection = (java.net.URL(url).openConnection() as java.net.HttpURLConnection).apply {
-                    connectTimeout = 10_000
-                    readTimeout = 15_000
-                    instanceFollowRedirects = true
-                }
-                try {
-                    if (connection.responseCode in 200..299) {
-                        connection.inputStream.use { it.readBytes() }
-                    } else {
-                        ByteArray(0)
-                    }
-                } finally {
-                    connection.disconnect()
-                }
-            }.getOrElse { ByteArray(0) }
-            val current = engine
-            if (current != 0L) {
-                OpNative.nativeRemoteImageResult(current, requestId, bytes)
-            }
-        }.start()
-    }
-
     fun destroy() {
         openDocumentHandler = null
+        importImageOrSvgHandler = null
         exportDocumentHandler = null
         saveDocumentHandler = null
         accountCenterHandler = null
@@ -962,8 +1117,22 @@ class OpSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Call
         openLoginUiHandler = null
         closeLoginUiHandler = null
         systemChromeAppearanceHandler = null
+        backgroundWorkActivationHandler = null
+        backgroundPermissionPromptPending = false
+        removeCallbacks(longPressRunnable)
+        removeCallbacks(clearImeShowRequest)
+        closeSurfaceFrameGate()
+        if (viewTreeObserver.isAlive) {
+            viewTreeObserver.removeOnPreDrawListener(viewportPreDrawListener)
+        }
         if (engine != 0L) {
-            OpNative.nativeDestroy(engine)
+            // onDestroy can race ahead of SurfaceHolder.surfaceDestroyed on
+            // aggressive "don't keep activities" / OEM paths. Suspend here
+            // as an idempotent barrier before a service-retained lease loses
+            // its last View, otherwise the background pump gate never opens.
+            OpNative.nativeSuspend(engine)
+            BackgroundGenerationController.markSurfaceSuspended(engine)
+            BackgroundGenerationController.releaseView(context, engine, this)
             engine = 0L
         }
     }

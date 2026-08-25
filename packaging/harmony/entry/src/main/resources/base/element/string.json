@@ -21,6 +21,14 @@
       "value": "Choose an .op or .pen file."
     },
     {
+      "name": "image_import_type_unsupported",
+      "value": "Choose a PNG, JPEG, GIF, WebP, or SVG file."
+    },
+    {
+      "name": "image_import_failed",
+      "value": "Couldn't import this image or SVG."
+    },
+    {
       "name": "document_export_failed",
       "value": "Couldn't export this file."
     },
@@ -31,6 +39,10 @@
     {
       "name": "engine_start_failed",
       "value": "Couldn't start the OpenPencil engine."
+    },
+    {
+      "name": "background_generation_paused",
+      "value": "Background time ended. Generation paused and is continuing now that OpenPencil is open."
     },
     {
       "name": "native_login_unavailable",

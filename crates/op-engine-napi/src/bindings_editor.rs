@@ -13,8 +13,9 @@ use op_engine_ffi::{
     op_editor_cancel_export, op_editor_cancel_login, op_editor_cancel_save, op_editor_commit_save,
     op_editor_configure_auth, op_editor_configure_save_picker, op_editor_copy_export_file_name,
     op_editor_copy_login_url, op_editor_copy_save_file_name, op_editor_copy_save_target,
-    op_editor_export_to_path, op_editor_locale_code, op_editor_open_document, op_editor_set_locale,
-    op_editor_stage_save_to_path, op_editor_take_shell_action, OpStatus, SHELL_ACTION_NONE,
+    op_editor_export_to_path, op_editor_import_image_or_svg, op_editor_locale_code,
+    op_editor_open_document, op_editor_set_locale, op_editor_stage_save_to_path,
+    op_editor_take_shell_action, OpStatus, SHELL_ACTION_NONE,
 };
 
 use crate::action::{auth_region_or_default, STATUS_CLOSING};
@@ -267,6 +268,25 @@ pub fn editor_take_shell_action(engine: i64) -> i32 {
 #[napi(js_name = "editorOpenDocument")]
 pub fn editor_open_document(engine: i64, bytes: Buffer, name: Option<String>) -> i32 {
     open_document_bytes(engine, bytes.to_vec(), name)
+}
+
+/// `editorImportImageOrSvg` — return one shell-picked PNG, JPEG, GIF, WebP,
+/// or SVG plus its display name. ArkTS bounds the buffer to 32 MiB before it
+/// crosses NAPI; the FFI repeats that check before touching the document.
+#[napi(js_name = "editorImportImageOrSvg")]
+pub fn editor_import_image_or_svg(engine: i64, bytes: Buffer, file_name: String) -> i32 {
+    let image = bytes.to_vec();
+    let file_name = file_name.into_bytes();
+    // SAFETY: both owned byte ranges outlive the synchronous FFI call.
+    call_status(engine, move |e| unsafe {
+        op_editor_import_image_or_svg(
+            e,
+            image.as_ptr(),
+            image.len(),
+            file_name.as_ptr(),
+            file_name.len(),
+        )
+    })
 }
 
 /// `editorOpenDocumentPath` — the OHOS convenience twin of

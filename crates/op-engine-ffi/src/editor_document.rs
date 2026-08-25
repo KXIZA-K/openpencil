@@ -163,6 +163,9 @@ pub(crate) fn drain_document_actions(session: &mut Session) -> FfiResult<i32> {
         }
         Some(op_editor_core::FileAction::Save) => begin_save(session, false),
         Some(op_editor_core::FileAction::SaveAs) => begin_save(session, true),
+        Some(op_editor_core::FileAction::ImportImageOrSvg) => {
+            crate::editor_image_import::begin_import(session)
+        }
         #[cfg(any(target_os = "ios", target_os = "android", target_env = "ohos", test))]
         Some(op_editor_core::FileAction::ExportImageConfirm)
         | Some(op_editor_core::FileAction::ExportDeckPdfSelection) => {

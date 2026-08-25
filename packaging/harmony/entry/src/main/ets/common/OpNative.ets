@@ -24,6 +24,8 @@ export enum OpStatus {
   INVALID_ARG = 1,
   /** `OpStatus::GpuError` discriminant. */
   GPU_ERROR = 4,
+  /** Collaboration or another engine-owned operation currently blocks it. */
+  BUSY = 8,
 }
 
 /**
@@ -54,6 +56,8 @@ export enum OpShellAction {
    * the user's file manager can reach on its own.
    */
   SAVE_DOCUMENT = 11,
+  /** Pick one PNG, JPEG, GIF, WebP, or SVG and return bounded bytes. */
+  IMPORT_IMAGE_OR_SVG = 12,
 }
 
 /** Pointer phases mirroring the C ABI `OpPointerPhase`. */

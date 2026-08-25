@@ -117,6 +117,8 @@ mod contract_tests {
         "setKeyboard",
         "prefersLightSystemIcons",
         "frame",
+        "hasBackgroundWork",
+        "backgroundTick",
         "pointer",
         "destroy",
         // --- Text editing + IME ---
@@ -158,6 +160,7 @@ mod contract_tests {
         "editorCancelLogin",
         "editorTakeShellAction",
         "editorOpenDocument",
+        "editorImportImageOrSvg",
         "editorExportFileName",
         "editorExportToPath",
         "editorCancelExport",
@@ -258,11 +261,29 @@ mod contract_tests {
     fn the_kotlin_derived_prefix_matches_opnative_order() {
         // The leading names are `OpNative.kt`'s own order; the additions
         // follow. A new OHOS-only export must be appended, never spliced in.
-        const KOTLIN_DERIVED: usize = 63;
+        const KOTLIN_DERIVED: usize = 66;
         assert_eq!(EXPORTED_NAMES[KOTLIN_DERIVED], "setXcomponentListener");
         assert_eq!(EXPORTED_NAMES[0], "create");
         assert_eq!(EXPORTED_NAMES[KOTLIN_DERIVED - 1], "editorLocaleCode");
-        assert_eq!(EXPORTED_NAMES.len(), 78);
+        assert_eq!(EXPORTED_NAMES.len(), 81);
+    }
+
+    #[test]
+    fn background_entry_points_match_the_c_header() {
+        assert!(HEADER.contains("OpStatus op_has_background_work(OpEngine *engine, bool *active);"));
+        assert!(HEADER.contains(
+            "OpStatus op_background_tick(OpEngine *engine, uint64_t now_ms, bool *active);"
+        ));
+    }
+
+    #[test]
+    fn image_import_binding_preserves_buffer_and_file_name() {
+        const EDITOR: &str = include_str!("bindings_editor.rs");
+        assert!(EDITOR.contains("js_name = \"editorImportImageOrSvg\""));
+        assert!(EDITOR.contains("bytes: Buffer, file_name: String"));
+        assert!(EDITOR.contains("op_editor_import_image_or_svg("));
+        assert!(HEADER.contains("OpShellAction_ImportImageOrSvg = 12,"));
+        assert!(HEADER.contains("OpStatus op_editor_import_image_or_svg(OpEngine *engine,"));
     }
 
     /// The engine's own C header — the single source of truth for the codes
@@ -297,6 +318,10 @@ mod contract_tests {
             ("OpShellAction_WindowMinimize", SHELL_ACTION_WINDOW_MINIMIZE),
             ("OpShellAction_WindowZoom", SHELL_ACTION_WINDOW_ZOOM),
             ("OpShellAction_SaveDocument", SHELL_ACTION_SAVE_DOCUMENT),
+            (
+                "OpShellAction_ImportImageOrSvg",
+                SHELL_ACTION_IMPORT_IMAGE_OR_SVG,
+            ),
         ] {
             assert!(
                 HEADER.contains(&format!("{name} = {code},")),

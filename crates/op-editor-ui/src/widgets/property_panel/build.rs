@@ -120,7 +120,7 @@ impl PropertyPanel {
         // alive (and the tab reachable) with an empty / unresolvable
         // selection. The Code body never reads the snapshot, so a
         // neutral placeholder suffices.
-        if state.editor_ui.property_tab == op_editor_core::PropertyTab::Code {
+        if state.editor_ui.effective_property_tab() == op_editor_core::PropertyTab::Code {
             return Some(Self::build_from_snapshot(
                 state,
                 NodeSnapshot::empty_for_code_tab(),
@@ -245,6 +245,8 @@ impl PropertyPanel {
         stroke_variable_ref: Option<String>,
     ) -> Self {
         let ui = &state.editor_ui;
+        let code_tab_available = ui.code_property_tab_available();
+        let property_tab = ui.effective_property_tab();
         let color_variables = color_variable_options(state);
         let color_variable_count = color_variables.len();
         let flex_layout = snapshot.flex_layout;
@@ -401,8 +403,11 @@ impl PropertyPanel {
             stroke_mode_popover_open: ui.stroke_mode_popover_open,
             stroke_mode_popover_hover: ui.stroke_mode_popover_hover,
             is_multi,
-            tab: ui.property_tab,
-            tab_hover: ui.property_tab_hover,
+            tab: property_tab,
+            tab_hover: ui.property_tab_hover.filter(|tab| {
+                code_tab_available || !matches!(tab, op_editor_core::PropertyTab::Code)
+            }),
+            code_tab_available,
             export_format: ui.export_format,
             export_scale: ui.export_scale,
             export_scale_picker_open: ui.export_scale_picker_open,
@@ -418,7 +423,7 @@ impl PropertyPanel {
                 ui.effect_param_focus
             },
             codegen,
-            codegen_pressed: match ui.pressed_button {
+            codegen_pressed: match ui.pressed_button.filter(|_| code_tab_available) {
                 Some(op_editor_core::ButtonPressTarget::Codegen(hover)) => Some(hover),
                 _ => None,
             },

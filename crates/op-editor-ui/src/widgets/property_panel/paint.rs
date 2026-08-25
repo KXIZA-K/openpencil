@@ -52,6 +52,7 @@ impl Widget for PropertyPanel {
                 active: self.tab,
                 hover: self.tab_hover,
                 show_interact: self.snapshot.widget.is_some(),
+                show_code: self.code_tab_available,
                 touch_controls: self.density_scale > 1.0,
             },
             x,

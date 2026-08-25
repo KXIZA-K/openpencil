@@ -237,6 +237,10 @@ impl ChatState {
 
     pub fn blur_input(&mut self, now_ms: u64) {
         self.focused = false;
+        // A marked candidate belongs to the focused platform session. Once
+        // focus leaves, discard only that transient preedit; the durable
+        // prompt remains untouched and the next focus starts cleanly.
+        self.input.clear_composition();
         self.input.set_caret(self.input.caret(), now_ms);
     }
 

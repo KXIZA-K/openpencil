@@ -46,6 +46,7 @@ struct Index {
   private surfaceReady: boolean = false;
   private engineStarted: boolean = false;
   private documentOpenInProgress: boolean = false;
+  private imageImportInProgress: boolean = false;
   private exportInProgress: boolean = false;
   private saveInProgress: boolean = false;
 
@@ -104,6 +105,9 @@ struct Index {
   onPageShow(): void {
     if (this.engineStarted) {
       this.host.resume();
+      if (this.host.takeBackgroundGenerationPaused()) {
+        this.presentNotice($r('app.string.background_generation_paused'));
+      }
     }
   }
 
@@ -380,6 +384,7 @@ struct Index {
   private shellSink(): ShellActionSink {
     return {
       onOpenDocument: (): void => this.openDocument(),
+      onImportImageOrSvg: (): void => this.importImageOrSvg(),
       onExportDocument: (): void => this.exportDocument(),
       onSaveDocument: (): void => this.saveDocument(),
       onOpenLoginUi: (url: string): void => this.presentLoginUi(url),
@@ -469,6 +474,31 @@ struct Index {
         this.documentOpenInProgress = false;
         hilog.warn(DOMAIN, TAG, 'open document failed: %{public}s', JSON.stringify(error));
         this.presentNotice($r('app.string.document_open_failed'));
+      });
+  }
+
+  private importImageOrSvg(): void {
+    if (this.imageImportInProgress) {
+      // The action is already consumed. Never stack a second picker or
+      // resurrect it after the user dismisses the active one.
+      return;
+    }
+    this.imageImportInProgress = true;
+    DocumentShell.importImageOrSvg(this.context, this.host)
+      .then((outcome: ShellOutcome) => {
+        this.imageImportInProgress = false;
+        if (outcome === ShellOutcome.UNSUPPORTED_TYPE) {
+          this.presentNotice($r('app.string.image_import_type_unsupported'));
+        } else if (outcome === ShellOutcome.FAILED) {
+          this.presentNotice($r('app.string.image_import_failed'));
+        }
+        // CANCELLED is deliberately silent: action 12 is one-shot and has
+        // no frozen engine payload that needs an explicit cancel call.
+      })
+      .catch((error: Object) => {
+        this.imageImportInProgress = false;
+        hilog.warn(DOMAIN, TAG, 'image import failed: %{public}s', JSON.stringify(error));
+        this.presentNotice($r('app.string.image_import_failed'));
       });
   }
 

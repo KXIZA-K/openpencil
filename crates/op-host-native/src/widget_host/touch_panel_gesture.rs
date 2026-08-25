@@ -53,7 +53,7 @@ impl WidgetHostNative {
         let ui = &self.editor_state.editor_ui;
         if !ui.touch_chrome()
             || !(ui.mobile_sheet == Some(MobileSheetKind::Layers)
-                || (ui.expanded_touch_layout() && ui.sidebar_open && ui.mobile_sheet.is_none()))
+                || (ui.expanded_touch_layout() && ui.sidebar_open && !self.mobile_sheet_is_modal()))
         {
             return false;
         }
@@ -216,7 +216,7 @@ impl WidgetHostNative {
         let ui = &self.editor_state.editor_ui;
         if !ui.touch_chrome()
             || !(ui.mobile_sheet == Some(MobileSheetKind::Properties)
-                || (ui.expanded_touch_layout() && ui.mobile_sheet.is_none()))
+                || (ui.expanded_touch_layout() && !self.mobile_sheet_is_modal()))
             || ctx.in_git_panel
         {
             return false;
@@ -269,7 +269,7 @@ impl WidgetHostNative {
         let ui = &self.editor_state.editor_ui;
         if !ui.touch_chrome()
             || !(ui.mobile_sheet == Some(MobileSheetKind::Layers)
-                || (ui.expanded_touch_layout() && ui.sidebar_open && ui.mobile_sheet.is_none()))
+                || (ui.expanded_touch_layout() && ui.sidebar_open && !self.mobile_sheet_is_modal()))
         {
             return false;
         }
@@ -294,7 +294,7 @@ impl WidgetHostNative {
         if !ui.touch_chrome()
             || ui.slides_panel.export_menu_open
             || !(ui.mobile_sheet == Some(MobileSheetKind::Layers)
-                || (ui.expanded_touch_layout() && ui.sidebar_open && ui.mobile_sheet.is_none()))
+                || (ui.expanded_touch_layout() && ui.sidebar_open && !self.mobile_sheet_is_modal()))
         {
             return false;
         }
@@ -655,11 +655,11 @@ impl WidgetHostNative {
             return false;
         }
         match target {
-            TouchPanelTarget::Canvas => ui.mobile_sheet.is_none(),
+            TouchPanelTarget::Canvas => !self.mobile_sheet_is_modal(),
             TouchPanelTarget::AssetCenter => ui.scene_template_center.open,
             TouchPanelTarget::Property => {
                 (ui.mobile_sheet == Some(MobileSheetKind::Properties)
-                    || (ui.expanded_touch_layout() && ui.mobile_sheet.is_none()))
+                    || (ui.expanded_touch_layout() && !self.mobile_sheet_is_modal()))
                     && op_editor_ui::widgets::PropertyPanel::for_selection_at(
                         &self.editor_state,
                         self.now_ms,
@@ -669,7 +669,7 @@ impl WidgetHostNative {
             TouchPanelTarget::FontPicker => {
                 ui.font_picker.open
                     && (ui.mobile_sheet == Some(MobileSheetKind::Properties)
-                        || (ui.expanded_touch_layout() && ui.mobile_sheet.is_none()))
+                        || (ui.expanded_touch_layout() && !self.mobile_sheet_is_modal()))
                     && op_editor_ui::widgets::PropertyPanel::for_selection_at(
                         &self.editor_state,
                         self.now_ms,
@@ -678,11 +678,15 @@ impl WidgetHostNative {
             }
             TouchPanelTarget::Layers => {
                 ui.mobile_sheet == Some(MobileSheetKind::Layers)
-                    || (ui.expanded_touch_layout() && ui.sidebar_open && ui.mobile_sheet.is_none())
+                    || (ui.expanded_touch_layout()
+                        && ui.sidebar_open
+                        && !self.mobile_sheet_is_modal())
             }
             TouchPanelTarget::Slides => {
                 (ui.mobile_sheet == Some(MobileSheetKind::Layers)
-                    || (ui.expanded_touch_layout() && ui.sidebar_open && ui.mobile_sheet.is_none()))
+                    || (ui.expanded_touch_layout()
+                        && ui.sidebar_open
+                        && !self.mobile_sheet_is_modal()))
                     && op_editor_ui::widgets::slides_panel_flow::slides_tab_active(
                         &self.editor_state,
                     )
@@ -694,7 +698,7 @@ impl WidgetHostNative {
     fn touch_panel_scroll_axis(&self, gesture: TouchPanelGesture) -> TouchScrollAxis {
         if gesture.target != TouchPanelTarget::Property
             || !matches!(
-                self.editor_state.editor_ui.property_tab,
+                self.editor_state.editor_ui.effective_property_tab(),
                 op_editor_core::PropertyTab::Code
             )
         {

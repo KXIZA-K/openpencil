@@ -33,12 +33,10 @@ impl WidgetHostNative {
             };
             app_bar.paint(&mut cx, app_bar_rect);
 
-            // The dock is navigation chrome, not sheet content. Hiding it
-            // while any modal surface is open removes the duplicate More
-            // entry and prevents invisible controls from stealing taps.
-            if self.editor_state.editor_ui.mobile_sheet.is_none()
-                && !self.editor_state.editor_ui.variables_panel_open
-            {
+            // The dock is navigation chrome, not sheet content. It stays
+            // available beside the bounded iPad AI assistant, but hides under
+            // true modal sheets so invisible controls cannot steal taps.
+            if !self.mobile_sheet_is_modal() && !self.editor_state.editor_ui.variables_panel_open {
                 let dock = op_editor_ui::widgets::MobileDock::for_editor(&self.editor_state);
                 let dock_rect = canvas_geometry::touch_dock_rect(
                     &self.editor_state,
@@ -89,7 +87,7 @@ impl WidgetHostNative {
                 .map(|pages| pages.len())
                 .unwrap_or(1);
             if page_count > 1
-                && self.editor_state.editor_ui.mobile_sheet.is_none()
+                && !self.mobile_sheet_is_modal()
                 && !self.editor_state.editor_ui.variables_panel_open
             {
                 let theme = theme_for(&self.editor_state.editor_ui);

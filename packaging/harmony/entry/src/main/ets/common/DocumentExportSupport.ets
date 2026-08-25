@@ -16,7 +16,10 @@ export class DocumentExportSupport {
    * has no WebP encoder, so the format stays hidden instead of failing at
    * save time.
    */
-  static readonly SAVE_SUFFIXES: string[] = ['.png', '.jpg', '.jpeg', '.svg', '.pdf'];
+  static readonly SAVE_SUFFIXES: string[] = [
+    '.png', '.jpg', '.jpeg', '.svg', '.pdf',
+    '.zip', '.tsx', '.vue', '.svelte', '.html', '.dart', '.swift', '.kt'
+  ];
 
   /**
    * Returns the filename when it is safe to place inside an app-private
@@ -70,6 +73,17 @@ export class DocumentExportSupport {
         return 'image/svg+xml';
       case '.pdf':
         return 'application/pdf';
+      case '.zip':
+        return 'application/zip';
+      case '.html':
+        return 'text/html';
+      case '.tsx':
+      case '.vue':
+      case '.svelte':
+      case '.dart':
+      case '.swift':
+      case '.kt':
+        return 'text/plain';
       default:
         return 'application/octet-stream';
     }

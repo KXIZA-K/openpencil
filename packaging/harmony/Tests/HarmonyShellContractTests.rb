@@ -1,8 +1,9 @@
 # frozen_string_literal: true
 
 # Source contracts for the HarmonyOS shell behaviour: the NAPI surface, the
-# seven engine shell actions, the empty-conduit backspace fix, the 15-locale
-# picker, the export format set, and SSO origin hygiene.
+# engine shell actions, the bounded image/SVG picker, the empty-conduit
+# backspace fix, the 15-locale picker, the export format set, and SSO origin
+# hygiene.
 
 player_dir = File.expand_path("..", __dir__)
 repo_dir = File.expand_path("../..", player_dir)
@@ -24,7 +25,9 @@ export_support = read(ets_dir, "common/DocumentExportSupport.ets")
 document_shell = read(ets_dir, "common/DocumentShell.ets")
 language = read(ets_dir, "common/EngineLanguage.ets")
 declaration = read(player_dir, "entry/src/main/cpp/types/libopenpencil/index.d.ts")
+napi_readme = read(repo_dir, "crates/op-engine-napi/README.md")
 header = read(repo_dir, "crates/op-engine-ffi/include/op_engine.h")
+background = read(ets_dir, "common/BackgroundGenerationCoordinator.ets")
 
 # ---- NAPI surface: OpNative.kt externals, camelCase, no `native` prefix ----
 
@@ -51,11 +54,31 @@ if File.exist?(File.join(android_dir, "OpNative.kt"))
 end
 
 # The Surface argument becomes the XComponent id on OHOS.
+raise "create document bytes must be nullable ArrayBuffer" unless declaration.match?(
+  /create: \(\s*doc: ArrayBuffer \| null,/m,
+)
+raise "HarmonyOS byte declarations must not drift to Uint8Array" if declaration.include?("Uint8Array")
+raise "NAPI README byte types drifted from the ArkTS declaration" if napi_readme.include?("Uint8Array")
 raise "attachSurface must take the XComponent id" unless declaration.match?(
   /attachSurface: \(engine: number, xcomponentId: string\)/,
 )
 raise "resume must take the XComponent id" unless declaration.match?(
   /resume: \(engine: number, xcomponentId: string \| null\)/,
+)
+raise "hasBackgroundWork declaration drifted" unless declaration.match?(
+  /hasBackgroundWork: \(engine: number\) => boolean/,
+)
+raise "backgroundTick declaration drifted" unless declaration.match?(
+  /backgroundTick: \(engine: number, tMs: number\) => boolean/,
+)
+raise "background work ABI missing from the C header" unless header.include?(
+  "op_has_background_work(OpEngine *engine, bool *active)",
+)
+raise "background tick ABI missing from the C header" unless header.include?(
+  "op_background_tick(OpEngine *engine, uint64_t now_ms, bool *active)",
+)
+raise "ArkTS must query background work through NAPI" unless background.include?(
+  "napi.hasBackgroundWork(this.engine)",
 )
 
 called = ets_sources.flat_map { |source| File.read(source).scan(/\bnapi\.([A-Za-z0-9_]+)\s*\(/).flatten }.uniq.sort
@@ -76,6 +99,8 @@ action_codes = {
   "WINDOW_CLOSE" => ["OpShellAction_WindowClose = 8", 8],
   "WINDOW_MINIMIZE" => ["OpShellAction_WindowMinimize = 9", 9],
   "WINDOW_ZOOM" => ["OpShellAction_WindowZoom = 10", 10],
+  "SAVE_DOCUMENT" => ["OpShellAction_SaveDocument = 11", 11],
+  "IMPORT_IMAGE_OR_SVG" => ["OpShellAction_ImportImageOrSvg = 12", 12],
 }.freeze
 
 action_codes.each do |name, (header_line, code)|
@@ -95,8 +120,9 @@ raise "an unknown action must be logged, not silently dropped" unless engine_hos
 
 # Every action reaches a main-thread sink handler.
 %w[
-  onOpenDocument onExportDocument onOpenAccountCenter onRequestLogin
-  onOpenLanguagePicker onOpenLoginUi onCloseLoginUi onWindowControl
+  onOpenDocument onImportImageOrSvg onExportDocument onSaveDocument
+  onOpenAccountCenter onRequestLogin onOpenLanguagePicker onOpenLoginUi
+  onCloseLoginUi onWindowControl
 ].each do |handler|
   raise "sink handler #{handler} missing from EngineHost" unless engine_host.include?(handler)
   raise "sink handler #{handler} missing from the page" unless index.include?(handler)
@@ -110,6 +136,56 @@ raise "ExportDocument must offer the engine-derived name" unless document_shell.
 raise "a cancelled save must discard the frozen export" unless document_shell.match?(
   /result\.length === 0.*?host\.cancelExport\(\)/m,
 )
+
+# Action 12: one bounded image/SVG picker. The shell action itself is the
+# request token, so dismissal is terminal without an engine cancel call.
+import_start = document_shell.index("static async importImageOrSvg")
+export_start = document_shell.index("static async exportDocument")
+raise "image import picker handler missing" unless import_start && export_start && import_start < export_start
+image_import = document_shell[import_start...export_start]
+raise "image import must use DocumentViewPicker" unless image_import.include?(
+  "new picker.DocumentViewPicker(context)",
+)
+raise "image import must select exactly one file" unless image_import.include?(
+  "options.maxSelectNumber = 1",
+)
+raise "image import suffix filter drifted" unless image_import.include?(
+  "options.fileSuffixFilters = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg']",
+)
+raise "image import must use the shared 32 MiB bounded reader" unless
+  document_shell.include?("const MAX_DOCUMENT_BYTES = 32 * 1024 * 1024") &&
+  image_import.include?("DocumentShell.readBoundedFile(uri, 'image')")
+raise "image import must preserve the picked display name" unless image_import.include?(
+  "host.importImageOrSvg(bytes, displayName)",
+)
+raise "an empty image picker result must cancel silently" unless image_import.match?(
+  /result\.length === 0\) \{\s*return ShellOutcome\.CANCELLED;/m,
+)
+raise "image picker exceptions must be logged as failures" unless image_import.match?(
+  /catch \(error\) \{\s*hilog\.warn\([^;]*image picker failed:[^;]*;\s*return ShellOutcome\.FAILED;/m,
+)
+raise "the page must prevent stacked image pickers" unless index.match?(
+  /if \(this\.imageImportInProgress\) \{[\s\S]{0,300}?return;/m,
+)
+raise "image import failure must use a localized notice" unless index.include?(
+  "$r('app.string.image_import_failed')",
+) && index.include?("$r('app.string.image_import_type_unsupported')")
+raise "image import NAPI declaration missing" unless declaration.match?(
+  /editorImportImageOrSvg: \([\s\S]{0,180}?bytes: ArrayBuffer,[\s\S]{0,100}?fileName: string/m,
+)
+raise "image import must cross NAPI with bytes and name" unless engine_host.include?(
+  "napi.editorImportImageOrSvg(this.engine, bytes, displayName)",
+)
+napi_editor = read(repo_dir, "crates/op-engine-napi/src/bindings_editor.rs")
+raise "NAPI image import must call the canonical FFI" unless napi_editor.include?(
+  "op_editor_import_image_or_svg(",
+)
+%w[base en_US zh_CN].each do |locale|
+  strings = read(player_dir, "entry/src/main/resources/#{locale}/element/string.json")
+  raise "#{locale} image import failure resource missing" unless strings.include?(
+    '"name": "image_import_failed"',
+  ) && strings.include?('"name": "image_import_type_unsupported"')
+end
 
 # Action 2 / 6: the login URL comes only from native, and refusing the flow
 # cancels it through the same call the Android shell uses on rejection.
@@ -305,17 +381,23 @@ raise "the locale must be persisted with Preferences" unless language.include?("
 # ---- Export formats: PNG / JPEG / SVG / PDF, never WebP --------------------
 
 raise "export suffixes drifted" unless export_support.include?(
-  "static readonly SAVE_SUFFIXES: string[] = ['.png', '.jpg', '.jpeg', '.svg', '.pdf'];",
+  "'.zip', '.tsx', '.vue', '.svelte', '.html', '.dart', '.swift', '.kt'",
 )
-%w[image/png image/jpeg image/svg+xml application/pdf].each do |mime|
+%w[image/png image/jpeg image/svg+xml application/pdf application/zip text/html text/plain].each do |mime|
   raise "export MIME #{mime} missing" unless export_support.include?(mime)
 end
-# No code path may offer WebP; only prose may mention why it is absent.
-ets_sources.each do |source|
-  if File.read(source).match?(%r{\.webp|image/webp|['"]webp['"]}i)
-    raise "#{File.basename(source)} must keep WebP hidden (no mobile Skia encoder)"
-  end
-end
+# The EXPORT picker must not offer WebP. Importing an existing WebP remains
+# supported and is checked independently by the action-12 contract above.
+export_start = document_shell.index("static async exportDocument")
+save_start = document_shell.index("static async saveDocument")
+raise "export handler missing" unless export_start && save_start && export_start < save_start
+export_block = document_shell[export_start...save_start]
+raise "the export picker must keep WebP hidden" if export_block.match?(
+  %r{\.webp|image/webp|['"]webp['"]}i,
+)
+raise "export MIME support must keep WebP hidden" if export_support.match?(
+  %r{\.webp|image/webp|['"]webp['"]}i,
+)
 raise "the WebP omission must stay documented" unless export_support.include?(
   "WebP is deliberately ABSENT",
 )

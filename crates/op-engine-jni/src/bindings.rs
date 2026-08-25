@@ -19,9 +19,9 @@ use jni::sys::{jboolean, jfloat, jint, jlong};
 use jni::{JNIEnv, JavaVM};
 
 use op_engine_ffi::{
-    op_attach_surface, op_create, op_destroy, op_frame, op_pointer, op_prefers_light_system_icons,
-    op_resize, op_resize_with_safe_area, op_resume, op_set_keyboard, op_set_safe_area, op_suspend,
-    OpCreateDesc, OpEngine, OpStatus, OpSurfaceDesc,
+    op_attach_surface, op_background_tick, op_create, op_destroy, op_frame, op_has_background_work,
+    op_pointer, op_prefers_light_system_icons, op_resize, op_resize_with_safe_area, op_resume,
+    op_set_keyboard, op_set_safe_area, op_suspend, OpCreateDesc, OpEngine, OpStatus, OpSurfaceDesc,
 };
 
 use crate::callbacks::{build_callbacks, drop_ctx, EngineCtx};
@@ -454,6 +454,44 @@ pub extern "system" fn Java_tech_zseven_openpencil_OpNative_nativeSuspend<'local
     .unwrap_or(STATUS_CLOSING)
 }
 
+/// `OpNative.nativeHasBackgroundWork` — whether this engine has a queued or
+/// running user-started generation. Invalid/closing handles fail closed so the
+/// Android foreground service never spins forever around a dead engine.
+#[no_mangle]
+pub extern "system" fn Java_tech_zseven_openpencil_OpNative_nativeHasBackgroundWork<'local>(
+    _env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    engine: jlong,
+) -> jboolean {
+    let active = with_engine(engine, move |e| {
+        let mut active = false;
+        let status = unsafe { op_has_background_work(e, &mut active) };
+        crate::background_work_or_false(status, active)
+    })
+    .unwrap_or(false);
+    active as jboolean
+}
+
+/// `OpNative.nativeBackgroundTick` — advance chat/design/image-enrichment
+/// work without touching the suspended EGL surface. The C ABI returns whether
+/// another tick is needed; any failed/closing engine maps to `false` so service
+/// teardown is bounded.
+#[no_mangle]
+pub extern "system" fn Java_tech_zseven_openpencil_OpNative_nativeBackgroundTick<'local>(
+    _env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    engine: jlong,
+    now_ms: jlong,
+) -> jboolean {
+    let active = with_engine(engine, move |e| {
+        let mut active = false;
+        let status = unsafe { op_background_tick(e, now_ms.max(0) as u64, &mut active) };
+        crate::background_work_or_false(status, active)
+    })
+    .unwrap_or(false);
+    active as jboolean
+}
+
 #[no_mangle]
 pub extern "system" fn Java_tech_zseven_openpencil_OpNative_nativeResize<'local>(
     _env: JNIEnv<'local>,
@@ -556,5 +594,11 @@ pub extern "system" fn Java_tech_zseven_openpencil_OpNative_nativePointer<'local
 // ---- Text editing + IME -------------------------------------------------
 
 pub(crate) fn jstring_bytes(env: &mut JNIEnv, s: &JString) -> Option<Vec<u8>> {
-    env.get_string(s).ok().map(|s| s.to_bytes().to_vec())
+    // `JavaStr::to_bytes()` exposes JNI Modified UTF-8/CESU-8, which is not
+    // the UTF-8 every engine ABI string accepts (supplementary scalars such
+    // as emoji become two invalid three-byte surrogate encodings). Decode the
+    // Java string first, then own canonical UTF-8 before leaving this frame.
+    env.get_string(s)
+        .ok()
+        .map(|value| String::from(value).into_bytes())
 }

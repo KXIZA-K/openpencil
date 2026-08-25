@@ -58,6 +58,8 @@ pub enum MobileMoreEntry {
     Templates,
     Assets,
     Ai,
+    /// Selection-independent generated-code inspector (tablet only).
+    Code,
     SignIn,
     Account,
     Language,
@@ -70,7 +72,7 @@ pub enum MobileMoreEntry {
 impl MobileMoreEntry {
     /// Exhaustive semantic entries. Paint and hit-test use [`Self::visible`]
     /// because Sign in and Account are mutually exclusive states of one tile.
-    pub const ALL: [MobileMoreEntry; 14] = [
+    pub const ALL: [MobileMoreEntry; 15] = [
         MobileMoreEntry::NewFile,
         MobileMoreEntry::OpenFile,
         MobileMoreEntry::SaveFile,
@@ -78,6 +80,7 @@ impl MobileMoreEntry {
         MobileMoreEntry::Templates,
         MobileMoreEntry::Assets,
         MobileMoreEntry::Ai,
+        MobileMoreEntry::Code,
         MobileMoreEntry::SignIn,
         MobileMoreEntry::Account,
         MobileMoreEntry::Collaboration,
@@ -95,7 +98,7 @@ impl MobileMoreEntry {
     /// preview mode — see `press_mobile_more_sheet_tier`, which no longer
     /// carries a Preview arm either.
     pub fn visible(state: &EditorState) -> Vec<MobileMoreEntry> {
-        vec![
+        let mut entries = vec![
             MobileMoreEntry::NewFile,
             MobileMoreEntry::OpenFile,
             MobileMoreEntry::SaveFile,
@@ -103,6 +106,14 @@ impl MobileMoreEntry {
             MobileMoreEntry::Templates,
             MobileMoreEntry::Assets,
             MobileMoreEntry::Ai,
+        ];
+        // Compact phones deliberately omit the generated-code inspector: its
+        // controls need tablet width. Medium and Expanded touch layouts expose
+        // the same Code destination through the overflow surface.
+        if state.editor_ui.touch_chrome() && state.editor_ui.code_property_tab_available() {
+            entries.push(MobileMoreEntry::Code);
+        }
+        entries.extend([
             MobileMoreEntry::Collaboration,
             if state.editor_ui.account.is_signed_in() {
                 MobileMoreEntry::Account
@@ -113,7 +124,8 @@ impl MobileMoreEntry {
             MobileMoreEntry::Settings,
             MobileMoreEntry::Variables,
             MobileMoreEntry::Export,
-        ]
+        ]);
+        entries
     }
 
     fn label(self, ui: &EditorUiState) -> &'static str {
@@ -125,6 +137,7 @@ impl MobileMoreEntry {
             MobileMoreEntry::Templates => "sceneTemplate.title",
             MobileMoreEntry::Assets => "assetCenter.title",
             MobileMoreEntry::Ai => "a11y.aiChat",
+            MobileMoreEntry::Code => "rightPanel.code",
             MobileMoreEntry::SignIn => "settings.account.signIn",
             MobileMoreEntry::Account => "settings.account.title",
             MobileMoreEntry::Collaboration => "collab.topbar.collaborate",
@@ -153,6 +166,7 @@ impl MobileMoreEntry {
             MobileMoreEntry::Templates => Icon::LayoutDashboard,
             MobileMoreEntry::Assets => Icon::Palette,
             MobileMoreEntry::Ai => Icon::from_name("sparkles").unwrap_or(Icon::Sparkles),
+            MobileMoreEntry::Code => Icon::from_name("code").unwrap_or(Icon::Braces),
             MobileMoreEntry::SignIn | MobileMoreEntry::Account => Icon::User,
             MobileMoreEntry::Collaboration => Icon::Users,
             MobileMoreEntry::Language => Icon::Globe,
@@ -213,7 +227,7 @@ fn legacy_tile_height(state: &EditorState, panel: Rect, item_count: usize, colum
     };
     let gaps = rows.saturating_sub(1) as f32 * GRID_GAP;
     let available = (panel.size.y - HEADER_HEIGHT - gaps - bottom_padding).max(0.0);
-    (available / rows as f32).min(TILE_HEIGHT).max(44.0)
+    (available / rows as f32).clamp(44.0, TILE_HEIGHT)
 }
 
 pub fn more_panel_rect(state: &EditorState, viewport_w: f32, viewport_h: f32) -> Rect {
@@ -290,6 +304,9 @@ fn phone_portrait_entry_rect(state: &EditorState, panel: Rect, index: usize) -> 
             content_w,
             PHONE_AI_HEIGHT,
         ),
+        MobileMoreEntry::Code => {
+            unreachable!("Code is not visible in the Compact portrait More sheet")
+        }
         MobileMoreEntry::Templates => {
             phone_pair_rect(panel, PHONE_CREATIVE_TOP, PHONE_CREATIVE_HEIGHT, 0)
         }
@@ -391,19 +408,24 @@ fn paint_phone_label(
     cx.backend.restore();
 }
 
+#[derive(Clone, Copy)]
+struct PhoneEntryStyle {
+    fill: Color,
+    icon: Color,
+    text: Color,
+    prominent: bool,
+}
+
 fn paint_phone_horizontal_entry(
     cx: &mut PaintCx<'_>,
     state: &EditorState,
     theme: &Theme,
     entry: MobileMoreEntry,
     rect: Rect,
-    fill: Color,
-    icon_color: Color,
-    text_color: Color,
-    prominent: bool,
+    style: PhoneEntryStyle,
 ) {
-    cx.backend.fill_round_rect(rect, 14.0, fill);
-    if !prominent {
+    cx.backend.fill_round_rect(rect, 14.0, style.fill);
+    if !style.prominent {
         cx.backend
             .stroke_round_rect(rect, 14.0, theme.border.with_alpha(0.72), 1.0);
     }
@@ -417,10 +439,10 @@ fn paint_phone_horizontal_entry(
         cx,
         icon_target,
         entry.icon(),
-        if prominent { 22.0 } else { 19.0 },
-        icon_color,
+        if style.prominent { 22.0 } else { 19.0 },
+        style.icon,
     );
-    let trailing = if prominent { 38.0 } else { 12.0 };
+    let trailing = if style.prominent { 38.0 } else { 12.0 };
     let label_rect = Rect::xywh(
         rect.origin.x + 54.0,
         rect.origin.y,
@@ -431,12 +453,12 @@ fn paint_phone_horizontal_entry(
         cx,
         entry.label(&state.editor_ui),
         label_rect,
-        if prominent { 15.0 } else { 13.5 },
-        if prominent { 600 } else { 400 },
-        text_color,
+        if style.prominent { 15.0 } else { 13.5 },
+        if style.prominent { 600 } else { 400 },
+        style.text,
         false,
     );
-    if prominent {
+    if style.prominent {
         let chevron = Rect::xywh(
             rect.origin.x + rect.size.x - 40.0,
             rect.origin.y + (rect.size.y - 40.0) / 2.0,
@@ -448,7 +470,7 @@ fn paint_phone_horizontal_entry(
             chevron,
             Icon::ChevronRight,
             18.0,
-            text_color.with_alpha(0.84),
+            style.text.with_alpha(0.84),
         );
     }
 }
@@ -528,10 +550,12 @@ fn paint_phone_portrait_entries(
                 theme,
                 entry,
                 rect,
-                theme.primary,
-                theme.primary_foreground,
-                theme.primary_foreground,
-                true,
+                PhoneEntryStyle {
+                    fill: theme.primary,
+                    icon: theme.primary_foreground,
+                    text: theme.primary_foreground,
+                    prominent: true,
+                },
             ),
             MobileMoreEntry::Templates | MobileMoreEntry::Assets => paint_phone_horizontal_entry(
                 cx,
@@ -539,10 +563,12 @@ fn paint_phone_portrait_entries(
                 theme,
                 entry,
                 rect,
-                theme.row_selected_primary,
-                theme.primary,
-                theme.foreground,
-                false,
+                PhoneEntryStyle {
+                    fill: theme.row_selected_primary,
+                    icon: theme.primary,
+                    text: theme.foreground,
+                    prominent: false,
+                },
             ),
             _ => paint_phone_horizontal_entry(
                 cx,
@@ -550,10 +576,12 @@ fn paint_phone_portrait_entries(
                 theme,
                 entry,
                 rect,
-                mix(theme.card, theme.foreground, 0.035),
-                theme.muted_foreground,
-                theme.foreground.with_alpha(0.92),
-                false,
+                PhoneEntryStyle {
+                    fill: mix(theme.card, theme.foreground, 0.035),
+                    icon: theme.muted_foreground,
+                    text: theme.foreground.with_alpha(0.92),
+                    prominent: false,
+                },
             ),
         }
     }

@@ -10,6 +10,7 @@ import { PointerRouter, PointerRouterHost } from './PointerRouter';
 import { ViewportBands } from './WindowBridge';
 import { ViewportInputState } from './ViewportInputState';
 import { SystemFontRegistry } from './SystemFontRegistry';
+import { BackgroundGenerationCoordinator } from './BackgroundGenerationCoordinator';
 
 const DOMAIN = 0x0001;
 const TAG = 'OpenPencilPlayer';
@@ -32,6 +33,7 @@ export enum WindowControlKind {
 /** Main-thread handlers the page installs for engine-requested shell work. */
 export interface ShellActionSink {
   onOpenDocument: () => void;
+  onImportImageOrSvg: () => void;
   onExportDocument: () => void;
   /** The engine asked for the Save / Save As file picker (action 11). */
   onSaveDocument: () => void;
@@ -59,15 +61,9 @@ export interface ShellActionSink {
 /**
  * Owns the engine handle for one XComponent surface.
  *
- * FRAME PUMP: unlike Android (Choreographer) and iOS (CADisplayLink), the
- * HarmonyOS build pumps frames on the NATIVE side from `OH_NativeVSync`,
- * because the native layer already owns the surface through
- * `OH_NativeXComponent`. ArkTS therefore forwards lifecycle and input only
- * and never calls `frame()` on a timer. What still has to happen on the
- * ArkTS side is draining the engine's shell-action queue, keeping the system
- * keyboard in sync with the engine's IME focus, and following the engine's
- * system-glyph preference; `pump()` does exactly that, driven by input
- * dispatch plus a low-frequency safety-net timer.
+ * Foreground frames are coalesced onto ArkUI display sync. Once suspended,
+ * the frame pump is stopped and only the render-free generation coordinator
+ * may tick editor services under a finite HarmonyOS transient-task grant.
  */
 export class EngineHost implements PointerRouterHost, ImeConduitHost {
   private engine: number = 0;
@@ -79,11 +75,14 @@ export class EngineHost implements PointerRouterHost, ImeConduitHost {
   private nextWakeAtMs: number = 0;
   private surfaceId: string = '';
   private destroyed: boolean = false;
+  private suspended: boolean = false;
   private sink: ShellActionSink | null = null;
 
   private readonly inputState: ViewportInputState = new ViewportInputState(1);
   private readonly pointerRouter: PointerRouter = new PointerRouter(this, this.inputState);
   private readonly ime: ImeConduit = new ImeConduit(this);
+  private readonly backgroundGeneration: BackgroundGenerationCoordinator =
+    new BackgroundGenerationCoordinator();
 
   private bands: ViewportBands = new ViewportBands();
   private keyboardHeight: number = 0;
@@ -155,6 +154,7 @@ export class EngineHost implements PointerRouterHost, ImeConduitHost {
       hilog.error(DOMAIN, TAG, 'create failed: %{public}s', napi.lastError(0));
       return false;
     }
+    this.backgroundGeneration.bind(this.engine);
     hilog.info(
       DOMAIN,
       TAG,
@@ -210,6 +210,8 @@ export class EngineHost implements PointerRouterHost, ImeConduitHost {
     if (this.engine === 0) {
       return;
     }
+    this.backgroundGeneration.enterForeground();
+    this.suspended = false;
     if (!this.attachedOnce) {
       const status: number = napi.attachSurface(this.engine, this.surfaceId);
       if (status === OpStatus.OK) {
@@ -299,9 +301,12 @@ export class EngineHost implements PointerRouterHost, ImeConduitHost {
     if (this.engine === 0) {
       return;
     }
+    this.backgroundGeneration.prepareForBackground();
+    this.suspended = true;
     this.stopPump();
     this.stopFramePump();
     napi.suspend(this.engine);
+    this.backgroundGeneration.enterBackground();
   }
 
   resume(): void {
@@ -314,6 +319,8 @@ export class EngineHost implements PointerRouterHost, ImeConduitHost {
 
   destroy(): void {
     this.destroyed = true;
+    this.suspended = true;
+    this.backgroundGeneration.destroy();
     this.stopPump();
     this.stopFramePump();
     this.ime.release();
@@ -466,7 +473,7 @@ export class EngineHost implements PointerRouterHost, ImeConduitHost {
    * engine callback or a touch-dispatch stack.
    */
   pump(): void {
-    if (this.engine === 0 || !this.editorMode) {
+    if (this.engine === 0 || !this.editorMode || this.suspended) {
       return;
     }
     for (let i = 0; i < 8; i++) {
@@ -479,6 +486,11 @@ export class EngineHost implements PointerRouterHost, ImeConduitHost {
     ClipboardBridge.drainCopyText(this.engine);
     this.syncIme();
     this.syncSystemChromeAppearance();
+    this.backgroundGeneration.observeForegroundWork();
+  }
+
+  takeBackgroundGenerationPaused(): boolean {
+    return this.backgroundGeneration.takePausedNotice();
   }
 
   private dispatchShellAction(action: number): void {
@@ -512,6 +524,11 @@ export class EngineHost implements PointerRouterHost, ImeConduitHost {
       case OpShellAction.SAVE_DOCUMENT:
         if (sink !== null) {
           sink.onSaveDocument();
+        }
+        break;
+      case OpShellAction.IMPORT_IMAGE_OR_SVG:
+        if (sink !== null) {
+          sink.onImportImageOrSvg();
         }
         break;
       case OpShellAction.OPEN_ACCOUNT_CENTER:
@@ -667,6 +684,13 @@ export class EngineHost implements PointerRouterHost, ImeConduitHost {
       this.pump();
     }
     return status;
+  }
+
+  importImageOrSvg(bytes: ArrayBuffer, displayName: string): number {
+    if (this.engine === 0 || !this.editorMode) {
+      return OpStatus.CLOSING;
+    }
+    return napi.editorImportImageOrSvg(this.engine, bytes, displayName);
   }
 
   exportFileName(): string | null {

@@ -229,7 +229,7 @@ pub fn code_panel_hover(
     let on_code_tab = eligible
         && state.property_panel_visible()
         && matches!(
-            state.editor_ui.property_tab,
+            state.editor_ui.effective_property_tab(),
             op_editor_core::PropertyTab::Code
         );
     let right_edge = property_rect.origin.x + property_rect.size.x;

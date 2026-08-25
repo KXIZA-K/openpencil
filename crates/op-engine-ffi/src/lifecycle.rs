@@ -76,6 +76,8 @@ pub(crate) struct Session {
     /// streamed deltas land on the engine thread during `op_frame`.
     #[cfg(feature = "editor")]
     pub(crate) chat: crate::editor_chat::MobileChatHost,
+    #[cfg(feature = "editor")]
+    pub(crate) codegen: crate::editor_codegen::MobileCodegenHost,
     /// Background image-search enrichment for generated image slots. Same
     /// worker discipline as `chat`: jobs run on their own threads, results
     /// land on the engine thread during `op_frame`.
@@ -206,6 +208,8 @@ impl Session {
             model_discovery: Default::default(),
             #[cfg(feature = "editor")]
             chat: Default::default(),
+            #[cfg(feature = "editor")]
+            codegen: Default::default(),
             #[cfg(feature = "editor")]
             image_search: Default::default(),
         };
@@ -540,6 +544,13 @@ impl Session {
     /// Pump and present one GPU frame. `Ok(())` means painted (or the
     /// drawable was unavailable and a redraw is queued).
     pub(crate) fn frame_gpu(&mut self, now_ms: u64) -> FfiResult<()> {
+        // A platform surface callback can already be queued when the shell
+        // synchronously suspends. Reject it before advancing any editor
+        // runtime work: suspended generation is owned exclusively by the
+        // render-free `op_background_tick` path.
+        if self.suspended {
+            return Err(FfiError::new(OpStatus::Suspended, "engine is suspended"));
+        }
         self.now_ms = now_ms;
         #[cfg(feature = "editor")]
         if let Some(host) = self.editor.as_mut() {
@@ -553,6 +564,8 @@ impl Session {
         let model_discovery_wake = self.pump_editor_model_discovery(now_ms);
         #[cfg(feature = "editor")]
         let chat_wake = self.pump_editor_chat(now_ms);
+        #[cfg(feature = "editor")]
+        let codegen_wake = self.pump_editor_codegen(now_ms);
         #[cfg(feature = "editor")]
         let image_search_wake = self.pump_editor_image_search(now_ms);
         #[cfg(feature = "editor")]
@@ -594,7 +607,10 @@ impl Session {
                 crate::media::drain_remote_image_requests(self);
                 #[cfg(feature = "editor")]
                 if let Some(deadline) = earliest_wake(
-                    earliest_wake(earliest_wake(auth_wake, model_discovery_wake), chat_wake),
+                    earliest_wake(
+                        earliest_wake(auth_wake, model_discovery_wake),
+                        earliest_wake(chat_wake, codegen_wake),
+                    ),
                     earliest_wake(
                         earliest_wake(collab_wake, image_search_wake),
                         self.editor
@@ -646,6 +662,8 @@ impl Session {
         #[cfg(feature = "editor")]
         let chat_wake = self.pump_editor_chat(now_ms);
         #[cfg(feature = "editor")]
+        let codegen_wake = self.pump_editor_codegen(now_ms);
+        #[cfg(feature = "editor")]
         let image_search_wake = self.pump_editor_image_search(now_ms);
         #[cfg(feature = "editor")]
         let collab_wake = self.pump_editor_collab();
@@ -676,7 +694,10 @@ impl Session {
         #[cfg(feature = "editor")]
         {
             if let Some(deadline) = earliest_wake(
-                earliest_wake(earliest_wake(auth_wake, model_discovery_wake), chat_wake),
+                earliest_wake(
+                    earliest_wake(auth_wake, model_discovery_wake),
+                    earliest_wake(chat_wake, codegen_wake),
+                ),
                 earliest_wake(
                     earliest_wake(collab_wake, image_search_wake),
                     self.editor
@@ -709,15 +730,6 @@ impl Session {
 #[cfg(feature = "editor")]
 pub(crate) fn settings_persistence_active() -> bool {
     op_config_store::configured_user_root().is_some()
-}
-
-#[cfg(feature = "editor")]
-fn earliest_wake(left: Option<u64>, right: Option<u64>) -> Option<u64> {
-    match (left, right) {
-        (Some(left), Some(right)) => Some(left.min(right)),
-        (Some(value), None) | (None, Some(value)) => Some(value),
-        (None, None) => None,
-    }
 }
 
 /// Build the platform GPU surface from a borrowed handle.
@@ -759,6 +771,12 @@ fn build_surface(handle: *mut c_void) -> FfiResult<SurfaceSlot> {
 
 // ABI handle + call/destroy dispatch live in a sibling (pure code
 // motion for the 800-line cap); re-exports keep the import paths stable.
+#[cfg(feature = "editor")]
+#[path = "lifecycle_wake.rs"]
+mod lifecycle_wake;
+#[cfg(feature = "editor")]
+use lifecycle_wake::earliest_wake;
+
 #[path = "lifecycle_engine.rs"]
 mod lifecycle_engine;
 pub use lifecycle_engine::OpEngine;

@@ -496,6 +496,34 @@ pub extern "system" fn Java_tech_zseven_openpencil_OpNative_nativeEditorOpenDocu
     })
 }
 
+/// `OpNative.nativeEditorImportImageOrSvg` — return one bounded platform-picked
+/// raster image or SVG to the editor. The FFI performs the authoritative
+/// content validation and collaboration permission check on the owner thread.
+#[no_mangle]
+pub extern "system" fn Java_tech_zseven_openpencil_OpNative_nativeEditorImportImageOrSvg<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    engine: jlong,
+    data: JByteArray<'local>,
+    file_name: JString<'local>,
+) -> jint {
+    let Ok(data) = env.convert_byte_array(&data) else {
+        return OpStatus::InvalidArg as jint;
+    };
+    let Some(file_name) = jstring_bytes(&mut env, &file_name) else {
+        return OpStatus::InvalidArg as jint;
+    };
+    call_status(engine, move |e| unsafe {
+        op_engine_ffi::op_editor_import_image_or_svg(
+            e,
+            data.as_ptr(),
+            data.len(),
+            file_name.as_ptr(),
+            file_name.len(),
+        )
+    })
+}
+
 #[no_mangle]
 pub extern "system" fn Java_tech_zseven_openpencil_OpNative_nativeEditorPress<'local>(
     _env: JNIEnv<'local>,
@@ -640,14 +668,13 @@ pub extern "system" fn Java_tech_zseven_openpencil_OpNative_nativeEditorImePreed
     let Some(bytes) = jstring_bytes(&mut env, &text) else {
         return STATUS_CLOSING;
     };
+    let Ok(text) = std::str::from_utf8(&bytes) else {
+        return OpStatus::InvalidArg as jint;
+    };
+    let sel_start = crate::utf16_offset_to_utf8_byte(text, sel_start);
+    let sel_end = crate::utf16_offset_to_utf8_byte(text, sel_end);
     call_status(engine, move |e| unsafe {
-        op_engine_ffi::op_editor_ime_preedit(
-            e,
-            bytes.as_ptr(),
-            bytes.len(),
-            sel_start as usize,
-            sel_end as usize,
-        )
+        op_engine_ffi::op_editor_ime_preedit(e, bytes.as_ptr(), bytes.len(), sel_start, sel_end)
     })
 }
 

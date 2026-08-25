@@ -74,9 +74,18 @@ rustup target add "$target"
 # ---- 2. Cross-compilation environment ------------------------------------
 
 case "$target" in
-  aarch64-unknown-linux-ohos) clang_target="aarch64-linux-ohos" ;;
-  x86_64-unknown-linux-ohos) clang_target="x86_64-linux-ohos" ;;
-  armv7-unknown-linux-ohos) clang_target="arm-linux-ohos" ;;
+  aarch64-unknown-linux-ohos)
+    clang_target="aarch64-linux-ohos"
+    hap_abi="arm64-v8a"
+    ;;
+  x86_64-unknown-linux-ohos)
+    clang_target="x86_64-linux-ohos"
+    hap_abi="x86_64"
+    ;;
+  armv7-unknown-linux-ohos)
+    clang_target="arm-linux-ohos"
+    hap_abi="armeabi-v7a"
+    ;;
   *)
     echo "build-ohos.sh: unsupported target '$target'" >&2
     exit 1
@@ -160,11 +169,40 @@ cargo "${cargo_args[@]}" "$@"
 set +x
 
 artifact="target/$target/$profile/libopenpencil.so"
-if [[ -f "$artifact" ]]; then
-  echo
-  echo "built: $artifact"
-  echo "copy it into the ArkTS app's libs/<abi>/ directory (packaging/harmony)."
-else
+if [[ ! -s "$artifact" ]]; then
   echo "build-ohos.sh: expected $artifact but it is missing" >&2
   exit 1
 fi
+
+# NAPI names are registered from string literals rather than exported ELF
+# symbols. Refuse to replace the HAP payload unless the just-built module
+# contains the mobile import and render-free background entry points. This
+# catches an accidentally stale crate/build graph before it reaches hvigor.
+required_napi_exports=(editorImportImageOrSvg hasBackgroundWork backgroundTick)
+for export_name in "${required_napi_exports[@]}"; do
+  if ! LC_ALL=C grep -a -F -q "$export_name" "$artifact"; then
+    echo "build-ohos.sh: $artifact is missing NAPI export marker '$export_name'" >&2
+    exit 1
+  fi
+done
+
+# Install through a temporary file in the destination directory, then rename
+# it into place. A failed build, validation, or copy therefore leaves the
+# previously packaged library untouched, while the final rename is atomic on
+# the destination filesystem.
+install_dir="$repo_root/packaging/harmony/entry/libs/$hap_abi"
+install_path="$install_dir/libopenpencil.so"
+mkdir -p "$install_dir"
+install_tmp="$(mktemp "$install_dir/.libopenpencil.so.tmp.XXXXXX")"
+cleanup_install() {
+  rm -f "$install_tmp"
+}
+trap cleanup_install EXIT HUP INT TERM
+cp "$artifact" "$install_tmp"
+chmod 0755 "$install_tmp"
+mv -f "$install_tmp" "$install_path"
+trap - EXIT HUP INT TERM
+
+echo
+echo "built: $artifact"
+echo "installed atomically: $install_path"

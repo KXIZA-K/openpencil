@@ -83,14 +83,16 @@ op-i18n = { path = "../op-i18n" }
 # Shared desktop settings persistence (`settings.json` load / save /
 # fingerprint) — the mobile editor persists agent/provider settings into
 # the shell's private storage root through the exact desktop code path.
-# `default-features = false` keeps the chat/codegen/design closures out of
-# the mobile build; only the file-IO slice is linked.
+# `default-features = false` keeps the design closure out of the mobile build;
+# settings, chat, and codegen are enabled explicitly below.
 op-editor-host-core = { path = "../op-editor-host-core", default-features = false, features = [
   "settings-io",
   # The transport-free chat turn worker (`ChatSession` poll/fold) behind the
   # mobile chat pump. Pulls only op-ai + serde_json — none of the
   # codegen/design closures.
   "chat",
+  # Shared generation worker/results plus deterministic code/bundle artifacts.
+  "codegen",
 ], optional = true }
 # Transport-free chat shapes + the shared SSE payload parsers the mobile
 # chat pump streams through (`op_ai::chat_sse`), plus the shared tool-call
