@@ -22,3 +22,5 @@ Holds for every standalone portrait card board — XHS 小红书 3:4 (1080×1440
 3. `ORNAMENT DISCIPLINE: pick one numbering/ornament treatment and repeat it verbatim on every item.`
 
 4. `VERTICAL RHYTHM: content fills the card's full height — top margin ≥64px, footer lands inside the bottom margin, trailing void ≤15%; grow type scale or section gaps rather than leaving the lower half empty.`
+
+5. `TEXT-ONLY IMAGE GATE: when the user supplies text but does not explicitly request a photo, image, illustration, texture, or other raster artwork, create NO image node, image slot, imageSearchQuery, imagePrompt, stock-search background, or generated-image background. The fixed board itself is the card — use typography, colour fields, vector paths, iconFont, rules, and repeated shapes for visual energy instead of placing a white card on an unrelated photo.`

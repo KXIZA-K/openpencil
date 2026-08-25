@@ -2,6 +2,67 @@ use serde_json::json;
 
 use super::*;
 
+const TEXT_ONLY_XHS_PROMPT: &str =
+    "用这个文字做一张符合小红书封面的卡片：装了这么多 DSH 插件，到底怎么管？";
+
+#[test]
+fn text_only_xhs_card_rejects_a_model_invented_stock_image_slot() {
+    let nodes: Vec<PenNode> = serde_json::from_value(json!([{
+        "type": "frame", "id": "cover", "name": "Cover Card",
+        "width": 1080, "height": 1440, "layout": "none", "children": [
+            {"type": "image", "id": "background", "src": "", "width": 1080, "height": 1440,
+             "imageSearchQuery": "json syntax", "imagePrompt": "a photographed JSON reference sheet"},
+            {"type": "frame", "id": "content", "x": 16, "y": 16,
+             "width": 1048, "height": 480, "layout": "vertical", "children": [
+                {"type": "text", "id": "title", "content": "装了这么多 DSH 插件，到底怎么管？"}
+             ]}
+        ]
+    }]))
+    .expect("parse card");
+
+    let report = check_generated_nodes_for_prompt(&nodes, 1080.0, TEXT_ONLY_XHS_PROMPT);
+
+    assert!(report.has_fatal(), "unsolicited raster media must retry");
+    assert!(
+        report.failure_message().contains("unsolicited-card-image"),
+        "{report:?}"
+    );
+}
+
+#[test]
+fn xhs_card_accepts_raster_media_when_the_user_explicitly_requests_it() {
+    let nodes: Vec<PenNode> = serde_json::from_value(json!([{
+        "type": "image", "id": "background", "src": "", "width": 1080, "height": 1440,
+        "imageSearchQuery": "server rack", "imagePrompt": "editorial server rack photograph"
+    }]))
+    .expect("parse image");
+
+    let report = check_generated_nodes_for_prompt(
+        &nodes,
+        1080.0,
+        "做一张小红书封面，使用一张服务器机柜照片作为背景图",
+    );
+
+    assert!(
+        !report.failure_message().contains("unsolicited-card-image"),
+        "{report:?}"
+    );
+}
+
+#[test]
+fn explicit_no_image_wins_over_an_image_noun_in_the_request() {
+    let nodes: Vec<PenNode> = serde_json::from_value(json!([{
+        "type": "image", "id": "background", "src": "", "width": 1080, "height": 1440,
+        "imageSearchQuery": "json syntax"
+    }]))
+    .expect("parse image");
+
+    let report =
+        check_generated_nodes_for_prompt(&nodes, 1080.0, "做一张小红书纯文字卡片，不要图片或照片");
+
+    assert!(report.failure_message().contains("unsolicited-card-image"));
+}
+
 #[test]
 fn generated_nodes_reject_missing_progress_ring_without_auto_drawing() {
     let nodes: Vec<PenNode> = serde_json::from_value(json!([{

@@ -19,6 +19,8 @@
 use include_dir::{include_dir, Dir};
 
 pub mod budget;
+#[cfg(test)]
+mod card_corpus_tests;
 pub mod color;
 pub mod compose;
 #[cfg(test)]
@@ -48,7 +50,7 @@ pub use types::{
 /// guidance; screenshot-driven self-check must not turn into image curation.
 pub const IMAGE_SELF_CHECK_SCOPE: &str = r#"## Image self-check scope (authoritative)
 
-During automatic screenshot-driven self-check, assess image presentation and rendering integrity only: intended photographic slots render exactly one visible image with valid bounds, crop/fit, clipping, radius, and overlay order; deliberately authored icon or illustration tiles render as intended. Do not judge or replace a rendered image based on subject relevance, aesthetics, perceived quality, resolution, tone, stock-photo choice, search-query quality, generation quality, or whether another asset might look better. This restriction does not apply to initial image-query/image-prompt authoring or to an explicit user request to replace, retarget, or restyle an image."#;
+During automatic screenshot-driven self-check, assess image presentation and rendering integrity only: intended photographic slots render exactly one visible image with valid bounds, crop/fit, clipping, radius, and overlay order; deliberately authored icon or illustration tiles render as intended. A raster slot is intended only when the user request or domain explicitly calls for raster media; a model-invented image slot in a text-only social card is a structural intent violation, not image curation. Do not judge or replace an authorized rendered image based on subject relevance, aesthetics, perceived quality, resolution, tone, stock-photo choice, search-query quality, generation quality, or whether another asset might look better. This restriction does not apply to initial image-query/image-prompt authoring or to an explicit user request to replace, retarget, or restyle an image."#;
 
 /// Place the authoritative image-review scope after any task-specific prompt
 /// sections, moving an existing copy instead of duplicating it.

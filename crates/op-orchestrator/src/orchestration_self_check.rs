@@ -707,6 +707,10 @@ fn numeric_prop(node: &Value, key: &str) -> Option<f64> {
     })
 }
 
+#[path = "orchestration_self_check_card_image.rs"]
+mod card_image;
+pub(crate) use card_image::check_generated_nodes_for_prompt;
+
 #[cfg(test)]
 #[path = "orchestration_self_check_tests.rs"]
 mod tests;
