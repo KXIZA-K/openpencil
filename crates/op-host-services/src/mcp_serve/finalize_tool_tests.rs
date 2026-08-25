@@ -266,6 +266,11 @@ fn advisories_of(json: &str) -> Vec<serde_json::Value> {
     value["advisories"].as_array().cloned().unwrap_or_default()
 }
 
+fn complete_of(json: &str) -> bool {
+    let value: serde_json::Value = serde_json::from_str(json).expect("summary json");
+    value["complete"].as_bool().expect("complete is a boolean")
+}
+
 #[test]
 fn finalize_reports_structure_drift_as_an_advisory_not_a_repair() {
     let mut live = load_fixture(DRIFT_FIXTURE);
@@ -324,6 +329,10 @@ fn finalize_reports_structure_drift_as_an_advisory_not_a_repair() {
         1,
         "the sparse card must also void-advise: {json}"
     );
+    assert!(
+        !complete_of(&json),
+        "advisories must block completion: {json}"
+    );
     assert_eq!(
         voids[0]["nodeIds"].as_array().map(|ids| ids.len()),
         Some(1),
@@ -373,6 +382,7 @@ fn finalize_reports_no_advisory_for_an_isomorphic_family() {
         0,
         "an isomorphic FULL board must produce an empty advisory list: {json}"
     );
+    assert!(complete_of(&json), "a clean full board is complete: {json}");
 }
 
 // ── DS P2-b item C: board-trailing-void advisories ──────────────────────────
@@ -461,6 +471,10 @@ fn finalize_reports_a_trailing_void_advisory_for_a_sparse_card_board() {
         message.contains('%') && message.contains("add content or scale up type/spacing"),
         "the message names the void percentage and the fix direction: {json}"
     );
+    assert!(
+        !complete_of(&json),
+        "trailing void must block completion: {json}"
+    );
 }
 
 #[test]
@@ -481,6 +495,7 @@ fn finalize_reports_no_void_advisory_for_a_full_card_board() {
         voids.is_empty(),
         "a full board must produce no void advisory: {json}"
     );
+    assert!(complete_of(&json), "a full board is complete: {json}");
 }
 
 // ── DS P2-d item ②: card format-drift advisories ────────────────────────────

@@ -237,9 +237,9 @@ fn default_root_ids(state: &EditorState) -> Vec<String> {
 ///
 /// `advisories` (DS P2-a item ③) are the echo-only structure-drift findings,
 /// `void_advisories` (DS P2-b item C) the board-trailing-void ones and
-/// `format_drift` (DS P2-d item ②) the card format-drift ones: all
-/// informational, NOT part of the repair tally, and the document is never
-/// changed because of them.
+/// `format_drift` (DS P2-d item ②) the card format-drift ones. They are not
+/// edits and therefore never inflate the repair tally, but they keep
+/// `complete=false` until the caller fixes them and finalizes again.
 fn finalize_result_json(
     summary: &RepairSummary,
     roots: usize,
@@ -299,8 +299,12 @@ fn finalize_result_json(
             .iter()
             .map(|advisory| render(advisory.code, &advisory.node_ids, &advisory.message)),
     );
+    let complete = advisories_json.is_empty();
+    let blocking_advisory_count = advisories_json.len();
     serde_json::json!({
         "roots": roots,
+        "complete": complete,
+        "blockingAdvisoryCount": blocking_advisory_count,
         "checkedCategories": categories,
         "repairs": summary.total_repairs(),
         "repairRecords": records,
