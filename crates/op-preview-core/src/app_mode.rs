@@ -254,9 +254,11 @@ impl PreviewSession {
         // `solve_roots` failure leaves the visible scene matching the
         // new screen; only `root_frames` (the hit-test mapping) stays
         // stale — strictly better than nothing rebuilt.
-        // A screen switch invalidates any in-flight pointer anchor —
-        // its rects belong to the unmounted screen's scene.
-        self.gesture_mapping = None;
+        // A screen switch invalidates every in-flight pointer anchor —
+        // their rects belong to the unmounted screen's scene (per-pointer
+        // anchors since R4, so concurrent fingers cannot leak a stale
+        // mapping across the switch).
+        self.gesture_mappings.clear();
         app.page_idx = app.table.page_index(&app.current_path).unwrap_or(0);
         self.scene = op_pen_loader::pen_document_to_layout_scene_for_preview(
             &app.promoted_doc,

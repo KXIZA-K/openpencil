@@ -13,6 +13,11 @@ use op_editor_ui::widgets::press_flow::{
 };
 use op_editor_ui::Point2D;
 
+/// Pointer id the mouse-driven preview wrappers dispatch under (R4 keeps
+/// real ids available for pointer-event-capable callers through `_id`
+/// variants added alongside these seams).
+pub(in crate::widget_host) const LEGACY_WEB_PREVIEW_POINTER_ID: u32 = 1;
+
 use super::press_ctx::PressCtx;
 use super::WidgetHost;
 
@@ -260,16 +265,30 @@ impl WidgetHost {
         let Some(session) = self.preview.as_mut() else {
             return false;
         };
-        let handled = session.dispatch_pointer_phase_at(
+        let handled = session.dispatch_pointer_for_id_at(
+            LEGACY_WEB_PREVIEW_POINTER_ID,
+            jian_core::gesture::pointer::PointerKind::Mouse,
             doc_point.x,
             doc_point.y,
             PointerPhase::Down,
             self.now_ms,
         );
-        self.preview_press_active = true;
-        self.preview_last_doc = Some((doc_point.x, doc_point.y));
-        // Arm edge-swipe candidate after the runtime has the pointer Down
-        self.arm_edge_swipe_candidate(screen_x);
+        let first_finger = self.preview_pressed_pids.is_empty();
+        if !self
+            .preview_pressed_pids
+            .contains(&LEGACY_WEB_PREVIEW_POINTER_ID)
+        {
+            self.preview_pressed_pids
+                .push(LEGACY_WEB_PREVIEW_POINTER_ID);
+        }
+        self.preview_last_doc_by_pid
+            .insert(LEGACY_WEB_PREVIEW_POINTER_ID, (doc_point.x, doc_point.y));
+        // Arm edge-swipe candidate after the runtime has the pointer Down,
+        // and only for the FIRST finger — a second finger never arms.
+        if first_finger {
+            self.arm_edge_swipe_candidate(screen_x);
+            self.preview_edge_swipe_pid = Some(LEGACY_WEB_PREVIEW_POINTER_ID);
+        }
         if handled {
             self.mark_dirty();
         }
@@ -306,7 +325,12 @@ impl WidgetHost {
         };
         // Check edge-swipe BEFORE updating preview_last_doc, so cancel
         // dispatches at the gesture's last real position
-        if self.preview_press_active && self.maybe_fire_edge_swipe(screen_x) {
+        if self
+            .preview_pressed_pids
+            .contains(&LEGACY_WEB_PREVIEW_POINTER_ID)
+            && self.preview_edge_swipe_pid == Some(LEGACY_WEB_PREVIEW_POINTER_ID)
+            && self.maybe_fire_edge_swipe(screen_x)
+        {
             self.cancel_preview_gesture_for_edge_swipe();
             self.mark_dirty();
             return true;
@@ -316,16 +340,30 @@ impl WidgetHost {
         // down leaves its gesture machine believing a drag is in flight,
         // and every later Down/Up stops resolving as a tap — which reads
         // as "the nav works once, then goes dead".
-        let phase = if self.preview_press_active {
+        let phase = if self
+            .preview_pressed_pids
+            .contains(&LEGACY_WEB_PREVIEW_POINTER_ID)
+        {
             PointerPhase::Move
         } else {
             PointerPhase::Hover
         };
-        self.preview_last_doc = Some((doc_point.x, doc_point.y));
+        self.preview_last_doc_by_pid
+            .insert(LEGACY_WEB_PREVIEW_POINTER_ID, (doc_point.x, doc_point.y));
         if let Some(session) = self.preview.as_mut() {
-            let emitted =
-                session.dispatch_pointer_phase_at(doc_point.x, doc_point.y, phase, self.now_ms);
-            if emitted || self.preview_press_active {
+            let emitted = session.dispatch_pointer_for_id_at(
+                LEGACY_WEB_PREVIEW_POINTER_ID,
+                jian_core::gesture::pointer::PointerKind::Mouse,
+                doc_point.x,
+                doc_point.y,
+                phase,
+                self.now_ms,
+            );
+            if emitted
+                || self
+                    .preview_pressed_pids
+                    .contains(&LEGACY_WEB_PREVIEW_POINTER_ID)
+            {
                 self.mark_dirty();
             }
             true
@@ -344,7 +382,11 @@ impl WidgetHost {
         // (tap/swipe detection, toolbar activation).
         if self.preview_slideshow_active() {
             // Update the cursor to the final position before release analysis.
-            if let Some((x, y)) = self.preview_last_doc {
+            if let Some((x, y)) = self
+                .preview_last_doc_by_pid
+                .get(&LEGACY_WEB_PREVIEW_POINTER_ID)
+                .copied()
+            {
                 let _ = self.preview_slideshow_release_point(
                     x,
                     y,
@@ -355,28 +397,43 @@ impl WidgetHost {
             // Toolbar release handles button activation; board release handles
             // taps and swipes. Both consume the gesture if they were armed.
             let handled = self.slideshow_toolbar_release() || self.slideshow_board_release();
-            self.preview_last_doc = None;
+            self.preview_last_doc_by_pid
+                .remove(&LEGACY_WEB_PREVIEW_POINTER_ID);
             return handled;
         }
 
         // Mirrors the native host's `preview_dispatch_release`.
         self.preview_surface_capture = None;
         self.disarm_edge_swipe();
-        if !self.preview_press_active {
+        if !self
+            .preview_pressed_pids
+            .contains(&LEGACY_WEB_PREVIEW_POINTER_ID)
+        {
             // No Down in flight. Sending an unpaired Up wedges the
             // runtime's gesture state and it swallows the next Down —
             // which reads as "the nav only works once".
             return false;
         }
-        self.preview_press_active = false;
-        let Some((x, y)) = self.preview_last_doc.take() else {
+        self.preview_pressed_pids
+            .retain(|p| *p != LEGACY_WEB_PREVIEW_POINTER_ID);
+        let Some((x, y)) = self
+            .preview_last_doc_by_pid
+            .remove(&LEGACY_WEB_PREVIEW_POINTER_ID)
+        else {
             return false;
         };
         // Release AT the gesture's last scene point: the runtime resolves
         // a tap by where the pointer came up, so an Up at the origin never
         // completes the tap on the widget the Down landed on.
         if let Some(session) = self.preview.as_mut() {
-            session.dispatch_pointer_phase_at(x, y, PointerPhase::Up, self.now_ms);
+            session.dispatch_pointer_for_id_at(
+                LEGACY_WEB_PREVIEW_POINTER_ID,
+                jian_core::gesture::pointer::PointerKind::Mouse,
+                x,
+                y,
+                PointerPhase::Up,
+                self.now_ms,
+            );
         }
         self.mark_dirty();
         true

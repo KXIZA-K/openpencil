@@ -355,7 +355,7 @@ fn a_non_presenting_preview_still_routes_presses_to_the_runtime() {
     assert!(host.apply_press(point.x, point.y, VW, VH));
 
     assert!(
-        host.preview_press_active,
+        host.preview_any_pointer_held_for_test(),
         "the runtime owns the gesture outside a presentation"
     );
     assert!(host.slideshow_press_screen.is_none());
@@ -367,7 +367,10 @@ fn a_non_presenting_preview_still_routes_presses_to_the_runtime() {
         .is_none());
 
     assert!(host.apply_release_with_viewport(VW, VH));
-    assert!(!host.preview_press_active, "the runtime got its pointer up");
+    assert!(
+        !host.preview_any_pointer_held_for_test(),
+        "the runtime got its pointer up"
+    );
 
     // Chrome is untouched too: ordinary preview keeps its rails, so the
     // stage stays the editing canvas region and the StatusBar still answers.
@@ -775,9 +778,9 @@ fn preview_build_failure_still_releases_focus_ime_and_capture() {
     host.editor_state_mut().editor_ui.prompt_center.open = true;
     host.begin_canvas_touch_gesture(VW / 2.0, VH / 2.0, VW, VH);
     assert!(
-        host.enter_preview_with_builder((VW, VH), |_, _| Err(
+        !host.enter_preview_with_builder((VW, VH), |_, _| Err(
             crate::preview::PreviewEnterError::BuildRuntime("injected".into())
-        )) == false
+        ))
     );
     assert!(host.preview.is_none());
     assert!(host.editor_state().ui.property_focus.is_none());

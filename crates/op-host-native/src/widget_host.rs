@@ -535,10 +535,11 @@ pub struct WidgetHostNative {
     /// `settle_mode_transition` so the merge-back animation has
     /// something live to paint). `None` the rest of the time.
     pub(in crate::widget_host) preview_mode_transition: Option<crate::preview::ModeTransition>,
-    /// Live preview pointer-drag state: `true` between a canvas Down
-    /// and its Up, so cursor moves dispatch as drags (slider knob)
-    /// instead of hovers.
-    pub(in crate::widget_host) preview_press_active: bool,
+    /// Live preview pressed-pointer ids (R4 Canonical PreviewInput):
+    /// one entry per pointer between its canvas Down and Up, so
+    /// concurrent pointers dispatch as independent drags instead of
+    /// sharing one boolean. Desktop mouse panels use the legacy id 1.
+    pub(in crate::widget_host) preview_pressed_pids: Vec<u32>,
     /// Scoped factual timestamp (ms) of the pointer event currently
     /// being routed by a timestamped entry variant (`apply_press_at` /
     /// `apply_cursor_move_at` / `apply_release_with_viewport_at` /
@@ -550,9 +551,13 @@ pub struct WidgetHostNative {
     /// factual 100 ms pair delta. `None` means "no factual timestamp —
     /// fall back to `now_ms`", which is what every legacy entry does.
     pub(in crate::widget_host) preview_event_time_ms: Option<u64>,
-    /// Last preview pointer position in DOCUMENT space — the release
-    /// dispatches its Up here (the OS reports release without coords).
-    pub(in crate::widget_host) preview_last_doc: Option<(f32, f32)>,
+    /// Last preview pointer position in DOCUMENT space PER POINTER ID —
+    /// that pointer's release dispatches its Up here (the OS reports a
+    /// release without coords).
+    pub(in crate::widget_host) preview_last_doc_by_pid: std::collections::HashMap<u32, (f32, f32)>,
+    /// Which pressed pointer owns the armed edge-swipe candidate — a
+    /// second finger's drag can never fire someone else's pop (R4).
+    pub(in crate::widget_host) preview_edge_swipe_pid: Option<u32>,
     /// Screen-space point a presenting press landed on, held until the
     /// release decides whether the gesture was a click (advance the deck) or
     /// a drag (do nothing). `None` outside a slideshow press.

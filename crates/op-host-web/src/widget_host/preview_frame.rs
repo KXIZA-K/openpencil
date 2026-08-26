@@ -733,14 +733,15 @@ impl super::WidgetHost {
         self.preview_edge_swipe_start_x = None;
     }
 
-    /// Cancel the in-flight preview pointer gesture after an edge-swipe fires.
+    /// Cancel the in-flight preview pointer gesture after an edge-swipe
+    /// fires. Per-pointer (R4): every held id's arena timers settle and
+    /// its capture anchor releases.
     pub(in crate::widget_host) fn cancel_preview_gesture_for_edge_swipe(&mut self) {
-        use jian_core::gesture::pointer::PointerPhase;
-        if let Some((x, y)) = self.preview_last_doc {
+        let pids = std::mem::take(&mut self.preview_pressed_pids);
+        for pid in pids {
             if let Some(p) = self.preview.as_mut() {
-                p.dispatch_pointer_phase_at(x, y, PointerPhase::Cancel, self.now_ms);
+                p.cancel_pointer(pid, self.now_ms);
             }
         }
-        self.preview_press_active = false;
     }
 }

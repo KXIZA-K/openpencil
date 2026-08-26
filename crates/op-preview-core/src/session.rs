@@ -16,6 +16,7 @@
 //! `transition` read the live widget state for their overlay layers). None
 //! of the fields is part of the crate's public API.
 
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use jian_core::action::services::Router;
@@ -101,12 +102,14 @@ pub struct PreviewSession {
     /// classic single-page workbench preview. `pub(crate)`
     /// so `app_mode`'s `is_app_mode` can read it. See [`AppMode`].
     pub(crate) app: Option<AppMode>,
-    /// The (scene rect, runtime rect) pair the current pointer gesture
-    /// anchored on at `Down` — held `Move`s and the `Up` map through
-    /// it (pointer capture), so a drag that leaves the node's scene
-    /// bounds doesn't remap through a neighbour. `None` between
-    /// gestures or when the `Down` hit no mapped node.
-    pub(crate) gesture_mapping: Option<(Rect, Rect)>,
+    /// The (scene rect, runtime rect) pair each ACTIVE pointer gesture
+    /// anchored on at its `Down` — that pointer's held `Move`s and `Up`
+    /// map through it (per-pointer capture), so a drag that leaves the
+    /// node's scene bounds doesn't remap through a neighbour, and two
+    /// concurrent pointers keep independent anchors (R4 multi-pointer
+    /// PreviewInput). Keyed by pointer id; absent between gestures or
+    /// when the `Down` hit no mapped node.
+    pub(crate) gesture_mappings: HashMap<u32, (Rect, Rect)>,
     /// Track C-3: the in-flight screen-transition animation, set by
     /// `app_mode::reconcile` on every screen switch. `None` when idle
     /// (including the entire classic workbench-mode session, which never
@@ -375,7 +378,7 @@ impl PreviewSession {
             warnings,
             binding_sites,
             app,
-            gesture_mapping: None,
+            gesture_mappings: HashMap::new(),
             transition: None,
             last_now_ms: 0,
         })

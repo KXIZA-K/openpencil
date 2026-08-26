@@ -38,6 +38,11 @@ use op_editor_ui::layout_scene::SceneNode;
 use op_editor_ui::widgets::canvas_viewport_paint::tabs_active_index;
 use op_editor_ui::{Point2D, Rect};
 
+/// The synthetic pointer identity the legacy wrappers
+/// ([`Self::dispatch_pointer_phase`] / [`Self::dispatch_pointer_phase_at`])
+/// kept dispatching before R4 — desktop mouse panels keep using it.
+const LEGACY_POINTER_ID: u32 = 1;
+
 impl PreviewSession {
     /// Route a printable character into the focused widget. Returns
     /// `true` when the runtime consumed it (a focused editable widget
@@ -132,8 +137,35 @@ impl PreviewSession {
         phase: PointerPhase,
         t_ms: u64,
     ) -> bool {
-        use jian_core::geometry::point;
-        use jian_core::gesture::pointer::{MouseButtons, PointerEvent, PointerKind};
+        use jian_core::gesture::pointer::PointerKind;
+        self.dispatch_pointer_for_id_at(
+            LEGACY_POINTER_ID,
+            PointerKind::Mouse,
+            scene_x,
+            scene_y,
+            phase,
+            t_ms,
+        )
+    }
+
+    /// [`Self::dispatch_pointer_phase_at`] with an explicit POINTER
+    /// IDENTITY (R4 Canonical PreviewInput, multi-pointer step): `id`
+    /// keys the per-pointer capture anchor and reaches the Jian runtime
+    /// unchanged so two concurrent pointers hold independent streams —
+    /// which is what makes Scale/Rotate claims possible through the
+    /// product preview path at all. `kind` rides along untouched; hosts
+    /// that only speak mouse pass [`PointerKind::Mouse`] with id 1 via
+    /// the legacy wrappers.
+    pub fn dispatch_pointer_for_id_at(
+        &mut self,
+        pointer_id: u32,
+        kind: jian_core::gesture::pointer::PointerKind,
+        scene_x: f32,
+        scene_y: f32,
+        phase: PointerPhase,
+        t_ms: u64,
+    ) -> bool {
+        use jian_core::gesture::pointer::{MouseButtons, PointerEvent};
         // Sync the session/runtime clock from the event's own timestamp
         // BEFORE `transition_active` consults `last_now_ms` — that gate
         // is only as fresh as the last host clock push, and an explicit
@@ -145,25 +177,49 @@ impl PreviewSession {
         }
         // Track C-3: discard pointer input while a screen-transition
         // animation plays — see `transition_active`'s doc for why discard
-        // (not queue) is the right call here.
+        // (not queue) is the right call here. The per-pointer anchors are
+        // dropped with the transition's screen rebuild, so nothing stale
+        // can resume under it either way.
         if self.transition_active() {
             return false;
         }
-        let (rt_x, rt_y) = self.resolve_runtime_point(scene_x, scene_y, phase);
-        let mut ev = PointerEvent::simple_at(1, phase, point(rt_x, rt_y), t_ms);
-        ev.kind = PointerKind::Mouse;
+        let (rt_x, rt_y) = self.resolve_runtime_point(scene_x, scene_y, phase, pointer_id);
+        use jian_core::geometry::point;
+        let mut ev = PointerEvent::simple_at(pointer_id, phase, point(rt_x, rt_y), t_ms);
+        ev.kind = kind;
         if matches!(phase, PointerPhase::Hover) {
+            // Hover is definitionally unpressed regardless of kind.
             ev.buttons = MouseButtons::empty();
             ev.pressure = 0.0;
         }
         !self.runtime.dispatch_pointer(ev).is_empty()
     }
 
-    /// The scene→runtime point for one pointer phase, honoring the
-    /// gesture anchor: `Down` resolves fresh and stores the mapping,
-    /// pressed `Move` reuses it, `Up` reuses then clears it, `Hover`
-    /// (unpressed) always resolves fresh and never stores.
-    fn resolve_runtime_point(&mut self, x: f32, y: f32, phase: PointerPhase) -> (f32, f32) {
+    /// Cancel one pointer's live stream by id WITHOUT needing its last
+    /// coordinates (teardown / suspend barriers): resolves through the
+    /// same per-pointer pipeline as any phase, so that pointer's capture
+    /// anchor is released and ITS arena timers (LongPress / touch
+    /// ContextMenu) settle — a global single-id cancel would leave other
+    /// pointers' deadlines armed. Returns `true` when the runtime emitted
+    /// anything for it.
+    pub fn cancel_pointer(&mut self, pointer_id: u32, t_ms: u64) -> bool {
+        let kind = jian_core::gesture::pointer::PointerKind::Mouse;
+        self.dispatch_pointer_for_id_at(pointer_id, kind, 0.0, 0.0, PointerPhase::Cancel, t_ms)
+    }
+
+    /// The scene→runtime point for one pointer phase, honoring THAT
+    /// pointer's gesture anchor: `Down` resolves fresh and stores the
+    /// mapping under its id, pressed `Move` reuses it, `Up` reuses then
+    /// clears it, `Hover` (unpressed) always resolves fresh and never
+    /// stores. Pointers whose `Down` hit no mapped node resolve fresh
+    /// every event until an anchored `Down` replaces that state.
+    fn resolve_runtime_point(
+        &mut self,
+        x: f32,
+        y: f32,
+        phase: PointerPhase,
+        pointer_id: u32,
+    ) -> (f32, f32) {
         let anchored = |session: &Self, mapping: Option<(Rect, Rect)>| match mapping {
             Some(m) => session.scene_to_runtime_via(x, y, Some(m)),
             // No anchor (the Down hit no mapped node, or a stray Move
@@ -172,12 +228,20 @@ impl PreviewSession {
         };
         match phase {
             PointerPhase::Down => {
-                self.gesture_mapping = self.deepest_mapped_rects(x, y);
-                anchored(self, self.gesture_mapping)
+                let mapping = self.deepest_mapped_rects(x, y);
+                match mapping {
+                    Some(m) => {
+                        self.gesture_mappings.insert(pointer_id, m);
+                    }
+                    None => {
+                        self.gesture_mappings.remove(&pointer_id);
+                    }
+                }
+                anchored(self, self.gesture_mappings.get(&pointer_id).copied())
             }
-            PointerPhase::Move => anchored(self, self.gesture_mapping),
+            PointerPhase::Move => anchored(self, self.gesture_mappings.get(&pointer_id).copied()),
             PointerPhase::Up | PointerPhase::Cancel => {
-                let mapping = self.gesture_mapping.take();
+                let mapping = self.gesture_mappings.remove(&pointer_id);
                 anchored(self, mapping)
             }
             PointerPhase::Hover => self.scene_to_runtime(x, y),
@@ -402,8 +466,8 @@ impl PreviewSession {
         self.scene_to_runtime(x, y)
     }
 
-    /// Test-only: the phase-aware point resolution `dispatch_pointer_phase`
-    /// uses (exercises the gesture-anchored pointer-capture mapping).
+    /// Test-only: the phase-aware point resolution the legacy single-
+    /// pointer path uses (pid 1), exercising gesture-anchored capture.
     #[cfg(all(test, not(target_os = "windows")))]
     pub(crate) fn resolve_runtime_point_for_test(
         &mut self,
@@ -411,16 +475,25 @@ impl PreviewSession {
         y: f32,
         phase: PointerPhase,
     ) -> (f32, f32) {
-        self.resolve_runtime_point(x, y, phase)
+        self.resolve_runtime_point(x, y, phase, LEGACY_POINTER_ID)
     }
 
-    /// Test-only: install a gesture anchor directly, simulating a Down
-    /// on a node whose scene and runtime rects diverge (promotion hug
-    /// drift, engine drift) without depending on a fixture that
-    /// reproduces the divergence organically.
+    /// Test-only: ids that currently hold a capture anchor.
+    #[cfg(all(test, not(target_os = "windows")))]
+    pub(crate) fn anchored_pointer_ids_for_test(&self) -> Vec<u32> {
+        let mut ids: Vec<u32> = self.gesture_mappings.keys().copied().collect();
+        ids.sort_unstable();
+        ids
+    }
+
+    /// Test-only: install a gesture anchor for the LEGACY pointer id,
+    /// simulating a Down on a node whose scene and runtime rects diverge
+    /// (promotion hug drift, engine drift) without depending on a fixture
+    /// that reproduces the divergence organically.
     #[cfg(all(test, not(target_os = "windows")))]
     pub(crate) fn set_gesture_mapping_for_test(&mut self, scene: Rect, runtime: Rect) {
-        self.gesture_mapping = Some((scene, runtime));
+        self.gesture_mappings
+            .insert(LEGACY_POINTER_ID, (scene, runtime));
     }
 
     /// Test-only: ids the scene→runtime mapper can descend into for a

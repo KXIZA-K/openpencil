@@ -118,6 +118,8 @@ mod tests_device_frame;
 #[cfg(all(test, not(target_os = "windows")))]
 mod tests_geometry_parity;
 #[cfg(all(test, not(target_os = "windows")))]
+mod tests_multi_pointer;
+#[cfg(all(test, not(target_os = "windows")))]
 mod tests_swipe;
 #[cfg(all(test, not(target_os = "windows")))]
 mod tests_tabs;

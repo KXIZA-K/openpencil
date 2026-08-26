@@ -70,9 +70,10 @@ impl WidgetHost {
             preview_scroll_y: 0.0,
             preview_manual_pick: None,
             preview_surface_capture: None,
-            preview_press_active: false,
-            preview_last_doc: None,
+            preview_pressed_pids: Vec::new(),
+            preview_last_doc_by_pid: std::collections::HashMap::new(),
             preview_edge_swipe_start_x: None,
+            preview_edge_swipe_pid: None,
             preview_frame_viewport: None,
             #[cfg(feature = "canvaskit")]
             op_ck: None,

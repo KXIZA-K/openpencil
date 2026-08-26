@@ -608,19 +608,15 @@ impl WidgetHostNative {
             cancelled = true;
         }
 
-        if std::mem::take(&mut self.preview_press_active) {
-            if let Some((x, y)) = self.preview_last_doc {
-                let t_ms = self.preview_pointer_time_ms();
+        if !self.preview_pressed_pids.is_empty() {
+            let t_ms = self.preview_pointer_time_ms();
+            let pids = std::mem::take(&mut self.preview_pressed_pids);
+            for pid in pids {
                 if let Some(preview) = self.preview.as_mut() {
-                    preview.dispatch_pointer_phase_at(
-                        x,
-                        y,
-                        jian_core::gesture::pointer::PointerPhase::Cancel,
-                        t_ms,
-                    );
+                    preview.cancel_pointer(pid, t_ms);
                 }
             }
-            self.preview_last_doc = None;
+            self.preview_last_doc_by_pid.clear();
             self.preview_surface_capture = None;
             cancelled = true;
         }

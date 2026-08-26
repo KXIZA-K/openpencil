@@ -174,8 +174,8 @@ impl WidgetHostNative {
         self.preview_surface_capture = None;
         self.slideshow_cursor = None;
         self.slideshow_press_screen = None;
-        self.preview_press_active = false;
-        self.preview_last_doc = None;
+        self.preview_pressed_pids.clear();
+        self.preview_last_doc_by_pid.clear();
         self.mark_dirty();
     }
 
@@ -270,11 +270,11 @@ impl WidgetHostNative {
     fn finish_exit_teardown(&mut self) {
         self.preview = None;
         self.clear_device_preview_state();
-        self.preview_press_active = false;
+        self.preview_pressed_pids.clear();
+        self.preview_last_doc_by_pid.clear();
         self.preview_surface_capture = None;
         self.slideshow_cursor = None;
         self.slideshow_press_screen = None;
-        self.preview_last_doc = None;
         self.editor_state.editor_ui.exit_preview();
         self.preview_mode_transition = None;
     }

@@ -413,16 +413,20 @@ pub struct WidgetHost {
     /// Presentation surface captured at pointer-down, so a held drag
     /// keeps mapping through the surface it started on.
     preview_surface_capture: Option<op_preview_core::device_frame::PreviewSurface>,
-    /// Whether a preview pointer gesture is in flight. Guards the Up
-    /// dispatch: sending an unpaired Up leaves the runtime's gesture
+    /// Pressed preview pointer ids (R4 Canonical PreviewInput): one
+    /// entry per pointer between Down and Up, guarding the per-pointer Up
+    /// dispatch — sending an unpaired Up leaves the runtime's gesture
     /// state wedged and it swallows the NEXT Down.
-    preview_press_active: bool,
-    /// Last scene-space point sent to the runtime. The Up must be
-    /// dispatched HERE, not at the origin — the runtime resolves a tap by
-    /// where the release landed.
-    preview_last_doc: Option<(f32, f32)>,
+    preview_pressed_pids: Vec<u32>,
+    /// Last scene-space point sent to the runtime PER POINTER ID. The Up
+    /// must be dispatched HERE, not at the origin — the runtime resolves
+    /// a tap by where the release landed.
+    preview_last_doc_by_pid: std::collections::HashMap<u32, (f32, f32)>,
     /// Start screen-x for edge-swipe-to-pop candidate. `None` when not armed.
     preview_edge_swipe_start_x: Option<f32>,
+    /// Which pressed pointer owns the armed edge-swipe candidate — a
+    /// second finger's drag can never fire someone else's pop (R4).
+    preview_edge_swipe_pid: Option<u32>,
     /// Viewport the cached device frame was solved against, so paint can
     /// notice a resize and rebuild rather than scaling stale geometry.
     preview_frame_viewport: Option<(f32, f32)>,

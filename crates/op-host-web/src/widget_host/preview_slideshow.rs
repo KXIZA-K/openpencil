@@ -129,8 +129,8 @@ impl WidgetHost {
 
         self.preview_surface_capture = None;
         self.preview_edge_swipe_start_x = None;
-        self.preview_press_active = false;
-        self.preview_last_doc = None;
+        self.preview_pressed_pids.clear();
+        self.preview_last_doc_by_pid.clear();
         self.slideshow_cursor = None;
         self.slideshow_press_screen = None;
         self.drag = None;
@@ -673,8 +673,8 @@ mod tests {
         host.editor_state.editor_ui.file_drop_active = true;
         host.editor_state.editor_ui.file_drop_target = Some(NodeId::new("drop-target"));
         host.editor_state.editor_ui.ime_preedit = Some(Default::default());
-        host.preview_press_active = true;
-        host.preview_last_doc = Some((11.0, 12.0));
+        host.preview_pressed_pids.push(1);
+        host.preview_last_doc_by_pid.insert(1, (11.0, 12.0));
         host.preview_edge_swipe_start_x = Some(8.0);
         host.slideshow_cursor = Some((3.0, 4.0));
         host.slideshow_press_screen = Some((5.0, 6.0));
@@ -694,8 +694,8 @@ mod tests {
         assert!(!host.editor_state.editor_ui.file_drop_active);
         assert!(host.editor_state.editor_ui.file_drop_target.is_none());
         assert!(host.editor_state.editor_ui.ime_preedit.is_none());
-        assert!(!host.preview_press_active);
-        assert!(host.preview_last_doc.is_none());
+        assert!(host.preview_pressed_pids.is_empty());
+        assert!(host.preview_last_doc_by_pid.is_empty());
         assert!(host.preview_edge_swipe_start_x.is_none());
         assert!(host.slideshow_cursor.is_none());
         assert!(host.slideshow_press_screen.is_none());
