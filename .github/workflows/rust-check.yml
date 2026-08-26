@@ -5,6 +5,7 @@ on:
     paths:
       - 'Cargo.toml'
       - 'Cargo.lock'
+      - '.cargo/**'
       - 'crates/**'
       # Parity with the push leg: a PR touching a vendored dep (the
       # casement winit fork, jian, agent) must not ride green with
@@ -17,6 +18,7 @@ on:
       - 'tools/check-web-server-headless.sh'
       - 'tools/check-widget-boundary.sh'
       - 'tools/check-text-measure.sh'
+      - 'tools/check-rustls-client-policy.sh'
       - '.github/workflows/rust-release.yml'
       - '.github/workflows/rust-check.yml'
   push:
@@ -24,6 +26,7 @@ on:
     paths:
       - 'Cargo.toml'
       - 'Cargo.lock'
+      - '.cargo/**'
       - 'crates/**'
       - 'vendor/**'
       - 'deny.toml'
@@ -33,6 +36,7 @@ on:
       - 'tools/check-web-server-headless.sh'
       - 'tools/check-widget-boundary.sh'
       - 'tools/check-text-measure.sh'
+      - 'tools/check-rustls-client-policy.sh'
       - '.github/workflows/rust-release.yml'
       - '.github/workflows/rust-check.yml'
 
@@ -75,6 +79,7 @@ jobs:
             libwayland-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
             libegl1-mesa-dev libgles2-mesa-dev libgbm-dev mesa-utils
             libfreetype-dev libfontconfig1-dev fonts-noto-cjk
+            pkg-config libssl-dev
           )
           for attempt in 1 2 3 4; do
             if sudo env DEBIAN_FRONTEND=noninteractive \
@@ -90,6 +95,7 @@ jobs:
             sleep $((attempt * 20))
           done
       - run: cargo fmt --all -- --check
+      - run: tools/check-rustls-client-policy.sh
       - run: cargo build --workspace
       # GitHub-hosted runners are headless with no reliable Mesa software
       # EGL, so STEP1A_REQUIRE_GPU is left unset: the op-host-native GPU

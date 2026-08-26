@@ -228,6 +228,13 @@ impl AbortFlag {
     pub fn is_set(&self) -> bool {
         self.0.load(Ordering::SeqCst)
     }
+
+    /// Clone the underlying cancellation signal for adapters whose public
+    /// API accepts `Arc<AtomicBool>` (for example `ChatProvider`). The clone
+    /// observes and updates the same run-scoped flag as [`Self::set`].
+    pub fn shared_atomic(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.0)
+    }
 }
 
 /// Run-scoped budget for the `geometry_echo` in-loop self-correction step

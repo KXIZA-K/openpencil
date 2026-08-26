@@ -8,7 +8,14 @@
 //! It also keeps the TS `buildPrompt` GUIDELINES / TASK framing so
 //! the wire prompt matches the TS server byte-for-byte.
 
-use op_ai::chat_provider::{ChatDelta, EffortLevel, StopReason, ThinkingMode};
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
+use std::time::Duration;
+
+use op_ai::chat_provider::{ChatDelta, CliName, EffortLevel, StopReason, ThinkingMode};
+
+use crate::cli_probe_support::{bounded_cli_output, BoundedProbe};
 
 /// TS `DEFAULT_CODEX_TIMEOUT_MS` — the reference client caps a turn
 /// at 15 minutes then SIGTERM. Lives here rather than in
@@ -121,6 +128,53 @@ pub fn codex_child_env() -> Vec<(String, String)> {
         .collect()
 }
 
+const CODEX_EXEC_HELP_TIMEOUT: Duration = Duration::from_secs(2);
+static CODEX_EPHEMERAL_SUPPORT: OnceLock<Mutex<HashMap<PathBuf, bool>>> = OnceLock::new();
+
+/// Add the non-persisting exec flag only when the installed Codex advertises
+/// it. The repository has no minimum Codex version; `--ephemeral` arrived in
+/// 0.99.0, so an unconditional flag would break otherwise-supported installs.
+pub(crate) fn append_codex_ephemeral_arg(binary: &Path, args: &mut Vec<String>) {
+    if args.first().is_some_and(|arg| arg == "exec")
+        && codex_exec_supports_ephemeral(binary)
+        && !args.iter().any(|arg| arg == "--ephemeral")
+    {
+        args.insert(1, "--ephemeral".into());
+    }
+}
+
+fn codex_exec_supports_ephemeral(binary: &Path) -> bool {
+    let cache = CODEX_EPHEMERAL_SUPPORT.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some(supported) = cache
+        .lock()
+        .ok()
+        .and_then(|cache| cache.get(binary).copied())
+    {
+        return supported;
+    }
+    let supported = match bounded_cli_output(
+        CliName::Codex,
+        binary,
+        &["exec", "--help"],
+        CODEX_EXEC_HELP_TIMEOUT,
+    ) {
+        BoundedProbe::Completed(output) if output.status.success() => {
+            help_advertises_ephemeral(&output.stdout) || help_advertises_ephemeral(&output.stderr)
+        }
+        BoundedProbe::Completed(_) | BoundedProbe::TimedOut { .. } | BoundedProbe::Failed => false,
+    };
+    if let Ok(mut cache) = cache.lock() {
+        cache.insert(binary.to_path_buf(), supported);
+    }
+    supported
+}
+
+fn help_advertises_ephemeral(output: &[u8]) -> bool {
+    String::from_utf8_lossy(output)
+        .split_ascii_whitespace()
+        .any(|token| token == "--ephemeral")
+}
+
 /// TS `codex-client.ts::buildPrompt` framing: an empty system prompt
 /// passes the task through; otherwise the system prompt rides a
 /// GUIDELINES block ahead of the TASK block.
@@ -158,9 +212,16 @@ pub fn parse_codex_line(line: &str) -> Option<ChatDelta> {
     let val: serde_json::Value = serde_json::from_str(trimmed).ok()?;
     let ty = val.get("type").and_then(|v| v.as_str()).unwrap_or("");
     match ty {
-        // TS: error events surface `message`, with a fixed fallback.
-        "error" => {
-            let msg = val
+        // `codex exec --json` exposes both unrecoverable stream errors and
+        // failed turns as terminal events. The former carries `message` at
+        // the top level; the latter nests the same shape under `error`.
+        "error" | "turn.failed" => {
+            let error = if ty == "turn.failed" {
+                val.get("error").unwrap_or(&val)
+            } else {
+                &val
+            };
+            let msg = error
                 .get("message")
                 .and_then(|v| v.as_str())
                 .filter(|s| !s.is_empty())
@@ -195,6 +256,19 @@ pub fn parse_codex_line(line: &str) -> Option<ChatDelta> {
             text.map(|t| ChatDelta::TextDelta(t.to_string()))
         }
     }
+}
+
+/// Whether a parsed Codex JSONL line is an unrecoverable terminal error.
+/// `item.completed` entries whose item type is `error` are deliberately not
+/// terminal: Codex documents those as non-fatal diagnostics.
+pub fn is_codex_terminal_error(line: &str) -> bool {
+    let Ok(val) = serde_json::from_str::<serde_json::Value>(line.trim()) else {
+        return false;
+    };
+    matches!(
+        val.get("type").and_then(|value| value.as_str()),
+        Some("error" | "turn.failed")
+    )
 }
 
 /// Extract a human-readable error from Codex stderr (TS
@@ -412,6 +486,25 @@ env_key = not_quoted
             Some(ChatDelta::TextDelta("xyz".into()))
         );
         assert_eq!(parse_codex_line(r#"{"type":"whatever"}"#), None);
+    }
+
+    #[test]
+    fn codex_line_parser_treats_failed_turns_and_stream_errors_as_terminal() {
+        let failed = r#"{"type":"turn.failed","error":{"message":"usage limit reached"}}"#;
+        assert_eq!(
+            parse_codex_line(failed),
+            Some(ChatDelta::Error("usage limit reached".into()))
+        );
+        assert!(is_codex_terminal_error(failed));
+
+        let stream_error = r#"{"type":"error","message":"stream disconnected"}"#;
+        assert!(is_codex_terminal_error(stream_error));
+        assert!(!is_codex_terminal_error(
+            r#"{"type":"item.completed","item":{"type":"error","message":"lagged"}}"#
+        ));
+        assert!(!is_codex_terminal_error(
+            r#"{"type":"turn.completed","usage":{}}"#
+        ));
     }
 
     #[test]

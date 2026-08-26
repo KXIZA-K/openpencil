@@ -78,16 +78,17 @@ impl CliName {
     }
     /// Which backend transport this CLI uses. Mirrors the table in
     /// [[project_agent_runtime]] memory:
-    /// Claude/Copilot/Antigravity/Grok Build/DeepSeek Harness = subprocess IPC;
-    /// Codex/OpenCode = HTTP server.
+    /// Claude/Copilot/Codex/Antigravity/Grok Build/DeepSeek Harness =
+    /// subprocess IPC; OpenCode = HTTP server.
     pub fn backend(self) -> ChatProviderKind {
         match self {
             CliName::ClaudeCode
             | CliName::Copilot
+            | CliName::Codex
             | CliName::Antigravity
             | CliName::GrokBuild
             | CliName::Dsh => ChatProviderKind::Subprocess(self),
-            CliName::Codex | CliName::OpenCode => ChatProviderKind::HttpServer(self),
+            CliName::OpenCode => ChatProviderKind::HttpServer(self),
         }
     }
 }
@@ -596,8 +597,9 @@ mod tests {
     #[test]
     fn cli_name_backend_table_matches_architecture_memo() {
         // project_agent_runtime memory:
-        //  Subprocess IPC = Claude Code / Copilot / Antigravity / Grok Build / DeepSeek Harness
-        //  HTTP server   = Codex / OpenCode
+        //  Subprocess IPC = Claude Code / Copilot / Codex / Antigravity /
+        //                   Grok Build / DeepSeek Harness
+        //  HTTP server   = OpenCode
         assert!(matches!(
             CliName::ClaudeCode.backend(),
             ChatProviderKind::Subprocess(_)
@@ -622,7 +624,7 @@ mod tests {
         ));
         assert!(matches!(
             CliName::Codex.backend(),
-            ChatProviderKind::HttpServer(_)
+            ChatProviderKind::Subprocess(_)
         ));
         assert!(matches!(
             CliName::OpenCode.backend(),
@@ -644,8 +646,8 @@ mod tests {
     fn provider_config_new_seeds_binary_for_cli_kinds() {
         let cfg = ChatProviderConfig::new(ChatProviderKind::Subprocess(CliName::ClaudeCode));
         assert_eq!(cfg.binary, "claude");
-        let cfg2 = ChatProviderConfig::new(ChatProviderKind::HttpServer(CliName::Codex));
-        assert_eq!(cfg2.binary, "codex");
+        let cfg2 = ChatProviderConfig::new(ChatProviderKind::HttpServer(CliName::OpenCode));
+        assert_eq!(cfg2.binary, "opencode");
         // BuiltIn / Acp leave binary empty — built-in needs no
         // spawn target; Acp's binary is user-supplied per-instance.
         let cfg3 = ChatProviderConfig::new(ChatProviderKind::BuiltIn);

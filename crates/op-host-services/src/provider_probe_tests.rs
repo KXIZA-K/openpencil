@@ -108,19 +108,6 @@ fn connected_probe_outcome_rejects_empty_model_list() {
 }
 
 #[test]
-fn copilot_auth_status_parser_picks_id3() {
-    assert!(
-        parse_copilot_auth_status(r#"{"jsonrpc":"2.0","id":2,"result":{"models":[]}}"#).is_none()
-    );
-    let auth = parse_copilot_auth_status(
-        r#"{"jsonrpc":"2.0","id":3,"result":{"login":"octocat","authType":"oauth"}}"#,
-    )
-    .expect("id:3 parses");
-    assert_eq!(auth.login.as_deref(), Some("octocat"));
-    assert_eq!(auth.auth_type.as_deref(), Some("oauth"));
-}
-
-#[test]
 fn copilot_connection_info_mirrors_ts_branches() {
     let full = CopilotAuth {
         login: Some("octocat".into()),
@@ -326,7 +313,7 @@ fn cli_version_reports_stderr_from_a_nonzero_exit() {
         "printf 'env: node: No such file or directory\\n' >&2\nexit 127\n",
     );
 
-    let failure = cli_version_retry(&exe, std::time::Duration::from_secs(5))
+    let failure = cli_version_retry(&exe, std::time::Duration::from_secs(10))
         .expect_err("a 127 exit is not a usable version");
     let CliVersionFailure::Exited { status, tail } = &failure else {
         panic!("expected a non-zero exit, got {failure:?}");
@@ -338,6 +325,28 @@ fn cli_version_reports_stderr_from_a_nonzero_exit() {
     );
     assert!(cli_version_failure_message("Codex", &failure).contains("node"));
 
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[cfg(unix)]
+#[test]
+fn cli_version_does_not_wait_for_a_descendant_holding_its_pipes() {
+    // The wrapper has already delivered a valid version and exited, but its
+    // background helper inherits stdout/stderr. A blocking reader join would
+    // turn this quick responsiveness gate into a 30-second wait.
+    let (dir, exe) = fake_cli(
+        "forking-cli",
+        "printf 'codex-cli 1.2.3\\n'\nsleep 30 &\nexit 0\n",
+    );
+    let started = std::time::Instant::now();
+    let version = cli_version_retry(&exe, std::time::Duration::from_secs(10));
+    let elapsed = started.elapsed();
+
+    assert_eq!(version, Ok("codex-cli 1.2.3".to_string()));
+    assert!(
+        elapsed < std::time::Duration::from_secs(15),
+        "the exited wrapper, not its descendant's pipe EOF, must finish the gate; took {elapsed:?}"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 

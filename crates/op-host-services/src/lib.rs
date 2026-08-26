@@ -40,6 +40,7 @@ pub mod chat_spawn;
 pub mod chat_subprocess;
 mod chat_subprocess_dsh;
 mod chat_subprocess_exit;
+mod chat_subprocess_lifecycle;
 mod chat_subprocess_parse;
 pub mod chat_subprocess_quirks;
 mod chat_subprocess_safety;
@@ -52,6 +53,7 @@ pub mod cli_provider_probe;
 mod cli_resolver_windows;
 pub(crate) mod collab_avatar_proxy;
 pub mod collab_blocking;
+mod copilot_sdk_probe;
 #[cfg(test)]
 mod design_agent_reflow_tests;
 #[cfg(test)]

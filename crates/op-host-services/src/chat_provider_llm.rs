@@ -15,7 +15,7 @@
 //! orchestrator wants.
 //!
 //! Each `LlmClient::call` spawns one `std::thread` that drains
-//! `provider.send(req)` (a *blocking* iterator) into a futures mpsc
+//! `provider.send_cancellable(req, abort)` (a *blocking* iterator) into a futures mpsc
 //! channel; the returned `BoxStream` is the receive half. This is the
 //! same async↔sync bridge `BlockingRecvIter` uses in the opposite
 //! direction in `chat_runtime.rs`.
@@ -129,12 +129,16 @@ impl LlmClient for ChatProviderLlmClient {
             model: self.model.clone(),
         };
 
-        // `provider.send` returns a *blocking* iterator. Drain it on a
-        // dedicated thread; the LLM call's `BoxStream` is the receive
-        // half of the futures mpsc channel.
+        // `provider.send_cancellable` returns a *blocking* iterator. Drain it
+        // on a dedicated thread; the LLM call's `BoxStream` is the receive
+        // half of the futures mpsc channel. Sharing the orchestrator's abort
+        // bit is important for silent CLI transports: Stop must be observable
+        // even when there is no next delta on which to notice a dropped
+        // receiver.
         let provider = self.provider.clone();
+        let cancel = req.abort.shared_atomic();
         thread::spawn(move || {
-            for delta in provider.send(chat_req) {
+            for delta in provider.send_cancellable(chat_req, cancel) {
                 let chunk = match delta {
                     ChatDelta::TextDelta(s) => Some(Ok(LlmChunk::Text(s))),
                     ChatDelta::Thinking(s) => Some(Ok(LlmChunk::Thinking(s))),
@@ -173,13 +177,64 @@ impl LlmClient for ChatProviderLlmClient {
 mod tests {
     use super::*;
     use op_orchestrator::AbortFlag;
-    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{mpsc as std_mpsc, Mutex};
     use std::time::Duration;
 
     /// Captures the `ChatRequest` the adapter builds so the thinking
     /// policy is assertable without a real provider.
     struct CapturingProvider {
         seen: Arc<Mutex<Vec<ChatRequest>>>,
+    }
+
+    struct SilentCancellableProvider {
+        started_tx: std_mpsc::Sender<()>,
+        canceled_tx: std_mpsc::Sender<()>,
+    }
+
+    impl ChatProvider for SilentCancellableProvider {
+        fn provider_label(&self) -> &str {
+            "silent-cancellable"
+        }
+
+        fn send(&self, _request: ChatRequest) -> Box<dyn Iterator<Item = ChatDelta> + Send> {
+            panic!("orchestrator adapter must use send_cancellable")
+        }
+
+        fn supports_cancellable_send(&self) -> bool {
+            true
+        }
+
+        fn send_cancellable(
+            &self,
+            _request: ChatRequest,
+            cancel: Arc<AtomicBool>,
+        ) -> Box<dyn Iterator<Item = ChatDelta> + Send> {
+            let _ = self.started_tx.send(());
+            Box::new(SilentCancelIter {
+                cancel,
+                canceled_tx: Some(self.canceled_tx.clone()),
+            })
+        }
+    }
+
+    struct SilentCancelIter {
+        cancel: Arc<AtomicBool>,
+        canceled_tx: Option<std_mpsc::Sender<()>>,
+    }
+
+    impl Iterator for SilentCancelIter {
+        type Item = ChatDelta;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            while !self.cancel.load(Ordering::Acquire) {
+                thread::sleep(Duration::from_millis(1));
+            }
+            if let Some(tx) = self.canceled_tx.take() {
+                let _ = tx.send(());
+            }
+            None
+        }
     }
 
     impl ChatProvider for CapturingProvider {
@@ -239,6 +294,42 @@ mod tests {
             acp_marker.model, None,
             "ACP capability identity must not become a transport model"
         );
+    }
+
+    #[test]
+    fn abort_flag_cancels_a_silent_provider_transport() {
+        let (started_tx, started_rx) = std_mpsc::channel();
+        let (canceled_tx, canceled_rx) = std_mpsc::channel();
+        let client = ChatProviderLlmClient::new(Arc::new(SilentCancellableProvider {
+            started_tx,
+            canceled_tx,
+        }));
+        let abort = AbortFlag::new();
+        let req = CallRequest {
+            system_prompt: "sys".into(),
+            user_prompt: "user".into(),
+            model: None,
+            provider: None,
+            timeout: Duration::from_secs(5),
+            abort: abort.clone(),
+            no_text_timeout: None,
+            first_text_timeout: None,
+        };
+
+        let stream = client.call(req);
+        started_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("silent provider should start");
+
+        abort.set();
+
+        canceled_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("orchestrator Stop must reach a silent provider transport");
+        crate::chat_runtime::block_on_anywhere(async {
+            use futures::StreamExt;
+            let _: Vec<_> = stream.collect().await;
+        });
     }
 
     // ── Provider-shape agnosticism ───────────────────────────────────────

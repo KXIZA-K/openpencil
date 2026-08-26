@@ -63,12 +63,18 @@ fn parse_line_codex_turn_completed() {
 
 #[test]
 fn for_cli_constructs_codex_exec_provider() {
-    // TS codex-client.ts argv: exec --json --skip-git-repo-check
-    // --sandbox read-only … - (prompt via stdin).
+    // The base shape stays stable whether this test host has a new, old, or
+    // missing Codex binary. Fake-CLI tests below cover both gate outcomes.
     let provider = SubprocessProvider::for_cli(CliName::Codex).expect("codex wired");
+    let args_without_ephemeral: Vec<_> = provider
+        .args
+        .iter()
+        .filter(|arg| arg.as_str() != "--ephemeral")
+        .map(String::as_str)
+        .collect();
     assert_eq!(
-        provider.args,
-        vec![
+        args_without_ephemeral,
+        [
             "exec",
             "--json",
             "--skip-git-repo-check",
@@ -78,6 +84,66 @@ fn for_cli_constructs_codex_exec_provider() {
     );
     assert_eq!(provider.prompt_mode, PromptMode::Stdin);
     assert_eq!(provider.tail_args, vec!["-"]);
+}
+
+#[cfg(unix)]
+struct CodexHelpStub {
+    dir: std::path::PathBuf,
+    binary: std::path::PathBuf,
+}
+
+#[cfg(unix)]
+impl CodexHelpStub {
+    fn new(help_line: &str) -> Self {
+        use std::os::unix::fs::PermissionsExt;
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        static SEQ: AtomicU64 = AtomicU64::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "openpencil-codex-help-{}-{}",
+            std::process::id(),
+            SEQ.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&dir).expect("create Codex help stub dir");
+        let binary = dir.join("codex");
+        let script = format!(
+            "#!/bin/sh\n\
+             if [ \"$1\" != 'exec' ] || [ \"$2\" != '--help' ]; then exit 64; fi\n\
+             printf '%s\\n' '{}'\n",
+            help_line
+        );
+        std::fs::write(&binary, script).expect("write Codex help stub");
+        std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755))
+            .expect("make Codex help stub executable");
+        Self { dir, binary }
+    }
+}
+
+#[cfg(unix)]
+impl Drop for CodexHelpStub {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.dir);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn codex_ephemeral_flag_is_capability_gated_and_cached() {
+    let supported = CodexHelpStub::new("      --ephemeral  Do not persist session files");
+    let mut args = vec!["exec".into(), "--json".into()];
+    quirks::append_codex_ephemeral_arg(&supported.binary, &mut args);
+    assert_eq!(args, ["exec", "--ephemeral", "--json"]);
+
+    // Removing the stand-in proves the second lookup uses the path cache.
+    std::fs::remove_file(&supported.binary).expect("remove supported stub");
+    let mut cached = vec!["exec".into(), "--json".into()];
+    quirks::append_codex_ephemeral_arg(&supported.binary, &mut cached);
+    assert_eq!(cached, ["exec", "--ephemeral", "--json"]);
+
+    let unsupported = CodexHelpStub::new("Usage: codex exec [OPTIONS]");
+    let mut old_args = vec!["exec".into(), "--json".into()];
+    quirks::append_codex_ephemeral_arg(&unsupported.binary, &mut old_args);
+    assert_eq!(old_args, ["exec", "--json"]);
 }
 
 #[test]
@@ -154,6 +220,103 @@ fn for_cli_dsh_constructs_the_one_shot_headless_bridge() {
         ..ChatRequest::default()
     });
     assert_eq!(turn, vec!["--profile", "headless"]);
+}
+
+#[test]
+fn dsh_chat_routes_through_the_fail_closed_environment() {
+    let mut actual = child_env_for_cli(Some(CliName::Dsh));
+    let mut expected = safety::child_env(Some(CliName::Dsh)).expect("DSH guarded env");
+    actual.sort();
+    expected.sort();
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn subprocess_providers_advertise_cooperative_cancellation() {
+    let provider = SubprocessProvider::for_cli(CliName::Codex).expect("codex provider");
+    assert!(provider.supports_cancellable_send());
+}
+
+#[cfg(unix)]
+#[test]
+fn terminal_reap_obeys_its_deadline() {
+    crate::chat_runtime::block_on_anywhere(async {
+        let pid_file = std::env::temp_dir().join(format!(
+            "openpencil-terminal-descendant-{}.pid",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&pid_file);
+        let args = vec![
+            "-c".to_string(),
+            "sleep 30 & echo $! > \"$1\"; wait".to_string(),
+            "openpencil-test".to_string(),
+            pid_file.to_string_lossy().into_owned(),
+        ];
+        let mut child =
+            LineStreamChild::spawn_command(build_command("/bin/sh", &args)).expect("spawn sleeper");
+        for _ in 0..100 {
+            if pid_file.is_file() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        let descendant: i32 = std::fs::read_to_string(&pid_file)
+            .expect("descendant pid file")
+            .trim()
+            .parse()
+            .expect("descendant pid");
+        let (tx, _rx) = mpsc::channel(1);
+        let started = std::time::Instant::now();
+        let status = wait_for_terminal_exit(
+            &mut child,
+            tokio::time::Instant::now() + Duration::from_millis(25),
+            &tx,
+        )
+        .await;
+        assert!(
+            status.is_some(),
+            "deadline must force-kill and reap the child"
+        );
+        assert!(started.elapsed() < Duration::from_secs(1));
+        for _ in 0..100 {
+            // SAFETY: signal 0 is a read-only existence probe for the exact
+            // positive pid written by this test's own child.
+            if unsafe { libc::kill(descendant, 0) } != 0 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        assert_ne!(
+            unsafe { libc::kill(descendant, 0) },
+            0,
+            "terminal reap must not leave a descendant alive"
+        );
+        let _ = std::fs::remove_file(pid_file);
+    });
+}
+
+#[cfg(unix)]
+#[test]
+fn terminal_reap_obeys_receiver_cancellation() {
+    crate::chat_runtime::block_on_anywhere(async {
+        let args = vec!["-c".to_string(), "sleep 30".to_string()];
+        let mut child =
+            LineStreamChild::spawn_command(build_command("/bin/sh", &args)).expect("spawn sleeper");
+        let (tx, rx) = mpsc::channel(1);
+        drop(rx);
+        let started = std::time::Instant::now();
+        let status = wait_for_terminal_exit(
+            &mut child,
+            tokio::time::Instant::now() + Duration::from_secs(30),
+            &tx,
+        )
+        .await;
+        assert!(
+            status.is_some(),
+            "cancellation must force-kill and reap the child"
+        );
+        assert!(started.elapsed() < Duration::from_secs(1));
+    });
 }
 
 #[test]

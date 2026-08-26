@@ -223,6 +223,7 @@ pub fn builtin_http_client() -> Result<reqwest::Client, crate::provider_dial::Pr
 /// and timeout posture as the default provider client.
 pub fn builtin_http_client_builder() -> reqwest::ClientBuilder {
     reqwest::Client::builder()
+        .use_rustls_tls()
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(BUILTIN_HTTP_CONNECT_TIMEOUT)
         .read_timeout(BUILTIN_HTTP_READ_IDLE_TIMEOUT)

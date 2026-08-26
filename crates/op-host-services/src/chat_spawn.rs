@@ -14,6 +14,12 @@ use std::time::Duration;
 
 use tokio::process::Command;
 
+#[path = "chat_spawn_command.rs"]
+mod command;
+pub(crate) use command::build_blocking_command;
+#[cfg(windows)]
+use command::is_powershell_script;
+
 /// Hard budget for the login-shell environment probe. The probe runs an
 /// INTERACTIVE shell, so it executes the user's full rc — which is
 /// allowed to block forever (a prompt framework waiting on the network, a
@@ -134,12 +140,17 @@ fn capture_env_dump(program: &str, args: &[&str], timeout: Duration) -> EnvDump 
         // it into the void: only stdout is parsed, and an undrained
         // pipe would let a chatty rc deadlock this probe.
         .stderr(Stdio::piped());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
     let Ok(mut child) = command.spawn() else {
         return EnvDump::Failed;
     };
+    let process_tree = op_process_io::ProcessTree::from_child(&child).ok();
     let (Some(stdout), Some(stderr)) = (child.stdout.take(), child.stderr.take()) else {
-        let _ = child.kill();
-        let _ = child.wait();
+        let _ = op_process_io::terminate_process_tree(&mut child, Duration::ZERO);
         return EnvDump::Failed;
     };
     let stdout_reader = crate::cli_probe_support::PipeCapture::spawn(stdout);
@@ -148,8 +159,14 @@ fn capture_env_dump(program: &str, args: &[&str], timeout: Duration) -> EnvDump 
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
-                let out = stdout_reader.finish();
-                drop(stderr_reader);
+                if let Some(tree) = process_tree {
+                    let _ = tree.kill_after_leader_exit();
+                }
+                let (out, _stderr) = crate::cli_probe_support::finish_pipe_captures(
+                    stdout_reader,
+                    stderr_reader,
+                    deadline,
+                );
                 if !status.success() {
                     return EnvDump::Failed;
                 }
@@ -159,11 +176,18 @@ fn capture_env_dump(program: &str, args: &[&str], timeout: Duration) -> EnvDump 
                 };
             }
             Ok(None) if Instant::now() < deadline => {
-                std::thread::sleep(Duration::from_millis(25));
+                std::thread::sleep(
+                    Duration::from_millis(25)
+                        .min(deadline.saturating_duration_since(Instant::now())),
+                );
             }
             Ok(None) | Err(_) => {
-                let _ = child.kill();
-                let _ = child.wait();
+                let _ = op_process_io::terminate_process_tree(&mut child, Duration::ZERO);
+                let _ = crate::cli_probe_support::finish_pipe_captures(
+                    stdout_reader,
+                    stderr_reader,
+                    deadline,
+                );
                 return EnvDump::TimedOut;
             }
         }
@@ -441,11 +465,12 @@ fn well_known_install_paths(name: &str) -> Vec<PathBuf> {
 ///   PATH execvp lookup. We forward straight to `Command::new`.
 /// - **Windows**: Win32 `CreateProcessW` does **not** honor PATHEXT,
 ///   so a bare `claude` only spawns when an exact `claude` (no
-///   extension) is on PATH. npm / bun / Volta / scoop / winget all
-///   ship Node-based CLIs as `claude.cmd` / `claude.bat` / `claude.ps1`
-///   shims. To make those work we route through `cmd /c <binary>`
-///   when the binary doesn't already look like a fully-resolved path
-///   ending in `.exe`. The binary names we ship from `for_cli` are
+///   extension) is on PATH. npm / bun / Volta / scoop / winget ship
+///   Node-based CLIs as `.cmd` / `.bat` shims; Rust's Windows process
+///   launcher handles fully-resolved batch paths. PowerShell scripts are
+///   different, so a resolved `.ps1` is routed through non-interactive
+///   `powershell.exe -File`. Bare names still go through `cmd /c` for
+///   PATHEXT lookup. The binary names we ship from `for_cli` are
 ///   hardcoded constants (no user-controlled metacharacters) so this
 ///   is safe from shell injection. Users passing a custom binary via
 ///   `with_binary` are responsible for not embedding shell payload.
@@ -472,13 +497,22 @@ pub fn build_command(binary: &str, args: &[String]) -> Command {
             .and_then(|e| e.to_str())
             .map(|e| e.eq_ignore_ascii_case("exe"))
             .unwrap_or(false);
-        if has_path_sep || looks_like_exe {
+        if is_powershell_script(binary) {
+            let mut cmd = Command::new("powershell.exe");
+            cmd.arg("-NoProfile")
+                .arg("-NonInteractive")
+                .arg("-File")
+                .arg(binary)
+                .args(args);
+            cmd.creation_flags(CREATE_NO_WINDOW);
+            cmd
+        } else if has_path_sep || looks_like_exe {
             let mut cmd = Command::new(binary);
             cmd.args(args);
             cmd.creation_flags(CREATE_NO_WINDOW);
             cmd
         } else {
-            // Route through `cmd /c` so PATHEXT (.cmd / .bat / .ps1)
+            // Route through `cmd /c` so PATHEXT (.exe / .cmd / .bat)
             // expansion kicks in. /c runs the command and exits.
             let mut cmd = Command::new("cmd");
             cmd.arg("/c").arg(binary).args(args);
@@ -709,68 +743,5 @@ mod login_shell_tests {
 }
 
 #[cfg(all(test, not(windows)))]
-mod env_dump_tests {
-    use super::*;
-
-    /// Deliberately short: these assert on the deadline firing, not on
-    /// any real shell finishing.
-    const TIMEOUT: Duration = Duration::from_millis(400);
-
-    #[test]
-    fn capture_reads_stdout_and_tolerates_stderr_noise() {
-        let script = "printf 'A=1\\nB=2\\n'; printf '_encode: command not found\\n' >&2";
-        let EnvDump::Completed(text) = capture_env_dump("/bin/sh", &["-c", script], TIMEOUT) else {
-            panic!("a script that exits inside the budget must complete");
-        };
-        let map = parse_env_dump(&text);
-        assert_eq!(map.get("A").map(String::as_str), Some("1"));
-        assert_eq!(map.get("B").map(String::as_str), Some("2"));
-    }
-
-    #[test]
-    fn capture_times_out_instead_of_hanging_on_a_blocking_rc() {
-        let started = std::time::Instant::now();
-        let dump = capture_env_dump("/bin/sh", &["-c", "sleep 30"], TIMEOUT);
-        assert!(
-            matches!(dump, EnvDump::TimedOut),
-            "a shell still running at the deadline must be killed, not awaited"
-        );
-        assert!(
-            started.elapsed() < Duration::from_secs(5),
-            "the deadline, not the child, decides when the probe returns"
-        );
-    }
-
-    #[test]
-    fn capture_reports_failure_for_nonzero_exit_and_missing_program() {
-        assert!(matches!(
-            capture_env_dump("/bin/sh", &["-c", "printf 'A=1\\n'; exit 3"], TIMEOUT),
-            EnvDump::Failed
-        ));
-        assert!(matches!(
-            capture_env_dump(
-                "/nonexistent/shell-that-is-not-installed",
-                &["-ilc"],
-                TIMEOUT
-            ),
-            EnvDump::Failed
-        ));
-    }
-
-    #[test]
-    fn a_dump_with_no_entries_falls_back_to_the_unrepaired_env() {
-        // The fallback contract behind `login_shell_env`: an empty parse
-        // must read as "no login-shell env", so `effective_path_env`
-        // keeps the current process PATH instead of clearing it.
-        let EnvDump::Completed(text) =
-            capture_env_dump("/bin/sh", &["-c", "printf 'no entries here\\n'"], TIMEOUT)
-        else {
-            panic!("the script exits inside the budget");
-        };
-        assert!(parse_env_dump(&text).is_empty());
-        assert_eq!(
-            effective_path_env().is_empty(),
-            std::env::var("PATH").unwrap_or_default().is_empty()
-        );
-    }
-}
+#[path = "chat_spawn_env_dump_tests.rs"]
+mod env_dump_tests;

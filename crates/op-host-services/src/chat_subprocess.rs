@@ -1,70 +1,19 @@
-//! Subprocess CLI bridge — spawns an external CLI binary
-//! (Claude Code / Codex / Antigravity / Grok Build) and bridges its stdio into the
-//! shell-core `ChatProvider` shape.
+//! Single-shot subprocess bridge for Claude Code (fallback), Codex,
+//! Antigravity, Grok Build, and DeepSeek Harness. OpenCode uses its HTTP
+//! transport; Copilot uses its SDK transport.
 //!
-//! Per-CLI wire protocol (single-shot mode; multi-turn context rides
-//! the history digest — see below):
+//! Codex runs `codex exec [--ephemeral] --json ... -` with an allowlisted
+//! environment and the prompt on stdin. Antigravity and Grok use isolated, fail-closed turns;
+//! DSH runs `dsh --profile headless <prompt>` with its narrow child
+//! environment. Their exact argv and parsers live in the corresponding
+//! `chat_subprocess_*` siblings.
 //!
-//! - **Claude Code (`claude`)** — invoked as
-//!   `claude --print --verbose --output-format stream-json -- <prompt>`.
-//!   Prompt is a positional argv after `--`. Stdin closes immediately.
-//!   Stdout is line-delimited JSON parsed by the generic envelope
-//!   parser ([`parse_line`]). The routed chat path uses the SDK
-//!   adapter (`chat_claude.rs`); this template is the fallback.
-//! - **Codex (`codex`)** — `codex exec --json --skip-git-repo-check
-//!   --sandbox read-only [--model <id>] [--config
-//!   model_reasoning_effort=<level>] -` with the prompt piped via
-//!   stdin (TS parity: `codex-client.ts` uses the `-` stdin prompt on
-//!   all platforms to dodge Windows shell-escaping + argv length
-//!   limits). Child env is allowlist-filtered
-//!   ([`chat_subprocess_quirks::codex_child_env`]); stderr is captured
-//!   for the TS error extraction (`extractCodexCliError`).
-//!   Divergence from TS (documented): TS buffers the whole turn and
-//!   reads `--output-last-message`; Rust streams `item.completed`
-//!   agent messages live — same final text, no temp file.
-//! - **GitHub Copilot** — no subprocess template. The routed path is
-//!   the official SDK (`chat_copilot.rs`); the old `gh-copilot
-//!   suggest` fallback was stale (the `gh` extension was retired in
-//!   favor of the standalone `copilot` CLI) so `for_cli` now refuses
-//!   instead of shipping a dead argv.
-//! - **OpenCode** — served by the HTTP-server transport
-//!   (`chat_http_server.rs`), not a stdio subprocess.
-//! - **Antigravity (`agy`)** — isolated-cwd `--sandbox` print mode plus a
-//!   private per-turn HOME containing a strict, no-write/no-command/no-web
-//!   policy and only this editor process's loopback OpenPencil MCP entry.
-//!   The OS keyring remains available for authentication. Its verified
-//!   one-shot API only accepts `-p <prompt>`, so the prompt remains visible in
-//!   argv while that child is alive.
-//! - **Grok Build (`grok`)** — private `--prompt-file`, fail-closed
-//!   `dontAsk` permissions in both argv and a private per-turn
-//!   `CLAUDE_CONFIG_DIR` compatibility policy, strict sandbox, read-only
-//!   built-ins, and an explicit `MCPTool(openpencil__*)` pre-approval. Other
-//!   MCP servers merged into the user's global config are not pre-approved and
-//!   are silently denied; the prompt guard independently forbids them.
-//!   Its NDJSON `text`, `thought`, `end`, and `error` events parse through
-//!   [`crate::chat_grok_stream::parse_grok_stream_line`].
-//! - **DeepSeek Harness (`dsh`)** — one-shot subprocess
-//!   (`dsh --profile headless "<prompt>"`): the whole stdout is the
-//!   answer (passed through verbatim), stderr is retained as
-//!   diagnostics, and the turn rides the crate's widest wall clock.
-//!   The Dsh-specific argv / parser / timeout live in
-//!   [`crate::chat_subprocess_dsh`] (this file sits at the 800-line cap).
-//!
-//! Codex parse-misses are skipped silently (TS parity — TS
-//! drops unparsed lines); generic custom binaries degrade unparsed
-//! lines to raw `TextDelta` so plain-stdout CLIs still show output.
-//! On stdout EOF the bridge reaps the child + interprets exit status —
-//! non-zero exit surfaces as `Error + Done { Aborted }` (codex BLOCK
-//! 4 / 5), with Codex stderr routed through the TS error extractor.
-//! Codex turns also carry the TS 15-minute wall clock
-//! (`<CLI> request timed out after 900s.`). On receiver drop the
-//! bridge `child.start_kill()` so the user can navigate away without
-//! leaking processes.
-//!
-//! Binary lookup falls back through PATH then per-platform default
-//! install paths (npm / yarn / bun globals) — see
-//! `chat_spawn::find_binary`.
+//! Multi-turn context rides an in-band history digest. Codex parse misses are
+//! skipped; custom binaries fall back to plain text. Every child has stderr
+//! drained, exit status interpreted, and its full process tree terminated on
+//! cancellation or deadline. Binary discovery lives in [`chat_spawn`].
 
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -77,6 +26,7 @@ use tokio::sync::mpsc;
 
 use crate::chat_runtime::{prompt_with_system_prompt, shared_runtime, BlockingRecvIter};
 use crate::chat_spawn::{build_command, find_binary};
+use crate::chat_subprocess_lifecycle::{child_env_for_cli, wait_for_terminal_exit};
 use crate::chat_subprocess_quirks as quirks;
 use crate::chat_subprocess_quirks::codex_reasoning_effort;
 use crate::chat_subprocess_safety as safety;
@@ -158,7 +108,7 @@ impl SubprocessProvider {
         // model rides the SDK adapter (`chat_claude.rs`), so
         // its subprocess template carries no flag here.
         type Template = (Vec<String>, PromptMode, Option<&'static str>, Vec<String>);
-        let (args, prompt_mode, model_flag, tail_args): Template = match cli {
+        let (mut args, prompt_mode, model_flag, tail_args): Template = match cli {
             CliName::ClaudeCode => (
                 vec![
                     "--print".into(),
@@ -170,7 +120,8 @@ impl SubprocessProvider {
                 None,
                 Vec::new(),
             ),
-            // TS `codex-client.ts` argv: `exec --json
+            // TS `codex-client.ts` argv plus capability-gated non-persistence:
+            // `exec [--ephemeral] --json
             // --skip-git-repo-check --sandbox read-only [--model]
             // [--config model_reasoning_effort=…] -` with the prompt
             // piped via stdin (the `-` marker). `--output-last-message`
@@ -218,6 +169,9 @@ impl SubprocessProvider {
             CliName::Copilot | CliName::OpenCode => return None,
         };
         let binary = find_binary(cli.default_binary());
+        if cli == CliName::Codex {
+            quirks::append_codex_ephemeral_arg(std::path::Path::new(&binary), &mut args);
+        }
         Some(Self {
             binary,
             args,
@@ -309,7 +263,29 @@ impl ChatProvider for SubprocessProvider {
         &self.label
     }
 
+    fn supports_cancellable_send(&self) -> bool {
+        true
+    }
+
     fn send(&self, request: ChatRequest) -> Box<dyn Iterator<Item = ChatDelta> + Send> {
+        self.send_inner(request, None)
+    }
+
+    fn send_cancellable(
+        &self,
+        request: ChatRequest,
+        cancel: Arc<AtomicBool>,
+    ) -> Box<dyn Iterator<Item = ChatDelta> + Send> {
+        self.send_inner(request, Some(cancel))
+    }
+}
+
+impl SubprocessProvider {
+    fn send_inner(
+        &self,
+        request: ChatRequest,
+        cancel: Option<Arc<AtomicBool>>,
+    ) -> Box<dyn Iterator<Item = ChatDelta> + Send> {
         let binary = self.binary.clone();
         let cli = self.cli;
         // Build the effective prompt. Claude `--print` does not
@@ -434,13 +410,7 @@ impl ChatProvider for SubprocessProvider {
         // Per-CLI child env: Codex uses the TS allowlist so
         // unrelated secrets never reach the CLI; Claude Code + custom
         // binaries keep the scrub-the-dangerous-vars policy.
-        let mut env_pairs = match cli {
-            Some(CliName::Codex) => quirks::codex_child_env(),
-            Some(CliName::Antigravity | CliName::GrokBuild) => {
-                safety::child_env(cli).unwrap_or_default()
-            }
-            _ => crate::chat_spawn::scrubbed_child_env(),
-        };
+        let mut env_pairs = child_env_for_cli(cli);
         safety::append_isolated_env(&mut env_pairs, isolation.as_ref());
         let turn_timeout = match cli {
             Some(CliName::Codex) => Some(quirks::CODEX_TURN_TIMEOUT),
@@ -455,6 +425,8 @@ impl ChatProvider for SubprocessProvider {
             // Keep staged attachment temp files alive for the turn.
             let _guard = guard;
             let _isolation = isolation;
+            let deadline = tokio::time::Instant::now()
+                + turn_timeout.unwrap_or(Duration::from_secs(60 * 60 * 24 * 365));
             let mut cmd = build_command(&binary, &args);
             if let Some(turn) = &_isolation {
                 cmd.current_dir(turn.cwd());
@@ -505,43 +477,49 @@ impl ChatProvider for SubprocessProvider {
                 })
             });
 
-            match prompt_mode {
-                PromptMode::Stdin => {
-                    // Feed the user message + close stdin so the CLI
-                    // sees EOF and starts responding. Stdin write
-                    // errors surface as a chat error.
-                    if let Err(e) = child.feed(prompt.as_bytes()).await {
-                        let _ = tx.send(ChatDelta::Error(format!("stdin write: {e}"))).await;
-                        let _ = tx
-                            .send(ChatDelta::Done {
-                                stop_reason: StopReason::Aborted,
-                            })
-                            .await;
-                        let _ = child.start_kill();
-                        let _ = child.wait().await;
-                        return;
+            // Bound both a backpressured prompt write and EOF delivery by the
+            // same receiver/deadline contract as stdout. Dropping this future
+            // releases its child borrow before tree-aware cleanup below.
+            let stdin_result = {
+                let prepare_stdin = async {
+                    if prompt_mode == PromptMode::Stdin {
+                        child.feed(prompt.as_bytes()).await?;
                     }
+                    let _ = child.close_stdin().await;
+                    Ok::<(), std::io::Error>(())
+                };
+                tokio::pin!(prepare_stdin);
+                tokio::select! {
+                    biased;
+                    _ = tx.closed() => None,
+                    _ = tokio::time::sleep_until(deadline), if turn_timeout.is_some() => {
+                        let secs = turn_timeout.map(|d| d.as_secs()).unwrap_or_default();
+                        let _ = tx.send(ChatDelta::Error(format!(
+                            "{label} request timed out after {secs}s."
+                        ))).await;
+                        let _ = tx.send(ChatDelta::Done {
+                            stop_reason: StopReason::Aborted,
+                        }).await;
+                        None
+                    }
+                    result = &mut prepare_stdin => Some(result),
                 }
-                PromptMode::PositionalArg => {
-                    // No stdin write — prompt is in argv. Close stdin
-                    // immediately so the CLI doesn't sit waiting on it
-                    // (Claude Code's `--print` mode exits if stdin
-                    // stays open with no input).
-                }
-                PromptMode::FlagArg(_) => {
-                    // Prompt is carried in argv; closing stdin prevents a
-                    // one-shot CLI from falling back into interactive mode.
-                }
-                PromptMode::BareArg => {
-                    // Prompt rides as the final argv element (dsh's only
-                    // verified one-shot interface); closing stdin keeps a
-                    // one-shot CLI from falling back into interactive mode.
-                }
-                PromptMode::PromptFile(_) => {
-                    // Prompt lives in the private isolated workspace.
-                }
+            };
+            if let Some(Err(error)) = &stdin_result {
+                let _ = tx
+                    .send(ChatDelta::Error(format!("stdin write: {error}")))
+                    .await;
+                let _ = tx
+                    .send(ChatDelta::Done {
+                        stop_reason: StopReason::Aborted,
+                    })
+                    .await;
             }
-            let _ = child.close_stdin().await; // EOF; ignore close error
+            if !matches!(stdin_result, Some(Ok(()))) {
+                let _ = child.start_kill();
+                let _ = tokio::time::timeout(safety::EXIT_GRACE, child.wait()).await;
+                return;
+            }
 
             let mut lines = match child.take_lines() {
                 Some(lines) => lines,
@@ -556,8 +534,6 @@ impl ChatProvider for SubprocessProvider {
                 }
             };
 
-            let deadline = tokio::time::Instant::now()
-                + turn_timeout.unwrap_or(Duration::from_secs(60 * 60 * 24 * 365));
             let mut emitted_done = false;
             let mut terminal_error = false;
             let mut emitted_text = false;
@@ -604,6 +580,8 @@ impl ChatProvider for SubprocessProvider {
                     result = lines.next_line() => match result {
                         Ok(Some(line)) => {
                             stdout_tail.push_line(&line);
+                            let codex_terminal_error = cli == Some(CliName::Codex)
+                                && quirks::is_codex_terminal_error(&line);
                             if let Some(message) = safety::friendly_stdout_error(cli, &line) {
                                 // Same rule as the exit path: a verdict
                                 // never travels without the child's own
@@ -680,6 +658,16 @@ impl ChatProvider for SubprocessProvider {
                                 let _ = child.start_kill();
                                 break;
                             }
+                            if codex_terminal_error {
+                                let _ = tx
+                                    .send(ChatDelta::Done {
+                                        stop_reason: StopReason::Aborted,
+                                    })
+                                    .await;
+                                emitted_done = true;
+                                terminal_error = true;
+                                break;
+                            }
                             if is_done {
                                 // CLI signaled turn end — stop reading
                                 // even if stdout stays open (codex
@@ -714,11 +702,9 @@ impl ChatProvider for SubprocessProvider {
             // process actually exits. Bound that final reap as well,
             // otherwise a well-formed `Done` could bypass the turn
             // wall clock and leave the chat blocked indefinitely.
-            let status = if safety::is_guarded_cli(cli) {
-                child.kill_graceful(safety::EXIT_GRACE).await.ok()
-            } else {
-                child.wait().await.ok()
-            };
+            let terminal_deadline =
+                deadline.min(tokio::time::Instant::now() + safety::EXIT_GRACE);
+            let status = wait_for_terminal_exit(&mut child, terminal_deadline, &tx).await;
             // Let the stderr drain finish before anyone reads its tail.
             // The child exiting ends BOTH pipes at once, so the drain
             // task is routinely still mid-flight here — under load it
@@ -784,7 +770,10 @@ impl ChatProvider for SubprocessProvider {
                 }
             }
         });
-        Box::new(BlockingRecvIter::new(rx))
+        match cancel {
+            Some(cancel) => Box::new(BlockingRecvIter::cooperative(rx, cancel)),
+            None => Box::new(BlockingRecvIter::new(rx)),
+        }
     }
 }
 

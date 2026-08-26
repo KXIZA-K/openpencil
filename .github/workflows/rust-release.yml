@@ -269,7 +269,8 @@ jobs:
             libxkbcommon-dev libxkbcommon-x11-dev \
             libwayland-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
             libegl1-mesa-dev libgles2-mesa-dev libgbm-dev \
-            libfreetype-dev libfontconfig1-dev
+            libfreetype-dev libfontconfig1-dev \
+            pkg-config libssl-dev
           )
           for attempt in 1 2 3 4; do
             if sudo apt-get "${apt_options[@]}" update && \

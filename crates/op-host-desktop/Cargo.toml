@@ -13,6 +13,15 @@ description = "OpenPencil desktop host — winit + skia-safe binary that drives 
 name = "openpencil-desktop"
 path = "src/main.rs"
 
+# Clean stdio peer for the local ACP process-boundary E2E. Cargo builds
+# examples during an ordinary `cargo test`, but does not wrap their `main`
+# functions in libtest, so stdout contains ACP ndJSON and nothing else.
+[[example]]
+name = "op-acp-test-agent"
+path = "examples/op-acp-test-agent.rs"
+test = true
+harness = false
+
 [features]
 default = []
 mcp-debug-tools = ["op-mcp/debug-tools"]
@@ -240,12 +249,9 @@ dirs = "5"
 # relative path so the BuiltIn ChatProvider in `src/chat_runtime.rs`
 # can drive a real LLM turn. The submodule keeps CI self-contained.
 #
-# Compiled with NO default features today — the `anthropic` feature
-# would drag in reqwest's TLS stack (rustls / icu / idna) which needs
-# rustc ≥ 1.86 while this workspace pins 1.85. The BuiltIn bridge ships
-# the trait + the engine wiring + `from_provider`; concrete
-# Provider impls (Anthropic / OpenAI-compat / Ollama) flip on once the
-# workspace rust-toolchain bumps.
+# Compiled with NO default features: the BuiltIn bridge uses the trait,
+# engine wiring, and `from_provider`; concrete provider transports are
+# selected explicitly by OpenPencil rather than inherited from agent defaults.
 agent = { path = "../../vendor/agent/crates/agent", default-features = false }
 # Forked from bartolli/anthropic-agent-sdk — lives under
 # `vendor/anthropic-agent-sdk/` so OP owns the source and can diverge
@@ -253,12 +259,6 @@ agent = { path = "../../vendor/agent/crates/agent", default-features = false }
 # stream-json message parser that `src/chat_claude.rs` wraps as a
 # `ChatProvider`. Default features (no rmcp) keep the dep set tight.
 anthropic-agent-sdk = { path = "../../vendor/anthropic-agent-sdk" }
-# Official GitHub Copilot CLI SDK (github/copilot-sdk). Replaces
-# the former in-workspace fork. Drives the Copilot chat bridge in
-# `src/chat_copilot.rs` over the CLI's `--server --stdio` JSON-RPC
-# transport. Requires Rust 1.94 / edition 2024 (the workspace
-# toolchain was bumped for it).
-github-copilot-sdk = "0.1"
 async-trait = "0.1"
 # HTTP client for the Codex / OpenCode bridges. They run as local
 # HTTP servers (spawned via `<bin> serve`) and we POST JSON requests

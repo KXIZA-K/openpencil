@@ -232,7 +232,7 @@ impl ChatProvider for BuiltInProvider {
 /// Subprocess (and the future HttpServer / Acp) keeps the async ↔
 /// sync bridge in one place.
 pub struct BlockingRecvIter<T> {
-    rx: mpsc::Receiver<T>,
+    rx: Option<mpsc::Receiver<T>>,
     cancel: Option<Arc<AtomicBool>>,
     task: Option<tokio::task::JoinHandle<()>>,
 }
@@ -240,8 +240,20 @@ pub struct BlockingRecvIter<T> {
 impl<T> BlockingRecvIter<T> {
     pub fn new(rx: mpsc::Receiver<T>) -> Self {
         Self {
-            rx,
+            rx: Some(rx),
             cancel: None,
+            task: None,
+        }
+    }
+
+    /// Cancellation bridge for providers that own their worker lifecycle.
+    /// When `cancel` is set, the receive half is dropped so a provider task
+    /// watching `tx.closed()` can perform its own graceful transport cleanup.
+    /// Unlike [`Self::cancellable`], this does not abort a Tokio task.
+    pub fn cooperative(rx: mpsc::Receiver<T>, cancel: Arc<AtomicBool>) -> Self {
+        Self {
+            rx: Some(rx),
+            cancel: Some(cancel),
             task: None,
         }
     }
@@ -256,7 +268,7 @@ impl<T> BlockingRecvIter<T> {
         task: tokio::task::JoinHandle<()>,
     ) -> Self {
         Self {
-            rx,
+            rx: Some(rx),
             cancel: Some(cancel),
             task: Some(task),
         }
@@ -267,7 +279,7 @@ impl<T> Iterator for BlockingRecvIter<T> {
     type Item = T;
     fn next(&mut self) -> Option<T> {
         if self.cancel.is_none() {
-            return self.rx.blocking_recv();
+            return self.rx.as_mut()?.blocking_recv();
         }
         // Timed blocking bridge: tokio's mpsc has no blocking recv with a
         // timeout, so poll the receiver with a waker that unparks this
@@ -282,12 +294,15 @@ impl<T> Iterator for BlockingRecvIter<T> {
                 .as_ref()
                 .is_some_and(|cancel| cancel.load(Ordering::Relaxed))
             {
+                // Release the receiver before returning so cooperative
+                // provider tasks waiting on `Sender::closed` wake promptly.
+                self.rx.take();
                 if let Some(task) = self.task.take() {
                     task.abort();
                 }
                 return None;
             }
-            match self.rx.poll_recv(&mut cx) {
+            match self.rx.as_mut()?.poll_recv(&mut cx) {
                 Poll::Ready(Some(value)) => return Some(value),
                 Poll::Ready(None) => return None,
                 Poll::Pending => std::thread::park_timeout(Duration::from_millis(20)),
@@ -307,6 +322,7 @@ impl Wake for ThreadUnparker {
 
 impl<T> Drop for BlockingRecvIter<T> {
     fn drop(&mut self) {
+        self.rx.take();
         if let Some(task) = self.task.take() {
             task.abort();
         }
@@ -476,6 +492,31 @@ mod tests {
             started.elapsed() < Duration::from_millis(500),
             "cancellation must not wait for another provider event"
         );
+    }
+
+    #[test]
+    fn cooperative_bridge_drops_receiver_without_aborting_provider_cleanup() {
+        let (tx, rx) = mpsc::channel::<ChatDelta>(1);
+        let (closed_tx, closed_rx) = std::sync::mpsc::channel();
+        let cleanup_task = shared_runtime().spawn(async move {
+            tx.closed().await;
+            let _ = closed_tx.send(());
+        });
+        let cancel = Arc::new(AtomicBool::new(false));
+        let signal = Arc::clone(&cancel);
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(30));
+            signal.store(true, Ordering::Release);
+        });
+
+        let mut iter = BlockingRecvIter::<ChatDelta>::cooperative(rx, cancel);
+        assert!(iter.next().is_none());
+        closed_rx
+            .recv_timeout(Duration::from_millis(500))
+            .expect("cooperative cancellation must wake tx.closed cleanup");
+        block_on_anywhere(async {
+            cleanup_task.await.expect("provider cleanup task exits");
+        });
     }
 
     #[test]

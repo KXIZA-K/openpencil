@@ -308,6 +308,7 @@ fn collect_stalled_provider_turn(max_retries: u32) -> (Vec<ChatDelta>, Vec<Strin
     .expect("ready stalled provider");
     provider.http_client = Some(
         reqwest::Client::builder()
+            .use_rustls_tls()
             .connect_timeout(Duration::from_millis(30))
             .timeout(Duration::from_millis(80))
             .build()

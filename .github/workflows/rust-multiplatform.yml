@@ -10,6 +10,7 @@ on:
     paths:
       - 'Cargo.toml'
       - 'Cargo.lock'
+      - '.cargo/**'
       - 'crates/**'
       - 'vendor/jian/**'
       # The casement winit fork + agent runtime link into every desktop
@@ -24,6 +25,7 @@ on:
     paths:
       - 'Cargo.toml'
       - 'Cargo.lock'
+      - '.cargo/**'
       - 'crates/**'
       - 'vendor/jian/**'
       - 'vendor/casement/**'
@@ -98,6 +100,7 @@ jobs:
             libwayland-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
             libegl1-mesa-dev libgles2-mesa-dev libgbm-dev mesa-utils \
             libfreetype-dev libfontconfig1-dev fonts-noto-cjk \
+            pkg-config libssl-dev \
             xvfb
           )
           for attempt in 1 2 3 4; do

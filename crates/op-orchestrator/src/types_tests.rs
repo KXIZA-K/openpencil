@@ -18,8 +18,10 @@ fn abort_flag_sets_and_reads() {
     let flag = AbortFlag::new();
     assert!(!flag.is_set());
     let clone = flag.clone();
+    let shared = flag.shared_atomic();
     flag.set();
     assert!(clone.is_set());
+    assert!(shared.load(std::sync::atomic::Ordering::SeqCst));
 }
 
 // ── geometry_echo budget ────────────────────────────────────────────────

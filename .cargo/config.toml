@@ -4,6 +4,12 @@
 [net]
 git-fetch-with-cli = true
 
+[env]
+# OpenPencil deliberately uses the user's installed Copilot CLI. SDK 1.x
+# downloads its pinned CLI even with `bundled-cli` disabled unless this opt-out
+# is present, which would make ordinary builds network-dependent.
+COPILOT_SKIP_CLI_DOWNLOAD = { value = "1", force = false }
+
 [term]
 verbose = false
 

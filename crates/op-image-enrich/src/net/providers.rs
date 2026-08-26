@@ -300,6 +300,7 @@ async fn run_search(
     credentials: Option<&WebOpenverseCredentials>,
 ) -> WebImageSearchOutcome {
     let Ok(client) = reqwest::Client::builder()
+        .use_rustls_tls()
         .timeout(Duration::from_secs(8))
         .user_agent(concat!("openpencil-web-daemon/", env!("CARGO_PKG_VERSION")))
         .build()

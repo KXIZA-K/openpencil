@@ -68,7 +68,9 @@ anthropic-agent-sdk = { path = "../../vendor/anthropic-agent-sdk" }
 op-collab-host = { path = "../op-collab-host" }
 
 # --- external (crates.io / forks) ---
-github-copilot-sdk = "0.1"
+# Keep the product's explicit installed-CLI contract; the SDK's default
+# `bundled-cli` feature would otherwise embed a platform CLI archive.
+github-copilot-sdk = { version = "=1.0.11", default-features = false }
 reqwest = { version = "0.12", default-features = false, features = [
   "rustls-tls",
   "json",

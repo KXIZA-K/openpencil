@@ -153,6 +153,7 @@ pub async fn execute_builtin_model_discovery(
 
 fn trusted_http_client() -> Result<reqwest::Client, BuiltinModelDiscoveryError> {
     reqwest::Client::builder()
+        .use_rustls_tls()
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(REQUEST_TIMEOUT)
         .timeout(REQUEST_TIMEOUT)

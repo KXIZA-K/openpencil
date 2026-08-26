@@ -121,6 +121,7 @@
         prebuiltDesktopRuntimeLibraries =
           runtimeLibraries
           ++ [
+            pkgs.openssl
             pkgs.zlib
             pkgs.stdenv.cc.cc.lib
           ];
@@ -182,6 +183,7 @@
         nativePackage = craneLib.buildPackage (commonArgs
           // {
             pname = "openpencil-native";
+            buildInputs = commonArgs.buildInputs ++ [pkgs.openssl];
             cargoBuildCommand = "cargo build --release --package op-host-desktop --package op-cli --package op-host-web-server";
             installPhase = ''
               runHook preInstall
@@ -604,7 +606,7 @@
             pkgs.chromium
           ];
           nativeBuildInputs = rustNativeInputs;
-          buildInputs = nativeLibraries;
+          buildInputs = nativeLibraries ++ [pkgs.openssl];
           env = nativeEnv;
         };
 

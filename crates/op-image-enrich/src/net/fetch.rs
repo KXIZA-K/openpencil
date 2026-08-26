@@ -41,6 +41,7 @@ pub async fn fetch_first_image_url(
     used_urls: &Mutex<HashSet<String>>,
 ) -> Option<String> {
     let client = reqwest::Client::builder()
+        .use_rustls_tls()
         .timeout(Duration::from_secs(8))
         .user_agent(concat!("openpencil-desktop/", env!("CARGO_PKG_VERSION")))
         .build()

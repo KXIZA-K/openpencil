@@ -66,6 +66,41 @@ fn stub_cli(body: &str) -> (std::path::PathBuf, std::path::PathBuf) {
     (dir, path)
 }
 
+fn read_test_pids(path: &std::path::Path) -> Vec<i32> {
+    std::fs::read_to_string(path)
+        .expect("CLI pid file")
+        .split_whitespace()
+        .map(|pid| pid.parse().expect("numeric pid"))
+        .collect()
+}
+
+fn process_alive(pid: i32) -> bool {
+    // SAFETY: signal 0 is a read-only existence probe for an exact positive
+    // pid written by this test's own child.
+    (unsafe { libc::kill(pid, 0) }) == 0
+        || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
+fn assert_process_tree_reaped(pids: &[i32], context: &str) {
+    for _ in 0..200 {
+        if pids.iter().copied().all(|pid| !process_alive(pid)) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let survivors: Vec<_> = pids
+        .iter()
+        .copied()
+        .filter(|pid| process_alive(*pid))
+        .collect();
+    for pid in &survivors {
+        // SAFETY: exact still-live test child pid, force-killed only as test
+        // cleanup before reporting the regression.
+        let _ = unsafe { libc::kill(*pid, libc::SIGKILL) };
+    }
+    assert!(survivors.is_empty(), "{context}: {survivors:?}");
+}
+
 /// Run one generation turn against a stand-in and return the error text
 /// the user would see.
 ///
@@ -246,4 +281,162 @@ fn a_cli_that_diagnoses_itself_on_stdout_is_quoted_too() {
         message.contains("workspace policy rejected the request"),
         "{message}"
     );
+}
+
+#[test]
+fn codex_terminal_error_events_finish_the_turn_as_aborted() {
+    for event in [
+        r#"{"type":"turn.failed","error":{"message":"usage limit reached"}}"#,
+        r#"{"type":"error","message":"stream disconnected"}"#,
+    ] {
+        let body = format!("#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '{event}'\n");
+        let (dir, binary) = stub_cli(&body);
+        let provider = SubprocessProvider::for_cli(CliName::Codex)
+            .expect("codex subprocess template")
+            .with_test_binary(binary.to_string_lossy().into_owned());
+        let deltas: Vec<_> = provider
+            .send(ChatRequest {
+                user_message: "inspect the canvas".into(),
+                ..Default::default()
+            })
+            .collect();
+        let _ = std::fs::remove_dir_all(dir);
+
+        assert!(
+            matches!(deltas.first(), Some(ChatDelta::Error(_))),
+            "terminal event must surface its error: {deltas:?}"
+        );
+        assert!(matches!(
+            deltas.last(),
+            Some(ChatDelta::Done {
+                stop_reason: StopReason::Aborted
+            })
+        ));
+        assert_eq!(
+            deltas.len(),
+            2,
+            "one error and one terminal delta: {deltas:?}"
+        );
+    }
+}
+
+#[test]
+fn cancelling_a_silent_subprocess_reaps_its_descendant() {
+    let body = r#"#!/bin/sh
+sleep 30 &
+descendant=$!
+printf '%s %s\n' "$$" "$descendant" > "$0.pids"
+cat >/dev/null
+wait "$descendant"
+"#;
+    let (dir, binary) = stub_cli(body);
+    let pid_file = std::path::PathBuf::from(format!("{}.pids", binary.to_string_lossy()));
+    let provider = SubprocessProvider::for_cli(CliName::Codex)
+        .expect("codex subprocess template")
+        .with_test_binary(binary.to_string_lossy().into_owned());
+    let cancel = Arc::new(AtomicBool::new(false));
+    let mut deltas = provider.send_cancellable(
+        ChatRequest {
+            user_message: "a silent turn".into(),
+            ..Default::default()
+        },
+        Arc::clone(&cancel),
+    );
+
+    for _ in 0..500 {
+        if pid_file.is_file() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let pids = read_test_pids(&pid_file);
+    assert_eq!(pids.len(), 2, "leader and descendant pids");
+
+    cancel.store(true, std::sync::atomic::Ordering::Release);
+    let started = std::time::Instant::now();
+    assert!(deltas.next().is_none(), "cancelled iterator must terminate");
+    assert!(
+        started.elapsed() < Duration::from_secs(1),
+        "silent cancellation took {:?}",
+        started.elapsed()
+    );
+    drop(deltas);
+
+    assert_process_tree_reaped(&pids, "cancelled subprocess left descendants alive");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn cancelling_a_backpressured_prompt_write_reaps_its_process_tree() {
+    let body = r#"#!/bin/sh
+sleep 30 &
+descendant=$!
+printf '%s %s\n' "$$" "$descendant" > "$0.pids"
+wait "$descendant"
+"#;
+    let (dir, binary) = stub_cli(body);
+    let pid_file = std::path::PathBuf::from(format!("{}.pids", binary.to_string_lossy()));
+    let provider = SubprocessProvider::for_cli(CliName::Codex)
+        .expect("codex subprocess template")
+        .with_test_binary(binary.to_string_lossy().into_owned());
+    let cancel = Arc::new(AtomicBool::new(false));
+    let mut deltas = provider.send_cancellable(
+        ChatRequest {
+            // Larger than normal pipe capacities, while neither process reads
+            // stdin. Before the regression fix `feed().await` never observed
+            // receiver cancellation and kept this tree alive.
+            user_message: "x".repeat(8 * 1024 * 1024),
+            ..Default::default()
+        },
+        Arc::clone(&cancel),
+    );
+
+    for _ in 0..500 {
+        if pid_file.is_file() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let pids = read_test_pids(&pid_file);
+    assert_eq!(pids.len(), 2, "leader and descendant pids");
+
+    cancel.store(true, std::sync::atomic::Ordering::Release);
+    assert!(deltas.next().is_none(), "cancelled iterator must terminate");
+    drop(deltas);
+    assert_process_tree_reaped(&pids, "blocked stdin cancellation left processes alive");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn stdout_eof_does_not_allow_a_live_process_tree_to_outlast_exit_grace() {
+    let body = r#"#!/bin/sh
+cat >/dev/null
+sleep 15 </dev/null >/dev/null 2>&1 &
+descendant=$!
+printf '%s %s\n' "$$" "$descendant" > "$0.pids"
+exec 1>&-
+exec 2>&-
+wait "$descendant"
+"#;
+    let (dir, binary) = stub_cli(body);
+    let pid_file = std::path::PathBuf::from(format!("{}.pids", binary.to_string_lossy()));
+    let provider = SubprocessProvider::for_cli(CliName::Codex)
+        .expect("codex subprocess template")
+        .with_test_binary(binary.to_string_lossy().into_owned());
+
+    let started = std::time::Instant::now();
+    let _deltas: Vec<_> = provider
+        .send(ChatRequest {
+            user_message: "close stdout, then stay alive".into(),
+            ..Default::default()
+        })
+        .collect();
+    assert!(
+        started.elapsed() < Duration::from_secs(8),
+        "post-EOF child wait exceeded exit grace: {:?}",
+        started.elapsed()
+    );
+    let pids = read_test_pids(&pid_file);
+    assert_process_tree_reaped(&pids, "post-EOF cleanup left processes alive");
+    let _ = std::fs::remove_dir_all(dir);
 }

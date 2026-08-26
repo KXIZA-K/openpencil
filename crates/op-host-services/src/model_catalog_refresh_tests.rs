@@ -33,10 +33,11 @@ fn catalog_values(state: &EditorState) -> Vec<&str> {
 }
 
 /// Block until the spawned worker's result has landed. The worker is a
-/// detached one-shot, so a bounded spin is enough and keeps the test off
-/// any wall-clock assumption about thread scheduling.
+/// detached one-shot; allow enough wall time for process-heavy full-suite
+/// contention while keeping a hard deadline for a genuinely stuck worker.
 fn drain(refresh: &mut ModelCatalogRefresh, state: &mut EditorState) -> bool {
-    for _ in 0..2_000 {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline {
         if refresh.poll_into(state) {
             return true;
         }

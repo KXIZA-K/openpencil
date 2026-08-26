@@ -501,7 +501,8 @@ impl Drop for IsolatedTurn {
 /// The MCP shutdown token is deliberately excluded: normal MCP tools do not
 /// need it, and a child agent must not inherit authority to stop the host.
 pub fn child_env(cli: Option<CliName>) -> Option<Vec<(String, String)>> {
-    let cli @ (CliName::Antigravity | CliName::GrokBuild | CliName::Dsh) = cli? else {
+    let cli @ (CliName::OpenCode | CliName::Antigravity | CliName::GrokBuild | CliName::Dsh) = cli?
+    else {
         return None;
     };
     Some(filtered_env(cli, std::env::vars()))
@@ -568,6 +569,21 @@ fn allowed_env(cli: CliName, key: &str) -> bool {
                 | "XDG_RUNTIME_DIR"
         ),
         CliName::GrokBuild => matches!(key, "XAI_API_KEY" | "GROK_HOME" | "GROK_API_KEY"),
+        // OpenCode reads its auth/config from HOME (or the standard XDG
+        // overrides) and supports OPENCODE_* path/config overrides. Model
+        // discovery does not need unrelated provider-key namespaces, so do
+        // not leak every API key owned by the desktop process into the probe.
+        CliName::OpenCode => {
+            key.starts_with("OPENCODE_")
+                || matches!(
+                    key,
+                    "XDG_CONFIG_HOME"
+                        | "XDG_DATA_HOME"
+                        | "XDG_CACHE_HOME"
+                        | "XDG_STATE_HOME"
+                        | "XDG_RUNTIME_DIR"
+                )
+        }
         // `dsh` is a Node CLI: it needs the merged login-shell PATH
         // (already in COMMON) so its `#!/usr/bin/env node` shebang
         // resolves Node ≥ 22; the DeepSeek credential rides the

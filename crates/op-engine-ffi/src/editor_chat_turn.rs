@@ -119,6 +119,7 @@ pub(crate) async fn run_builtin_turn(turn: BuiltinChatTurn, tx: Sender<ChatDelta
 /// chat turn and the design loop so both dial with identical posture.
 pub(crate) fn build_mobile_chat_client() -> Result<reqwest::Client, MobileChatTurnError> {
     reqwest::Client::builder()
+        .use_rustls_tls()
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(CONNECT_TIMEOUT)
         .timeout(REQUEST_TIMEOUT)

@@ -27,13 +27,12 @@ use op_host_services::chat_subprocess::SubprocessProvider;
 /// (`chat_http_server.rs`); DeepSeek Harness is a one-shot subprocess
 /// bridge (`chat_subprocess_dsh.rs`).
 ///
-/// `chat_session` opts the Claude Code and Copilot adapters into
-/// their process-wide chat resume slots (multi-turn context via
-/// `--resume` / `session.resume`). The design / codegen paths pass
-/// `false` so their sub-requests never join — or pollute — the
-/// user's chat conversation. OpenCode opens a fresh server session
-/// per turn (TS parity: `streamViaOpenCode` never resumes), so it
-/// has no chat/non-chat split.
+/// `chat_session` selects the chat-panel constructors. Claude Code and Copilot
+/// both receive multi-turn context through the owning tab's `ChatRequest`
+/// history; neither keeps process-global resume state. The design / codegen
+/// paths pass `false`, so their sub-requests stay independent from chat-panel
+/// context. OpenCode opens a fresh server session per turn (TS parity:
+/// `streamViaOpenCode` never resumes), so it has no chat/non-chat split.
 fn provider_for_agent(agent_idx: usize, chat_session: bool) -> Option<Box<dyn ChatProvider>> {
     match agent_idx {
         0 => Some(Box::new(if chat_session {
@@ -74,8 +73,8 @@ pub(crate) fn provider_for_selected_model(
     provider_for_selected_model_impl(host, false)
 }
 
-/// Provider for the chat panel's own turns — Claude Code / Copilot
-/// resume their process-wide chat sessions across sends.
+/// Provider for the chat panel's own turns. Claude Code and Copilot both keep
+/// context isolated per request/tab through `ChatRequest` history.
 pub(super) fn chat_provider_for_selected_model(
     host: &WidgetHostNative,
 ) -> Option<Box<dyn ChatProvider>> {

@@ -5,6 +5,9 @@ on:
     paths:
       - "Cargo.toml"
       - "Cargo.lock"
+      - ".cargo/**"
+      - "crates/**/Cargo.toml"
+      - "deny.toml"
       - "flake.nix"
       - "flake.lock"
       - "nix/release-manifest.json"
@@ -19,6 +22,9 @@ on:
     paths:
       - "Cargo.toml"
       - "Cargo.lock"
+      - ".cargo/**"
+      - "crates/**/Cargo.toml"
+      - "deny.toml"
       - "flake.nix"
       - "flake.lock"
       - "nix/release-manifest.json"

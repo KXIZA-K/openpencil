@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
@@ -9,7 +10,9 @@ use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::http::{header::AUTHORIZATION, HeaderMap};
 use tokio_tungstenite::tungstenite::protocol::{CloseFrame, WebSocketConfig};
 use tokio_tungstenite::tungstenite::{Error as WebSocketError, Message};
-use tokio_tungstenite::{connect_async_with_config, MaybeTlsStream, WebSocketStream};
+use tokio_tungstenite::{
+    connect_async_tls_with_config, Connector, MaybeTlsStream, WebSocketStream,
+};
 
 use op_collab_relay_protocol::{
     RelayReauthChallengeV1, RelayRejectCode, RelayRole, RelayServerChallengeV1,
@@ -24,6 +27,20 @@ use crate::limits::RelayLimits;
 use crate::reauth_budget::ReauthBudget;
 
 pub(crate) type RelaySocket = WebSocketStream<MaybeTlsStream<TcpStream>>;
+
+fn rustls_connector() -> Connector {
+    let mut roots = rustls::RootCertStore::empty();
+    let native = rustls_native_certs::load_native_certs();
+    let _ = roots.add_parsable_certificates(native.certs);
+    roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let config = rustls::ClientConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .expect("ring supports default TLS protocol versions")
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    Connector::Rustls(Arc::new(config))
+}
 
 #[derive(Clone, Copy)]
 pub(crate) struct ClientReauthContext<'a> {
@@ -91,7 +108,8 @@ pub(crate) async fn connect_socket(
         ..WebSocketConfig::default()
     };
 
-    let connect = connect_async_with_config(request, Some(config), true);
+    let connect =
+        connect_async_tls_with_config(request, Some(config), true, Some(rustls_connector()));
     tokio::select! {
         _ = cancelled(cancel) => Err(TunnelError::Cancelled),
         result = tokio::time::timeout(limits.connect, connect) => {
@@ -482,6 +500,11 @@ mod tests {
     use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
 
     use super::*;
+
+    #[test]
+    fn relay_connector_stays_on_rustls_when_native_tls_is_also_linked() {
+        assert!(matches!(rustls_connector(), Connector::Rustls(_)));
+    }
 
     fn frame(reason: &'static str) -> CloseFrame<'static> {
         CloseFrame {

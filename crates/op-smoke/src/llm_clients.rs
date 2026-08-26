@@ -244,10 +244,11 @@ impl LlmClient for DirectOpenAiClient {
             // per-request: a reasoning model can spend longer than any whole-
             // request budget on one generation without the connection stalling.
             let client = reqwest::Client::builder()
+                .use_rustls_tls()
                 .connect_timeout(std::time::Duration::from_secs(15))
                 .read_timeout(std::time::Duration::from_secs(180))
                 .build()
-                .unwrap_or_else(|_| reqwest::Client::new());
+                .expect("build smoke rustls client");
             let resp = match client.post(&url).bearer_auth(&key).json(&body).send().await {
                 Ok(r) => r,
                 Err(e) => {

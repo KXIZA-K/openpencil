@@ -40,6 +40,7 @@
 //!   for recursive diff application, then falls back to
 //!   `op_orchestrator::parse::parse_nodes` for legacy flat JSON output.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -234,6 +235,29 @@ pub fn classify_intent_for_standard_route(
     text: &str,
     model: Option<String>,
 ) -> DesignIntent {
+    classify_intent_for_standard_route_inner(provider, state, text, model, None)
+}
+
+/// Cancellable desktop-router variant. The external flag is observed while
+/// the classifier is silent; its own 8-second deadline cancels only the
+/// classifier transport and does not mark the whole routed turn aborted.
+pub fn classify_intent_for_standard_route_cancellable(
+    provider: &dyn ChatProvider,
+    state: &EditorState,
+    text: &str,
+    model: Option<String>,
+    external_cancel: Arc<AtomicBool>,
+) -> DesignIntent {
+    classify_intent_for_standard_route_inner(provider, state, text, model, Some(external_cancel))
+}
+
+fn classify_intent_for_standard_route_inner(
+    provider: &dyn ChatProvider,
+    state: &EditorState,
+    text: &str,
+    model: Option<String>,
+    external_cancel: Option<Arc<AtomicBool>>,
+) -> DesignIntent {
     if is_non_request_text(text) {
         return DesignIntent::Chat;
     }
@@ -262,7 +286,13 @@ pub fn classify_intent_for_standard_route(
     if is_named_follow_on_screen(text) {
         return DesignIntent::New;
     }
-    classify_intent_llm(provider, text, model)
+    classify_intent_llm_with_timeout_and_cancel(
+        provider,
+        text,
+        model,
+        CLASSIFY_TIMEOUT,
+        external_cancel.as_deref(),
+    )
 }
 
 /// TS classification-tag parsing (`ai-chat-intent-classifier.ts:46-51`).
@@ -297,6 +327,16 @@ fn classify_intent_llm_with_timeout(
     model: Option<String>,
     timeout: Duration,
 ) -> DesignIntent {
+    classify_intent_llm_with_timeout_and_cancel(provider, text, model, timeout, None)
+}
+
+fn classify_intent_llm_with_timeout_and_cancel(
+    provider: &dyn ChatProvider,
+    text: &str,
+    model: Option<String>,
+    timeout: Duration,
+    external_cancel: Option<&AtomicBool>,
+) -> DesignIntent {
     let req = ChatRequest {
         system_prompt: CLASSIFY_PROMPT.to_string(),
         user_message: text.to_string(),
@@ -304,11 +344,12 @@ fn classify_intent_llm_with_timeout(
         model,
         ..Default::default()
     };
-    // `provider.send` returns a blocking iterator. We are already on
-    // the router worker thread, but the 8s budget needs a timed recv,
-    // so the drain rides one more (detached) thread; dropping `rx`
-    // after a timeout makes its sends fail and the drain unwind.
-    let iter = provider.send(req);
+    // Keep classifier timeout separate from the run-scoped abort bit: timing
+    // out classification falls back to Chat, while Stop/New Chat aborts the
+    // whole route. Both paths set this local transport flag so a silent CLI is
+    // terminated instead of leaving the drain thread detached indefinitely.
+    let classify_cancel = Arc::new(AtomicBool::new(false));
+    let iter = provider.send_cancellable(req, Arc::clone(&classify_cancel));
     let (tx, rx) = mpsc::channel::<ChatDelta>();
     let spawned = std::thread::Builder::new()
         .name("op-chat-classify".into())
@@ -327,17 +368,26 @@ fn classify_intent_llm_with_timeout(
     let deadline = Instant::now() + timeout;
     let mut out = String::new();
     loop {
-        let now = Instant::now();
-        if now >= deadline {
+        if external_cancel.is_some_and(|cancel| cancel.load(Ordering::Acquire)) {
+            classify_cancel.store(true, Ordering::Release);
             return parse_classified(&out);
         }
-        match rx.recv_timeout(deadline - now) {
+        let now = Instant::now();
+        if now >= deadline {
+            classify_cancel.store(true, Ordering::Release);
+            return parse_classified(&out);
+        }
+        let poll = (deadline - now).min(Duration::from_millis(20));
+        match rx.recv_timeout(poll) {
             Ok(ChatDelta::TextDelta(s)) => out.push_str(&s),
             // TS consumeSSEAsText only accumulates text chunks.
             Ok(ChatDelta::Thinking(_)) | Ok(ChatDelta::ToolUse { .. }) => {}
-            Ok(ChatDelta::Error(_)) => return parse_classified(&out),
+            Ok(ChatDelta::Error(_)) => {
+                classify_cancel.store(true, Ordering::Release);
+                return parse_classified(&out);
+            }
             Ok(ChatDelta::Done { .. }) => break,
-            Err(mpsc::RecvTimeoutError::Timeout) => return parse_classified(&out),
+            Err(mpsc::RecvTimeoutError::Timeout) => continue,
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         }
     }
@@ -655,3 +705,7 @@ mod tests;
 #[cfg(test)]
 #[path = "chat_intent_selection_tests.rs"]
 mod selection_tests;
+
+#[cfg(test)]
+#[path = "chat_intent_cancellation_tests.rs"]
+mod cancellation_tests;
