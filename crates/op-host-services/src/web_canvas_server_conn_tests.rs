@@ -141,7 +141,7 @@ fn serve_one_builtin_model_discovery_route_is_json_not_404() {
 }
 
 #[test]
-fn managed_daemon_requires_its_token_before_model_discovery() {
+fn managed_daemon_accepts_tokenless_native_model_discovery() {
     let body = r#"{"id":"builtin-1","generation":1,"credential":{}}"#;
     let request = format!(
         "POST /api/ai/models/discover HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
@@ -150,15 +150,17 @@ fn managed_daemon_requires_its_token_before_model_discovery() {
     );
     let mut stream = mock_stream(&request);
     let mut managed = fresh_state();
+    managed.mode = ServeMode::Managed;
     managed.managed_token = Some("managed-secret".into());
     let state = Mutex::new(managed);
 
-    serve_one(&mut stream, &state, &SseHub::default()).expect("serve_one");
+    serve_one_in_mode(&mut stream, &state, &SseHub::default(), ServeMode::Managed)
+        .expect("serve_one");
 
     let response = String::from_utf8_lossy(&stream.output);
-    assert!(response.contains("401 Unauthorized"), "{response}");
+    assert!(!response.contains("401 Unauthorized"), "{response}");
     assert!(
-        !response.contains("invalid model discovery request"),
+        response.contains("invalid model discovery request"),
         "{response}"
     );
 }
@@ -580,6 +582,31 @@ fn serve_one_token_authed_shutdown_signals_caller() {
 }
 
 #[test]
+fn managed_handshake_token_is_lifecycle_only_and_authenticates_shutdown_body() {
+    let lifecycle_token = "managed-lifecycle-test";
+    let mut managed = fresh_state();
+    managed.mode = ServeMode::Managed;
+    managed.managed_token = Some(lifecycle_token.into());
+    let state = Mutex::new(managed);
+    let hub = SseHub::default();
+
+    let body = format!(
+        r#"{{"jsonrpc":"2.0","id":7,"method":"openpencil/shutdown","params":{{"token":"{lifecycle_token}"}}}}"#
+    );
+    let mut stream = mock_stream(&format!(
+        "POST /mcp HTTP/1.1\r\nHost: 127.0.0.1:3100\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+        body.len()
+    ));
+
+    let wants_shutdown =
+        serve_one_in_mode(&mut stream, &state, &hub, ServeMode::Managed).expect("serve_one");
+
+    assert!(wants_shutdown);
+    let response = String::from_utf8_lossy(&stream.output);
+    assert!(response.contains(r#""shuttingDown":true"#), "{response}");
+}
+
+#[test]
 fn parse_serve_web_args_accepts_port_doc_and_host() {
     let parse = |args: &[&str]| parse_serve_web_args(args.iter().map(|s| s.to_string()));
     // Port only → loopback, empty document.
@@ -641,6 +668,65 @@ fn parse_serve_web_args_managed_flag_form() {
 }
 
 #[test]
+fn parse_serve_web_args_managed_accepts_only_loopback_hosts() {
+    for host in ["127.0.0.1", "localhost", "::1"] {
+        let o = parse_serve_web_args(
+            vec![
+                "--managed".into(),
+                "--port".into(),
+                "0".into(),
+                "--host".into(),
+                host.into(),
+            ]
+            .into_iter(),
+        )
+        .unwrap_or_else(|error| panic!("managed host {host:?} was rejected: {error}"));
+        assert_eq!(o.host, host);
+    }
+
+    for host in ["0.0.0.0", "192.168.1.40", "example.com"] {
+        let error = parse_serve_web_args(
+            vec![
+                "--managed".into(),
+                "--port".into(),
+                "0".into(),
+                "--host".into(),
+                host.into(),
+            ]
+            .into_iter(),
+        )
+        .err()
+        .unwrap_or_else(|| panic!("managed host {host:?} must be rejected"));
+        assert!(error.to_string().contains("loopback --host"), "{error}");
+    }
+}
+
+#[test]
+fn parse_serve_web_args_local_and_online_keep_non_loopback_opt_in() {
+    let local =
+        parse_serve_web_args(vec!["3100".into(), "--host".into(), "0.0.0.0".into()].into_iter())
+            .expect("local LAN bind");
+    assert!(!local.managed);
+    assert!(!local.online);
+    assert_eq!(local.host, "0.0.0.0");
+
+    let online = parse_serve_web_args(
+        vec![
+            "--online".into(),
+            "--port".into(),
+            "3100".into(),
+            "--host".into(),
+            "0.0.0.0".into(),
+        ]
+        .into_iter(),
+    )
+    .expect("online Docker bind");
+    assert!(!online.managed);
+    assert!(online.online);
+    assert_eq!(online.host, "0.0.0.0");
+}
+
+#[test]
 fn handshake_line_is_single_line_json() {
     let line = handshake_json(41234, "aabbccdd00112233aabbccdd00112233");
     assert!(!line.contains('\n'));
@@ -661,34 +747,61 @@ fn indicators_endpoint_serves_parseable_relay_json() {
     assert!(!remote.run_active);
 }
 
-// --- serve_one layer: managed token auth + CORS allowlist enforcement ---
+// --- serve_one layer: managed tokenless requests + Origin enforcement ---
 
 #[test]
-fn managed_auth_gates_by_method_and_path() {
-    let auth = RequestAuth {
-        managed: true,
-        token: "tok123".into(),
-    };
-    assert!(auth.allows("GET", "/", None)); // static shell
-    assert!(auth.allows("GET", "/index.html", None));
-    assert!(auth.allows("GET", "/pkg/op_host_web.js", None));
-    assert!(auth.allows("GET", "/canvaskit/canvaskit.wasm", None)); // editor can't boot without
-    assert!(auth.allows("GET", "/assets/iconify-catalog-brands.json", None));
-    assert!(auth.allows("GET", "/smoke/step-1b.html", None));
-    assert!(auth.allows("OPTIONS", "/api/mcp/document", None)); // preflight
-    assert!(!auth.allows("POST", "/", None)); // JSON-RPC alias: privileged
-    assert!(!auth.allows("GET", "/api/mcp/events", None)); // SSE: privileged
-    assert!(!auth.allows("POST", "/mcp", Some("wrong")));
-    assert!(auth.allows("POST", "/mcp", Some("tok123")));
+fn managed_request_origin_gate_is_tokenless_and_exact() {
+    let allow = vec!["vscode-webview://abc".to_string()];
+    assert!(managed_request_origin_allowed(&allow, None));
+    assert!(managed_request_origin_allowed(
+        &allow,
+        Some("vscode-webview://abc")
+    ));
+    assert!(!managed_request_origin_allowed(
+        &allow,
+        Some("vscode-webview://evil")
+    ));
 }
 
 #[test]
-fn unmanaged_mode_keeps_open_behavior() {
-    let auth = RequestAuth {
-        managed: false,
-        token: String::new(),
-    };
-    assert!(auth.allows("POST", "/api/mcp/document", None));
+fn managed_daemon_serves_health_without_request_credentials() {
+    let request =
+        "GET /api/mcp/server HTTP/1.1\r\nHost: 127.0.0.1:3100\r\nContent-Length: 0\r\n\r\n";
+    let mut stream = mock_stream(request);
+    let mut managed = fresh_state();
+    managed.mode = ServeMode::Managed;
+    managed.managed_token = Some("lifecycle-only".into());
+    managed.allow_origins = vec!["vscode-webview://abc".into()];
+    let state = Mutex::new(managed);
+
+    serve_one_in_mode(&mut stream, &state, &SseHub::default(), ServeMode::Managed)
+        .expect("serve_one");
+
+    let response = String::from_utf8_lossy(&stream.output);
+    assert!(response.contains("200 OK"), "{response}");
+    assert!(response.contains(r#""running":true"#), "{response}");
+    assert!(!response.contains("401 Unauthorized"), "{response}");
+}
+
+#[test]
+fn managed_daemon_rejects_a_browser_origin_outside_its_allowlist() {
+    let request = "GET /api/mcp/version HTTP/1.1\r\nHost: 127.0.0.1:3100\r\nOrigin: vscode-webview://evil\r\nContent-Length: 0\r\n\r\n";
+    let mut stream = mock_stream(request);
+    let mut managed = fresh_state();
+    managed.mode = ServeMode::Managed;
+    managed.managed_token = Some("lifecycle-only".into());
+    managed.allow_origins = vec!["vscode-webview://abc".into()];
+    let state = Mutex::new(managed);
+
+    serve_one_in_mode(&mut stream, &state, &SseHub::default(), ServeMode::Managed)
+        .expect("serve_one");
+
+    let response = String::from_utf8_lossy(&stream.output);
+    assert!(response.contains("403 Forbidden"), "{response}");
+    assert!(
+        response.contains("request origin is not allowed"),
+        "{response}"
+    );
 }
 
 #[test]

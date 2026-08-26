@@ -361,9 +361,9 @@ pub struct HttpRequest {
     pub body: String,
     pub host: Option<String>,
     pub origin: Option<String>,
-    /// `X-OpenPencil-Token` header value, when present — the managed
-    /// web-canvas daemon's per-instance auth token (see
-    /// `web_canvas_server::RequestAuth`).
+    /// Legacy `X-OpenPencil-Token` header value, when present. The local and
+    /// managed web-canvas daemons deliberately ignore it; managed lifecycle
+    /// authentication, when used, stays in the `openpencil/shutdown` body.
     pub token: Option<String>,
     /// `Content-Type` header value, when present. Browser-facing JSON routes
     /// require `application/json` so cross-origin "simple requests" (which

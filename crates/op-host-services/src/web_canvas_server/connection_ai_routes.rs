@@ -183,7 +183,8 @@ pub(super) fn serve_ai_route<S: Read + Write>(
         // connection's own thread AFTER the brief parse-under-lock — the REST
         // handler holds the state lock for its whole body and must not host
         // provider dials. Living under `/api/ai/` keeps it inside the
-        // sensitive-POST origin gate and the managed-mode token gate.
+        // sensitive-POST Host/Origin and JSON-content gates. Managed mode's
+        // active `--allow-origin` boundary is applied before this dispatcher.
         "/api/ai/image/search" => {
             let parsed = {
                 let guard = state.lock().unwrap_or_else(|p| p.into_inner());
