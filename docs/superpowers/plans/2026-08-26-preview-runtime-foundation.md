@@ -17,7 +17,7 @@
 - Create: `crates/op-preview-core/src/session_paint.rs`
 - Modify: `crates/op-preview-core/src/lib.rs`
 
-- [ ] **Step 1: Record the green baseline**
+- [x] **Step 1: Record the green baseline**
 
 ```bash
 cargo test -p op-preview-core
@@ -25,11 +25,11 @@ cargo test -p op-preview-core
 
 Expected: PASS before code motion.
 
-- [ ] **Step 2: Move one responsibility per sibling**
+- [x] **Step 2: Move one responsibility per sibling**
 
 Move `RootFrame`, `PreviewSession`, retained source/session fields, and entry/accessor methods to `session.rs`. Move Preview scene overlay/paint methods to `session_paint.rs`. Keep `lib.rs` as module declarations plus stable re-exports; do not change public signatures, serialization, input, paint output, or tests. Keep every resulting file below 800 lines.
 
-- [ ] **Step 3: Prove behavior-identical and commit**
+- [x] **Step 3: Prove behavior-identical and commit**
 
 ```bash
 cargo test -p op-preview-core
@@ -44,14 +44,16 @@ git commit -m "refactor(editor): split preview session spine"
 - Modify: `vendor/jian/crates/jian-ops-schema/src/events.rs`
 - Modify: `vendor/jian/crates/jian-ops-schema/src/gestures.rs`
 - Modify: `vendor/jian/crates/jian-ops-schema/src/lifecycle.rs`
+- Modify: `vendor/jian/crates/jian-ops-schema/bindings/ops.schema.json`
+- Modify: `vendor/jian/crates/jian-ops-schema/bindings/ops.ts`
 - Modify: `vendor/jian/crates/jian-core/src/expression/aot.rs`
 - Create: `vendor/jian/crates/jian-core/src/expression/aot_tests.rs`
-- Modify: `vendor/jian/crates/jian-core/src/runtime/async_runtime.rs`
+- Modify: `vendor/jian/crates/jian-core/src/runtime/tests_input_layout.rs`
 - Test: `vendor/jian/crates/jian-ops-schema/src/events.rs`
 - Test: `vendor/jian/crates/jian-ops-schema/src/gestures.rs`
 - Test: `vendor/jian/crates/jian-ops-schema/src/lifecycle.rs`
 
-- [ ] **Step 1: Write failing round-trip tests**
+- [x] **Step 1: Write failing round-trip tests**
 
 First record the Jian expression tests green and move `aot.rs`'s inline tests to `aot_tests.rs` without behavior change, leaving the touched production file below 800 lines. Then add tests that assert new and future fields survive deserialize/serialize:
 
@@ -64,6 +66,7 @@ fn rich_event_hooks_and_future_fields_round_trip() {
         "onPressCancel": [{"set":{"$app.cancelled":"true"}}],
         "onSwipe": [{"set":{"$app.direction":"$event.direction"}}],
         "onContextMenu": [{"toast":"`Context`"}],
+        "onRawPointer": [{"set":{"$app.raws":"$state.raws + 1"}}],
         "onFutureGesture": [{"futureAction":{"value":1}}]
     });
     let decoded: EventHandlers = serde_json::from_value(input.clone()).unwrap();
@@ -106,7 +109,7 @@ fn lifecycle_hooks_and_future_fields_round_trip() {
 }
 ```
 
-- [ ] **Step 2: Run tests and confirm RED**
+- [x] **Step 2: Run tests and confirm RED**
 
 Run:
 
@@ -118,7 +121,7 @@ cargo test --manifest-path vendor/jian/Cargo.toml -p jian-ops-schema lifecycle_h
 
 Expected: FAIL because the new fields and unknown keys are dropped.
 
-- [ ] **Step 3: Add schema fields and flattened extras**
+- [x] **Step 3: Add schema fields and flattened extras**
 
 Add these fields to `EventHandlers`:
 
@@ -128,15 +131,16 @@ pub on_press_end: Option<ActionList>,
 pub on_press_cancel: Option<ActionList>,
 pub on_swipe: Option<ActionList>,
 pub on_context_menu: Option<ActionList>,
+pub on_raw_pointer: Option<ActionList>,
 #[serde(default, flatten)]
-pub extra: BTreeMap<String, serde_json::Value>,
+pub extra: ExtraJson,
 ```
 
 Add `AxisLock` and these optional fields to `GestureOverrides`:
 
 ```rust
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "camelCase")]
 pub enum AxisLock { Auto, Horizontal, Vertical }
 
 pub double_tap_timeout: Option<u32>,
@@ -147,28 +151,34 @@ pub axis_lock: Option<AxisLock>,
 pub disabled_events: Option<Vec<String>>,
 pub interaction_order: Option<Vec<String>>,
 #[serde(default, flatten)]
-pub extra: BTreeMap<String, serde_json::Value>,
+pub extra: ExtraJson,
 ```
 
-Every optional field uses `#[serde(default, skip_serializing_if = "Option::is_none")]`. Add `disabled_events`, `interaction_order`, and a flattened `extra: BTreeMap<String, serde_json::Value>` to `AppLifecycleHooks`, `PageLifecycleHooks`, and `NodeLifecycleHooks` too. `disabledEvents` is the additive, per-trigger storage used by the Interact Tab; `interactionOrder` stores explicit card order because typed handler structs cannot preserve JSON key order. Preserve vector order, reject duplicates/unknown duplicate references in authoring validation, append handlers missing from `interactionOrder` in shared catalog order, and never rewrite an ActionList to simulate disabled state.
+Every optional field uses `#[serde(default, skip_serializing_if = "Option::is_none")]`. Add `disabled_events`, `interaction_order`, and a flattened `extra: ExtraJson` to `AppLifecycleHooks`, `PageLifecycleHooks`, and `NodeLifecycleHooks` too. `disabledEvents` is the additive, per-trigger storage used by the Interact Tab; `interactionOrder` stores explicit card order because typed handler structs cannot preserve JSON key order. Preserve vector order, reject duplicates/unknown duplicate references in authoring validation, append handlers missing from `interactionOrder` in shared catalog order, and never rewrite an ActionList to simulate disabled state.
 
-Update Jian's exhaustive AOT/async traversals in the same commit: compile and discover every new known EventHandlers field and every existing app/page/node lifecycle ActionList. Flattened unknown hooks remain opaque/pass-through and are never executed by an older runtime.
+Use a serde-transparent `ExtraJson` map newtype with a binding-only `ts_rs::TS::inline_flattened` implementation so both serde/schemars and generated TypeScript preserve arbitrary future keys. Regenerate both tracked bindings; a partially generated `ops.ts` is a hard failure.
 
-- [ ] **Step 4: Run schema tests and compatibility tests**
+Update Jian's exhaustive AOT traversal in the same commit: compile and discover all 27 typed EventHandlers fields, including the runtime-known `onRawPointer`, and every existing app/page/node lifecycle ActionList. Walk every page's children exactly once rather than only `pages[0]`. The async dispatcher already resolves handlers dynamically and does not need an R1 production change. Flattened unknown hooks remain opaque/pass-through and are never executed by an older runtime. Add an end-to-end raw-pointer execution regression and a two-page AOT regression.
+
+- [x] **Step 4: Run schema tests and compatibility tests**
 
 Run:
 
 ```bash
 cargo test --manifest-path vendor/jian/Cargo.toml -p jian-ops-schema
 cargo test --manifest-path vendor/jian/Cargo.toml -p jian-core expression
+cargo test --manifest-path vendor/jian/Cargo.toml -p jian-core raw_pointer
+cargo run --manifest-path vendor/jian/Cargo.toml -p jian-ops-schema --features export-ts --bin export_ts
+cargo run --manifest-path vendor/jian/Cargo.toml -p jian-ops-schema --bin export_schema
+git -C vendor/jian diff --check
 ```
 
 Expected: PASS; existing fixtures serialize unchanged when no new fields are present.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git -C vendor/jian add crates/jian-ops-schema/src/events.rs crates/jian-ops-schema/src/gestures.rs crates/jian-ops-schema/src/lifecycle.rs crates/jian-core/src/expression/aot.rs crates/jian-core/src/expression/aot_tests.rs crates/jian-core/src/runtime/async_runtime.rs
+git -C vendor/jian add crates/jian-ops-schema/src/events.rs crates/jian-ops-schema/src/gestures.rs crates/jian-ops-schema/src/lifecycle.rs crates/jian-ops-schema/bindings/ops.schema.json crates/jian-ops-schema/bindings/ops.ts crates/jian-core/src/expression/aot.rs crates/jian-core/src/expression/aot_tests.rs crates/jian-core/src/runtime/tests_input_layout.rs
 git -C vendor/jian commit -m "feat(types): extend preview interaction schema"
 git add vendor/jian
 git commit -m "chore(renderer): update jian interaction schema"
