@@ -85,30 +85,152 @@ impl WidgetHost {
             Some(op_editor_core::PreviewDeviceKind::Canvas);
         self.clear_device_preview_state();
         self.preview_mode_transition = None;
-        if self.editor_state.editor_ui.touch_chrome() {
-            self.dismiss_touch_overlays_for_slideshow();
-        }
         self.frame_slideshow_board(canvas_size);
         true
     }
 
-    /// A presentation is the top-most surface. Close editor overlays at the
-    /// shared deck-entry point so touch, toolbar, and keyboard preview paths
-    /// cannot leave a hidden input or modal owning events above the slide.
-    fn dismiss_touch_overlays_for_slideshow(&mut self) {
-        // TODO: implement touch overlay dismissal helpers:
-        // - cancel_native_touch_gestures();
-        // - cancel_agent_settings_touch_gesture();
-        // - blur_text_inputs_on_blank_press();
-        // - release_property_keyboard_owner();
-        // - dismiss_mobile_surface();
-        // - apply_toggle_agent_settings();
-        // - account_press_flow close methods;
-        // - collab panel reset;
-        // - cancel_auth_login();
-        //
-        // For now, stub the implementation — the host dismisses these
-        // elsewhere or the web chrome doesn't have all these overlays.
+    /// Prepare the editor for a real preview entry.
+    ///
+    /// This is shared by the top-bar preview button and the slide-presentation
+    /// action. It commits drafts, clears pointer capture, invalidates any
+    /// in-flight Figma import ownership, and closes transient chrome before
+    /// the session is built. Missing CanvasKit must skip this entirely so the
+    /// host state stays unchanged.
+    pub(in crate::widget_host) fn prepare_preview_entry(&mut self) {
+        let figma_owned = self.editor_state.editor_ui.figma_import_open
+            || self.editor_state.editor_ui.figma_import_in_progress
+            || !self.editor_state.editor_ui.figma_import_pages.is_empty();
+        if let Some(rename) = self.editor_state.ui.layer_rename.as_mut() {
+            rename.input.commit_composition(self.now_ms);
+        }
+        let _ = self.editor_state.rename_commit();
+        let _ = self.editor_state.text_edit_commit_composition(self.now_ms);
+        let _ = self.editor_state.text_edit_commit();
+        self.editor_state
+            .ui
+            .property_input
+            .commit_composition(self.now_ms);
+        self.commit_property_focus_if_any();
+        self.commit_settings_focus();
+        self.blur_text_inputs_on_blank_press();
+        self.close_image_popovers_for_higher_overlay();
+        if figma_owned {
+            self.document_import_generation =
+                self.document_import_generation.wrapping_add(1).max(1);
+            crate::figma_temp_bridge::cancel_all();
+        }
+        if self.editor_state.editor_ui.login_modal_status.is_some() {
+            self.cancel_login_flow();
+        }
+        op_editor_core::host_escape_transitions::close_preview_owned_overlays(
+            &mut self.editor_state,
+            self.now_ms,
+        );
+
+        self.preview_surface_capture = None;
+        self.preview_edge_swipe_start_x = None;
+        self.preview_press_active = false;
+        self.preview_last_doc = None;
+        self.slideshow_cursor = None;
+        self.slideshow_press_screen = None;
+        self.drag = None;
+        self.chat_drag = None;
+        self.image_adjustment_drag = None;
+        self.image_crop_drag = None;
+        self.effect_radius_drag = None;
+        self.code_selection_drag = None;
+        self.chat_input_selection_drag = None;
+        self.image_input_selection_drag = None;
+        self.chat_text_selection_drag = None;
+        self.create_drag = None;
+        self.path_anchor_drag = None;
+        self.marquee_drag = None;
+        self.layer_drag = None;
+        self.design_md_drag = None;
+        self.component_browser_drag = None;
+        self.icon_picker_drag = None;
+        self.variables_resize = None;
+        self.handle_drag = None;
+        self.node_drag = None;
+        self.option_drag_source_ids.clear();
+    }
+
+    /// Real preview entry for the web shell.
+    ///
+    /// The helper exists so the top-bar toggle and the Slides panel present
+    /// action share the same build path, and so missing CanvasKit can leave
+    /// the host untouched instead of pretending preview started.
+    #[cfg(feature = "canvaskit")]
+    pub(in crate::widget_host) fn enter_preview_from_browser(
+        &mut self,
+        viewport_w: f32,
+        viewport_h: f32,
+        op_ck: Option<&crate::canvaskit::OpCk>,
+    ) -> bool {
+        let Some(op_ck) = op_ck else {
+            self.editor_state.editor_ui.preview.mode = false;
+            self.editor_state.editor_ui.preview.warnings =
+                vec!["preview: CanvasKit not initialized".to_string()];
+            self.mark_dirty();
+            return false;
+        };
+
+        if matches!(
+            self.preview_mode_transition.as_ref().map(|t| t.kind()),
+            Some(op_preview_core::ModeTransitionKind::Exit)
+        ) {
+            self.finish_exit_teardown();
+        }
+        if self.preview.is_some() {
+            return true;
+        }
+        self.prepare_preview_entry();
+        let (_canvas_left, _canvas_y, canvas_w, canvas_h) =
+            self.canvas_region(viewport_w, viewport_h);
+        let canvas_size = (canvas_w, canvas_h);
+        match crate::preview_host::enter_preview(
+            &self.editor_state.doc,
+            canvas_size,
+            &self.editor_state.ui.variables.active_theme,
+            self.editor_state.ui.active_page_index,
+            op_ck,
+            op_editor_core::preview_slideshow::slideshow_for_document(&self.editor_state).is_some(),
+        ) {
+            Ok(mut session) => {
+                let source_rect = session
+                    .framed_root()
+                    .map(|(_, rect)| self.framed_root_to_screen_rect(rect, viewport_w, viewport_h));
+                session.set_now_ms(self.now_ms);
+                self.editor_state.editor_ui.enter_preview();
+                self.editor_state.editor_ui.preview.warnings = session.warnings().to_vec();
+                self.preview = Some(session);
+                self.initialize_device_preview(viewport_w, viewport_h);
+                if !self.device_mode_active() {
+                    self.center_canvas_on_preview_root(viewport_w, viewport_h);
+                }
+                self.begin_slideshow_if_deck(canvas_size);
+                if let Some(settled) = self.preview_device_frame.as_ref().map(|f| f.frame) {
+                    #[cfg(feature = "canvaskit")]
+                    {
+                        self.preview_mode_transition =
+                            Some(op_preview_core::ModeTransition::start(
+                                op_preview_core::ModeTransitionKind::Enter,
+                                source_rect,
+                                settled,
+                                self.now_ms,
+                            ));
+                    }
+                }
+                self.mark_dirty();
+                true
+            }
+            Err(err) => {
+                self.editor_state.editor_ui.preview.mode = false;
+                self.editor_state.editor_ui.preview.warnings = vec![format!("preview: {err}")];
+                self.mark_dirty();
+                false
+            }
+        }
     }
 
     /// Fit the board on screen into the canvas region, centred. Returns
@@ -406,6 +528,22 @@ impl WidgetHost {
 mod tests {
     use super::*;
 
+    const TWO_BOARD_DECK: &str = r#"{"version":"1.0.0","children":[
+        {"type":"frame","id":"one","x":0,"y":0,"width":1920,"height":1080},
+        {"type":"frame","id":"two","x":2100,"y":0,"width":1920,"height":1080}
+    ]}"#;
+
+    fn web_preview_entry_host() -> WidgetHost {
+        let document = jian_ops_schema::load_str(TWO_BOARD_DECK)
+            .expect("parse web deck")
+            .value;
+        let mut host = WidgetHost::new();
+        host.editor_state = op_editor_core::EditorState::from_document(document);
+        host.editor_state.editor_ui.scenario =
+            Some(op_editor_core::scene_template_catalog::TemplateScene::Slides);
+        host
+    }
+
     #[test]
     fn a_board_maps_through_pan_and_zoom_like_the_canvas_painter() {
         let canvas = Rect {
@@ -434,5 +572,173 @@ mod tests {
         // Stub test — full test coverage mirrors native.
         // Requires mutable WidgetHost construction which is
         // better done in integration tests.
+    }
+
+    #[test]
+    fn web_preview_entry_queues_its_real_auth_cancel_and_clears_focus_idempotently() {
+        use op_editor_core::{AccountState, Locale, LoginFlowStatus, PropertyFocus, ThemeMode};
+
+        let mut host = web_preview_entry_host();
+        host.editor_state.editor_ui.login_modal_open = true;
+        host.editor_state.editor_ui.login_modal_status = Some(LoginFlowStatus::WaitingBrowser);
+        host.editor_state.editor_ui.prompt_center.open = true;
+        host.editor_state.editor_ui.prompt_center.save_open = true;
+        host.editor_state.editor_ui.theme_mode = ThemeMode::Light;
+        host.editor_state.editor_ui.locale = Locale::Ja;
+        host.editor_state.editor_ui.pinned_style_guide = Some("editorial-dark".to_string());
+        host.editor_state.editor_ui.account = AccountState::dev_fake_signed_in();
+        host.editor_state.editor_ui.layer_panel_width = 312.0;
+        host.editor_state.editor_ui.property_panel_width = 364.0;
+        host.editor_state.ui.property_focus = Some(PropertyFocus::PositionX);
+        host.editor_state.ui.property_input.set_text("invalid");
+        host.editor_state
+            .ui
+            .property_input
+            .set_composition("ni", 2, 0);
+        let _ = host
+            .editor_state
+            .open_color_picker(op_editor_core::ui_draft::ColorTarget::Fill, 220.0);
+        host.editor_state.ui.path_anchor_menu = Some(op_editor_core::PathAnchorMenuState {
+            node_id: op_editor_core::NodeId::new("n1"),
+            anchor_index: 0,
+            x: 18.0,
+            y: 27.0,
+            menu: Default::default(),
+        });
+        host.editor_state.chat.input.set_text("durable chat draft");
+        host.editor_state.chat.focus_input_at_end(0);
+        host.editor_state.chat.input.set_composition("zhong", 5, 0);
+        let document_before = host.editor_state.doc.clone();
+        let account_before = host.editor_state.editor_ui.account.clone();
+        let import_generation_before = host.document_import_generation;
+
+        host.prepare_preview_entry();
+        assert!(host.begin_slideshow_if_deck((1200.0, 800.0)));
+
+        assert_eq!(host.editor_state.doc, document_before);
+        assert!(host.editor_state.ui.property_focus.is_none());
+        assert!(host.editor_state.ui.property_input.composition().is_none());
+        assert!(host.editor_state.ui.color_picker.is_none());
+        assert!(host.editor_state.ui.path_anchor_menu.is_none());
+        assert!(!host.editor_state.chat.focused);
+        assert!(host.editor_state.chat.input.composition().is_none());
+        assert_eq!(host.editor_state.chat.input.text(), "durable chat draft");
+        assert!(!host.editor_state.editor_ui.login_modal_open);
+        assert!(!host.editor_state.editor_ui.prompt_center.open);
+        assert_eq!(host.editor_state.editor_ui.theme_mode, ThemeMode::Light);
+        assert_eq!(host.editor_state.editor_ui.locale, Locale::Ja);
+        assert_eq!(
+            host.editor_state.editor_ui.pinned_style_guide.as_deref(),
+            Some("editorial-dark")
+        );
+        assert_eq!(host.editor_state.editor_ui.account, account_before);
+        assert_eq!(host.editor_state.editor_ui.layer_panel_width, 312.0);
+        assert_eq!(host.editor_state.editor_ui.property_panel_width, 364.0);
+        assert_eq!(host.document_import_generation, import_generation_before);
+        assert_eq!(
+            host.pending_auth_actions,
+            vec![super::super::PendingAuthAction::CancelLogin],
+            "web records the daemon request instead of claiming native cancellation"
+        );
+
+        host.prepare_preview_entry();
+        assert_eq!(
+            host.pending_auth_actions,
+            vec![super::super::PendingAuthAction::CancelLogin],
+            "repeated cleanup cannot enqueue duplicate cancellation"
+        );
+        assert_eq!(host.document_import_generation, import_generation_before);
+    }
+
+    #[test]
+    fn web_preview_prepare_invalidates_import_generation_and_clears_capture_state() {
+        use op_editor_core::{LoginFlowStatus, NodeId};
+
+        let mut host = web_preview_entry_host();
+        host.document_import_generation = 41;
+        host.editor_state.editor_ui.login_modal_status = Some(LoginFlowStatus::WaitingBrowser);
+        host.editor_state.editor_ui.figma_import_open = true;
+        host.editor_state.editor_ui.figma_import_in_progress = true;
+        host.editor_state.editor_ui.figma_import_pages = vec![
+            op_editor_core::FigmaImportPage {
+                name: "Page 0".to_string(),
+                layer_count: 1,
+            },
+            op_editor_core::FigmaImportPage {
+                name: "Page 1".to_string(),
+                layer_count: 2,
+            },
+        ];
+        host.editor_state.editor_ui.figma_import_page_select.open = true;
+        host.editor_state.editor_ui.file_drop_active = true;
+        host.editor_state.editor_ui.file_drop_target = Some(NodeId::new("drop-target"));
+        host.editor_state.editor_ui.ime_preedit = Some(Default::default());
+        host.preview_press_active = true;
+        host.preview_last_doc = Some((11.0, 12.0));
+        host.preview_edge_swipe_start_x = Some(8.0);
+        host.slideshow_cursor = Some((3.0, 4.0));
+        host.slideshow_press_screen = Some((5.0, 6.0));
+
+        host.prepare_preview_entry();
+
+        assert_eq!(host.document_import_generation, 42);
+        assert!(!host.editor_state.editor_ui.login_modal_open);
+        assert_eq!(
+            host.pending_auth_actions,
+            vec![super::super::PendingAuthAction::CancelLogin]
+        );
+        assert!(!host.editor_state.editor_ui.figma_import_open);
+        assert!(!host.editor_state.editor_ui.figma_import_in_progress);
+        assert!(host.editor_state.editor_ui.figma_import_pages.is_empty());
+        assert!(!host.editor_state.editor_ui.figma_import_page_select.open);
+        assert!(!host.editor_state.editor_ui.file_drop_active);
+        assert!(host.editor_state.editor_ui.file_drop_target.is_none());
+        assert!(host.editor_state.editor_ui.ime_preedit.is_none());
+        assert!(!host.preview_press_active);
+        assert!(host.preview_last_doc.is_none());
+        assert!(host.preview_edge_swipe_start_x.is_none());
+        assert!(host.slideshow_cursor.is_none());
+        assert!(host.slideshow_press_screen.is_none());
+
+        host.prepare_preview_entry();
+        assert_eq!(host.document_import_generation, 42);
+        assert_eq!(
+            host.pending_auth_actions,
+            vec![super::super::PendingAuthAction::CancelLogin]
+        );
+    }
+
+    #[cfg(feature = "canvaskit")]
+    #[test]
+    fn web_preview_entry_without_op_ck_keeps_state_and_warns() {
+        use op_editor_core::{LoginFlowStatus, PropertyFocus};
+
+        let mut host = web_preview_entry_host();
+        host.editor_state.editor_ui.login_modal_open = true;
+        host.editor_state.editor_ui.login_modal_status = Some(LoginFlowStatus::WaitingBrowser);
+        host.editor_state.ui.property_focus = Some(PropertyFocus::PositionX);
+        host.editor_state.ui.property_input.set_text("draft");
+        let document_before = host.editor_state.doc.clone();
+        let warnings_before = host.editor_state.editor_ui.preview.warnings.clone();
+        let auth_actions_before = host.pending_auth_actions.clone();
+
+        assert!(!host.enter_preview_from_browser(1200.0, 800.0, None));
+
+        assert_eq!(host.editor_state.doc, document_before);
+        assert!(host.editor_state.editor_ui.login_modal_open);
+        assert_eq!(
+            host.editor_state.editor_ui.login_modal_status,
+            Some(LoginFlowStatus::WaitingBrowser)
+        );
+        assert_eq!(
+            host.editor_state.ui.property_focus,
+            Some(PropertyFocus::PositionX)
+        );
+        assert_eq!(host.pending_auth_actions, auth_actions_before);
+        assert_eq!(
+            host.editor_state.editor_ui.preview.warnings,
+            vec!["preview: CanvasKit not initialized".to_string()]
+        );
+        assert!(warnings_before.is_empty());
     }
 }

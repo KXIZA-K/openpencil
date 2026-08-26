@@ -9,7 +9,9 @@
 use super::WidgetHostNative;
 use op_editor_core::preview_slideshow::SlideshowToolbarButton;
 use op_editor_core::scene_template_catalog::TemplateScene;
-use op_editor_core::{EditorState, PreviewDeviceKind};
+use op_editor_core::{
+    AccountState, EditorState, Locale, PreviewDeviceKind, PropertyFocus, ThemeMode,
+};
 use op_editor_ui::widgets::SlideshowToolbar;
 use op_editor_ui::Point2D;
 use std::sync::{LazyLock, Mutex, MutexGuard};
@@ -613,4 +615,180 @@ fn touch_account_and_collaboration_overlays_are_neither_painted_nor_hit_while_pr
     assert_eq!(board_on_screen(&host).as_deref(), Some("slide-3"));
     assert!(host.editor_state.editor_ui.collab.panel.open);
     assert_eq!(host.editor_state.editor_ui.collab.pending_action, None);
+}
+
+#[test]
+fn native_preview_prepare_runs_for_non_decks_and_reentry() {
+    use op_editor_core::size_class::{EditorSizeClass, MobileSheetKind};
+
+    let _guard = test_lock();
+    let mut host = host_with(THREE_BOARD_DECK, None);
+    host.last_viewport_w = VW;
+    host.last_viewport_h = VH;
+    {
+        let state = host.editor_state_mut();
+        state.editor_ui.touch = true;
+        state.editor_ui.size_class = EditorSizeClass::Compact;
+        state.editor_ui.mobile_sheet = Some(MobileSheetKind::Properties);
+        state.editor_ui.prompt_center.open = true;
+        state.editor_ui.prompt_center.save_open = true;
+        state.editor_ui.figma_import_pages = vec![
+            op_editor_core::FigmaImportPage {
+                name: "Page".into(),
+                layer_count: 1,
+            };
+            2
+        ];
+        state.editor_ui.figma_import_page_select.open = true;
+        state.editor_ui.theme_mode = ThemeMode::Light;
+        state.editor_ui.locale = Locale::Ja;
+        state.editor_ui.account = AccountState::dev_fake_signed_in();
+        state.editor_ui.layer_panel_width = 312.0;
+        state.editor_ui.property_panel_width = 364.0;
+        state.ui.property_focus = Some(PropertyFocus::PositionX);
+        state.ui.property_input.set_text("invalid");
+        state.ui.property_input.set_composition("ni", 2, 0);
+        state.chat.input.set_text("durable chat draft");
+        state.chat.focus_input_at_end(0);
+        state.chat.input.set_composition("zhong", 5, 0);
+    }
+    host.begin_canvas_touch_gesture(VW / 2.0, VH / 2.0, VW, VH);
+    assert!(host.touch_panel_gesture.is_some(), "fixture owns touch");
+    host.auth_login_handle = Some(7);
+    let document_before = host.editor_state().doc.clone();
+    let account_before = host.editor_state().editor_ui.account.clone();
+
+    assert!(host.enter_preview((VW, VH)));
+    let state = host.editor_state();
+    assert!(!host.preview_slideshow_active());
+    assert_eq!(state.doc, document_before);
+    assert!(state.ui.property_focus.is_none());
+    assert!(state.ui.property_input.composition().is_none());
+    assert!(!state.chat.focused);
+    assert!(state.chat.input.composition().is_none());
+    assert_eq!(state.chat.input.text(), "durable chat draft");
+    assert_eq!(state.editor_ui.mobile_sheet, None);
+    assert!(!state.editor_ui.prompt_center.open);
+    assert_eq!(state.editor_ui.theme_mode, ThemeMode::Light);
+    assert_eq!(state.editor_ui.locale, Locale::Ja);
+    assert_eq!(state.editor_ui.account, account_before);
+    assert_eq!(state.editor_ui.layer_panel_width, 312.0);
+    assert_eq!(state.editor_ui.property_panel_width, 364.0);
+    assert!(state.editor_ui.figma_import_pages.is_empty());
+    assert!(!state.editor_ui.figma_import_page_select.open);
+    assert_eq!(
+        state.editor_ui.pending_file_action,
+        Some(op_editor_core::FileAction::FinishFigmaImport(
+            op_editor_core::FigmaImportSelection::Cancel
+        ))
+    );
+    assert!(host.touch_panel_gesture.is_none());
+    assert_eq!(host.auth_login_handle, None);
+
+    host.editor_state_mut().editor_ui.pending_file_action.take();
+    assert!(host.enter_preview((VW, VH)));
+    assert!(host.editor_state().editor_ui.pending_file_action.is_none());
+    host.editor_state_mut().editor_ui.figma_import_in_progress = true;
+    assert!(host.enter_preview((VW, VH)), "late ownership is cancelled");
+    assert!(!host.editor_state().editor_ui.figma_import_in_progress);
+    assert!(matches!(
+        host.editor_state().editor_ui.pending_file_action,
+        Some(op_editor_core::FileAction::FinishFigmaImport(
+            op_editor_core::FigmaImportSelection::Cancel
+        ))
+    ));
+
+    host.exit_preview();
+    host.set_now_ms(host.now_ms + 5_000);
+    host.settle_mode_transition();
+    host.begin_canvas_touch_gesture(VW / 2.0, VH / 2.0, VW, VH);
+    assert!(host.touch_panel_gesture.is_some());
+    assert!(host.enter_preview((VW, VH)));
+    assert!(host.touch_panel_gesture.is_none(), "reentry drops capture");
+}
+
+#[test]
+fn preview_builder_reads_committed_rename_text_and_property_drafts() {
+    let _guard = test_lock();
+    let source = r##"{"version":"1.0.0","children":[
+        {"type":"rectangle","id":"n1","name":"Old","x":0,"y":0,"width":10,"height":10},
+        {"type":"text","id":"t1","content":"hello","x":0,"y":20,"width":100,"height":24}
+    ]}"##;
+    let mut host = host_with(source, None);
+    let state = host.editor_state_mut();
+    state.set_single_selection(op_editor_core::NodeId::new("n1"));
+    assert!(state.start_rename_layer(op_editor_core::NodeId::new("n1")));
+    state
+        .ui
+        .layer_rename
+        .as_mut()
+        .unwrap()
+        .input
+        .set_text("Renamed");
+    state
+        .ui
+        .layer_rename
+        .as_mut()
+        .unwrap()
+        .input
+        .set_composition("!", 1, 1);
+    assert!(state.start_text_edit(op_editor_core::NodeId::new("t1")));
+    assert!(state.text_edit_set_composition("!", 1, 1));
+    state.ui.property_focus = Some(PropertyFocus::PositionX);
+    state.ui.property_input.set_text("4");
+    state.ui.property_input.set_caret(1, 1);
+    state.ui.property_input.set_composition("2", 1, 1);
+
+    assert!(
+        host.enter_preview_with_builder((VW, VH), |state, presenting| {
+            let value = serde_json::to_value(&state.doc).unwrap();
+            assert_eq!(value["children"][0]["name"], "Renamed!");
+            assert_eq!(value["children"][0]["x"], 42.0);
+            assert_eq!(value["children"][1]["content"], "hello!");
+            crate::preview::PreviewSession::enter(
+                &state.doc,
+                (VW, VH),
+                &state.ui.variables.active_theme,
+                state.ui.active_page_index,
+                state.editor_ui.preserve_authored_geometry,
+                presenting,
+                std::rc::Rc::new(jian_skia::SkiaMeasure::new()),
+            )
+        })
+    );
+}
+
+#[test]
+fn preview_build_failure_still_releases_focus_ime_and_capture() {
+    let _guard = test_lock();
+    let mut host = host_with(THREE_BOARD_DECK, None);
+    host.editor_state_mut().ui.property_focus = Some(PropertyFocus::PositionX);
+    host.editor_state_mut()
+        .ui
+        .property_input
+        .set_composition("ni", 2, 1);
+    host.editor_state_mut().chat.focus_input_at_end(1);
+    host.editor_state_mut()
+        .chat
+        .input
+        .set_composition("hao", 3, 1);
+    host.editor_state_mut().editor_ui.prompt_center.open = true;
+    host.begin_canvas_touch_gesture(VW / 2.0, VH / 2.0, VW, VH);
+    assert!(
+        host.enter_preview_with_builder((VW, VH), |_, _| Err(
+            crate::preview::PreviewEnterError::BuildRuntime("injected".into())
+        )) == false
+    );
+    assert!(host.preview.is_none());
+    assert!(host.editor_state().ui.property_focus.is_none());
+    assert!(host
+        .editor_state()
+        .ui
+        .property_input
+        .composition()
+        .is_none());
+    assert!(!host.editor_state().chat.focused);
+    assert!(host.editor_state().chat.input.composition().is_none());
+    assert!(!host.editor_state().editor_ui.prompt_center.open);
+    assert!(host.touch_panel_gesture.is_none());
 }

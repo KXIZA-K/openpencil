@@ -187,103 +187,14 @@ impl WidgetHost {
                         // only close the runtime if there is no device frame.
                         self.exit_preview(viewport_width, viewport_height);
                     } else {
-                        // Enter preview mode. Track M-1: capture the source
-                        // rect (the screen's current canvas-space position)
-                        // BEFORE state changes so the merge animation has a
-                        // real starting point. If an exit animation was still
-                        // playing, finish the teardown first.
                         #[cfg(feature = "canvaskit")]
                         {
-                            if matches!(
-                                self.preview_mode_transition.as_ref().map(|t| t.kind()),
-                                Some(op_preview_core::ModeTransitionKind::Exit)
-                            ) {
-                                self.finish_exit_teardown();
-                            }
-                            if let Some(ref op_ck) = self.op_ck {
-                                let (_canvas_left, _canvas_y, canvas_w, canvas_h) =
-                                    self.canvas_region(viewport_width, viewport_height);
-                                let canvas_size = (canvas_w, canvas_h);
-                                match crate::preview_host::enter_preview(
-                                    &self.editor_state.doc,
-                                    canvas_size,
-                                    &self.editor_state.ui.variables.active_theme,
-                                    self.editor_state.ui.active_page_index,
-                                    op_ck,
-                                    // A deck is presented, not routed — same
-                                    // computation the native host makes at its
-                                    // `PreviewSession::enter` call site.
-                                    op_editor_core::preview_slideshow::slideshow_for_document(
-                                        &self.editor_state,
-                                    )
-                                    .is_some(),
-                                ) {
-                                    Ok(mut session) => {
-                                        // Capture source rect from the session
-                                        // after it's built but before we paint.
-                                        let source_rect = session.framed_root().map(|(_, rect)| {
-                                            self.framed_root_to_screen_rect(
-                                                rect,
-                                                viewport_width,
-                                                viewport_height,
-                                            )
-                                        });
-                                        session.set_now_ms(self.now_ms);
-                                        self.editor_state.editor_ui.enter_preview();
-                                        self.editor_state.editor_ui.preview.warnings =
-                                            session.warnings().to_vec();
-                                        self.preview = Some(session);
-                                        // Pick the entry device from the framed
-                                        // root's width and build its frame —
-                                        // the native host's
-                                        // `initialize_device_preview`. Canvas
-                                        // mode instead centres the editor
-                                        // viewport on the root.
-                                        self.initialize_device_preview(
-                                            viewport_width,
-                                            viewport_height,
-                                        );
-                                        if !self.device_mode_active() {
-                                            self.center_canvas_on_preview_root(
-                                                viewport_width,
-                                                viewport_height,
-                                            );
-                                        }
-                                        // Start the slideshow if this is a deck. This must happen
-                                        // after initialize_device_preview so the device kind is set.
-                                        self.begin_slideshow_if_deck(canvas_size);
-                                        // Only a FRAMED entry (Phone/Desktop) has a device
-                                        // silhouette to merge into; plain Canvas-mode preview
-                                        // paints the same scene painter at the canvas's own
-                                        // pan/zoom, so there is nothing to animate toward.
-                                        if let Some(settled) =
-                                            self.preview_device_frame.as_ref().map(|f| f.frame)
-                                        {
-                                            #[cfg(feature = "canvaskit")]
-                                            {
-                                                self.preview_mode_transition =
-                                                    Some(op_preview_core::ModeTransition::start(
-                                                        op_preview_core::ModeTransitionKind::Enter,
-                                                        source_rect,
-                                                        settled,
-                                                        self.now_ms,
-                                                    ));
-                                            }
-                                        }
-                                    }
-                                    Err(err) => {
-                                        // Stay in design mode on failure
-                                        self.editor_state.editor_ui.preview.mode = false;
-                                        self.editor_state.editor_ui.preview.warnings =
-                                            vec![format!("preview: {err}")];
-                                    }
-                                }
-                            } else {
-                                // No OpCk available — stay in design mode
-                                self.editor_state.editor_ui.preview.mode = false;
-                                self.editor_state.editor_ui.preview.warnings =
-                                    vec!["preview: CanvasKit not initialized".to_string()];
-                            }
+                            let op_ck = self.op_ck.clone();
+                            let _ = self.enter_preview_from_browser(
+                                viewport_width,
+                                viewport_height,
+                                op_ck.as_ref(),
+                            );
                         }
                         #[cfg(not(feature = "canvaskit"))]
                         {

@@ -80,32 +80,8 @@ impl WidgetHostNative {
         self.editor_state.editor_ui.preview.device = Some(PreviewDeviceKind::Canvas);
         self.clear_device_preview_state();
         self.preview_mode_transition = None;
-        if self.editor_state.editor_ui.touch_chrome() {
-            self.dismiss_touch_overlays_for_slideshow();
-        }
         self.frame_slideshow_board(canvas_size);
         true
-    }
-
-    /// A presentation is the top-most surface. Close editor overlays at the
-    /// shared deck-entry point so touch, toolbar, and keyboard preview paths
-    /// cannot leave a hidden input or modal owning events above the slide.
-    fn dismiss_touch_overlays_for_slideshow(&mut self) {
-        self.cancel_native_touch_gestures();
-        self.cancel_agent_settings_touch_gesture();
-        self.blur_text_inputs_on_blank_press();
-        self.release_property_keyboard_owner();
-        self.dismiss_mobile_surface();
-        if self.editor_state.editor_ui.agent_settings_open {
-            self.apply_toggle_agent_settings();
-        }
-        op_editor_ui::widgets::account_press_flow::close_login_modal(&mut self.editor_state);
-        op_editor_ui::widgets::account_press_flow::close_account_menu(&mut self.editor_state);
-        let panel = &mut self.editor_state.editor_ui.collab.panel;
-        panel.open = false;
-        panel.join_address_focused = false;
-        panel.hover = None;
-        self.cancel_auth_login();
     }
 
     /// Fit the board on screen into the canvas region, centred. Returns

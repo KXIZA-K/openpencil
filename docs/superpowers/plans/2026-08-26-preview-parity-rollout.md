@@ -17,8 +17,18 @@
 - Review current uncommitted changes in: `crates/op-host-native/src/widget_host/preview_slideshow.rs`
 - Review current uncommitted changes in: `crates/op-host-web/src/widget_host/preview_slideshow.rs`
 - Test: `crates/op-editor-core/src/host_escape_transitions.rs`
+- Modify: `crates/op-host-native/src/widget_host/mode_transition_host.rs`
 - Modify: `crates/op-host-native/src/widget_host/preview_slideshow_tests.rs`
 - Test: `crates/op-host-web/src/widget_host/preview_slideshow.rs`
+- Modify: `crates/op-host-web/src/widget_host/press_chrome_tiers.rs`
+- Modify: `crates/op-host-web/src/widget_host/slides_panel.rs`
+- Modify: `crates/op-host-web/src/widget_host/slides_panel_tests.rs`
+- Modify: `crates/op-host-web/src/widget_host/preview_frame.rs`
+- Create: `crates/op-host-web/src/widget_host/preview_frame_teardown.rs`
+- Modify: `crates/op-host-web/src/widget_host.rs`
+- Modify: `crates/op-host-web/src/figma_temp_bridge.rs`
+- Modify: `crates/op-host-desktop/src/app_handler/redraw.rs`
+- Modify: `crates/op-host-desktop/src/figma_import_session/tests.rs`
 
 - [ ] **Step 1: Inventory the external DSH patch before any other implementation**
 
@@ -30,14 +40,16 @@ Classify every closed field as transient or persistent. Persistent theme, locale
 
 - [ ] **Step 2: Add safety tests before correcting the candidate**
 
-Assert transient settings/import/export/file menus, shape/icon/asset/prompt/font surfaces, login/account/collab overlays, text/property focus, keyboard ownership, auth request, and touch capture close. Native performs its own auth/touch cancellation; Web does not claim a native side effect. Repeated Preview entry is idempotent and exit/re-entry has no stale focus/IME.
+Assert cleanup runs before every ordinary/deck Preview runtime build, after committing valid rename/text/property drafts. Cover transient settings/import/export/file menus, shape/icon/asset/prompt/font surfaces, login/account/collab overlays, text/property focus, keyboard ownership, drag/capture, and orphan hover/composition. Native performs real auth/touch cancellation and queues one Figma Cancel; Web queues its real daemon auth cancel, invalidates the import generation, and does not claim a native side effect. Cmd+P drains Figma Cancel before the worker pump. Repeated entry is idempotent, failed builds release ownership, and exit/re-entry has no stale focus/IME/capture.
 
 - [ ] **Step 3: Run the evidence tests**
 
 ```bash
-cargo test -p op-editor-core close_preview_owned_overlays
-cargo test -p op-host-native --features gl-host preview_entry
-cargo test -p op-host-web --features canvaskit preview_entry
+cargo test -p op-editor-core preview_cleanup
+cargo test -p op-host-native --features gl-host preview_slideshow_tests
+cargo test -p op-host-web --features canvaskit preview_slideshow
+cargo test -p op-host-web --features canvaskit slides_panel
+cargo test -p op-host-desktop cmd_p_preview_cancels_late_figma_import_before_pump
 ```
 
 Expected: either a focused failure identifies an incomplete/over-broad candidate, or all tests pass and no production correction is needed. Do not manufacture a RED by changing a correct candidate.
@@ -45,10 +57,12 @@ Expected: either a focused failure identifies an incomplete/over-broad candidate
 - [ ] **Step 4: Make only evidence-required corrections and commit**
 
 ```bash
-cargo test -p op-editor-core close_preview_owned_overlays
-cargo test -p op-host-native --features gl-host preview_entry
-cargo test -p op-host-web --features canvaskit preview_entry
-git add crates/op-editor-core/src/host_escape_transitions.rs crates/op-host-native/src/widget_host/preview_slideshow.rs crates/op-host-native/src/widget_host/preview_slideshow_tests.rs crates/op-host-web/src/widget_host/preview_slideshow.rs
+cargo test -p op-editor-core preview_cleanup
+cargo test -p op-host-native --features gl-host preview_slideshow_tests
+cargo test -p op-host-web --features canvaskit preview_slideshow
+cargo test -p op-host-web --features canvaskit slides_panel
+cargo test -p op-host-desktop cmd_p_preview_cancels_late_figma_import_before_pump
+git add crates/op-editor-core/src/host_escape_transitions.rs crates/op-host-native/src/widget_host/mode_transition_host.rs crates/op-host-native/src/widget_host/preview_slideshow.rs crates/op-host-native/src/widget_host/preview_slideshow_tests.rs crates/op-host-web/src/figma_temp_bridge.rs crates/op-host-web/src/widget_host.rs crates/op-host-web/src/widget_host/press_chrome_tiers.rs crates/op-host-web/src/widget_host/preview_frame.rs crates/op-host-web/src/widget_host/preview_frame_teardown.rs crates/op-host-web/src/widget_host/preview_slideshow.rs crates/op-host-web/src/widget_host/slides_panel.rs crates/op-host-web/src/widget_host/slides_panel_tests.rs crates/op-host-desktop/src/app_handler/redraw.rs crates/op-host-desktop/src/figma_import_session/tests.rs docs/superpowers/plans/2026-08-26-preview-parity-rollout.md
 git commit -m "fix(editor): clear editing surfaces on preview entry"
 ```
 

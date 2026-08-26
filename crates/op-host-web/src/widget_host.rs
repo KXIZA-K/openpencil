@@ -164,6 +164,7 @@ mod press_overlay_tiers;
 mod press_property_tiers;
 mod press_surface_tiers;
 mod preview_frame;
+mod preview_frame_teardown;
 mod preview_slideshow;
 #[cfg(test)]
 mod prompt_center_host_tests;
