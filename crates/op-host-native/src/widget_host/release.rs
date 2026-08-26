@@ -13,6 +13,28 @@ use op_editor_ui::Point2D;
 impl WidgetHostNative {
     /// Mouse-release — ends active drag; chat-panel snaps corner.
     pub fn apply_release_with_viewport(&mut self, viewport_w: f32, viewport_h: f32) -> bool {
+        self.apply_release_with_viewport_inner(viewport_w, viewport_h)
+    }
+
+    /// Timestamped release variant: `t_ms` is the gesture endpoint's
+    /// factual monotonic timestamp. The release ladder runs
+    /// byte-identically; only the live-preview pointer Up is stamped
+    /// with it (see [`Self::apply_release_with_viewport_at`]'s sibling
+    /// press/move variants for the clock contract). The scoped context
+    /// is restored afterwards.
+    pub fn apply_release_with_viewport_at(
+        &mut self,
+        viewport_w: f32,
+        viewport_h: f32,
+        t_ms: u64,
+    ) -> bool {
+        let previous = self.preview_event_time_ms.replace(t_ms);
+        let changed = self.apply_release_with_viewport_inner(viewport_w, viewport_h);
+        self.preview_event_time_ms = previous;
+        changed
+    }
+
+    fn apply_release_with_viewport_inner(&mut self, viewport_w: f32, viewport_h: f32) -> bool {
         if let Some(consumed) = self.release_agent_settings_touch_gesture() {
             let pressed_released = self.release_pressed_feedback();
             return consumed || pressed_released;

@@ -505,6 +505,27 @@ impl WidgetHostNative {
     /// `ACTION_CANCEL` seam: release-delayed taps are discarded, preview gets
     /// a real Cancel phase, and drag-only history/drop commits never run.
     pub fn cancel_native_touch_gestures(&mut self) -> bool {
+        self.cancel_native_touch_gestures_at(self.preview_pointer_time_ms())
+    }
+
+    /// [`Self::cancel_native_touch_gestures`] with an explicit factual
+    /// timestamp for the preview Cancel dispatch (the scoped event
+    /// time from a timestamped entry variant, or the caller's `t_ms`).
+    /// The host's global clock is not advanced here — the caller
+    /// advances it monotonically before calling, so a Cancel whose
+    /// `t_ms` sits behind the last frame pump keeps the clock where it
+    /// is while the runtime still receives the factual Cancel time. The
+    /// scoped context is restored afterwards; on a panic the engine is
+    /// poisoned at the ABI boundary, so no later event can observe a
+    /// stale ticket.
+    pub fn cancel_native_touch_gestures_at(&mut self, t_ms: u64) -> bool {
+        let previous = self.preview_event_time_ms.replace(t_ms);
+        let cancelled = self.cancel_native_touch_gestures_inner();
+        self.preview_event_time_ms = previous;
+        cancelled
+    }
+
+    fn cancel_native_touch_gestures_inner(&mut self) -> bool {
         let mut cancelled = self.agent_settings_touch_gesture.take().is_some();
         cancelled |= self.cancel_touch_panel_gesture();
 
@@ -589,11 +610,13 @@ impl WidgetHostNative {
 
         if std::mem::take(&mut self.preview_press_active) {
             if let Some((x, y)) = self.preview_last_doc {
+                let t_ms = self.preview_pointer_time_ms();
                 if let Some(preview) = self.preview.as_mut() {
-                    preview.dispatch_pointer_phase(
+                    preview.dispatch_pointer_phase_at(
                         x,
                         y,
                         jian_core::gesture::pointer::PointerPhase::Cancel,
+                        t_ms,
                     );
                 }
             }

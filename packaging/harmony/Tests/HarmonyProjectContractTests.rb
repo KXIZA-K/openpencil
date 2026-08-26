@@ -93,7 +93,10 @@ raise "the OHOS install temp file must share the destination filesystem" unless 
 raise "the OHOS payload must be installed by atomic rename" unless ohos_build.include?(
   'mv -f "$install_tmp" "$install_path"',
 )
-required_napi_markers = %w[editorImportImageOrSvg hasBackgroundWork backgroundTick].freeze
+required_napi_markers = %w[
+  editorImportImageOrSvg hasBackgroundWork backgroundTick
+  editorPressAt editorMoveAt editorReleaseAt editorCancelGestureAt
+].freeze
 missing_build_markers = required_napi_markers.reject { |name| ohos_build.include?(name) }
 raise "the OHOS build omits NAPI artifact markers: #{missing_build_markers.join(', ')}" unless missing_build_markers.empty?
 build_call = ohos_build.index('cargo "${cargo_args[@]}" "$@"')
@@ -132,6 +135,17 @@ frame_calls = Dir.glob(File.join(ets_dir, "**/*.ets")).sum do |source|
   File.read(source).scan(/napi\.frame\s*\(/).length
 end
 raise "exactly one frame call site (the pump tick), found #{frame_calls}" unless frame_calls == 1
+# The engine clock must be ACTIVE uptime (TouchEvent.timestamp is boot-uptime
+# ns) — epoch clocks would mix domains and corrupt velocity-sensitive
+# gestures the moment the first touch arrives.
+monotonic = read(ets_dir, "common/MonotonicClock.ets")
+raise "the shared monotonic clock must use ACTIVE uptime" unless
+  monotonic.include?("import { systemDateTime } from '@kit.BasicServicesKit';") &&
+  monotonic.include?("systemDateTime.getUptime(systemDateTime.TimeType.ACTIVE, false)")
+raise "the frame pump must not feed epoch time to op_frame" if engine_host.match?(/napi\.frame\(this\.engine, Date\.now/m)
+raise "background ticking must not feed epoch time to the engine" if read(
+  ets_dir, "common/BackgroundGenerationCoordinator.ets"
+).match?(/napi\.backgroundTick\(this\.engine, Date\.now/m)
 
 # Generation is a transient, render-free background task. The delay must be
 # armed by the foreground pump as soon as work becomes active; page/surface
@@ -217,7 +231,7 @@ raise "the shell must forward raw pointers, not interpret gestures" unless point
   "Gestures are interpreted BY THE ENGINE",
 )
 raise "two-finger takeover must cancel the press ladder first" unless pointer_router.match?(
-  /this\.active\.size === 2.*?editorCancelGesture.*?editorBeginTransform/m,
+  /this\.active\.size === 2.*?editorCancelGestureAt\(engine, MonotonicClock\.nowMs\(\).*?editorBeginTransform/m,
 )
 raise "pinch must reuse the shared wheel-delta conversion" unless pointer_router.include?(
   "PinchZoomDelta.wheelDelta(this.lastPinchDistance, distance)",

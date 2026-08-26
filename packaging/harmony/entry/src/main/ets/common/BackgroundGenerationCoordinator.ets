@@ -1,6 +1,7 @@
 import { backgroundTaskManager } from '@kit.BackgroundTasksKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import napi from './OpNative';
+import { MonotonicClock } from './MonotonicClock';
 
 const DOMAIN = 0x0001;
 const TAG = 'OpenPencilBackground';
@@ -41,7 +42,7 @@ export class BackgroundGenerationCoordinator {
       this.finishAndCancel();
       return;
     }
-    if (this.grantDeadlineMs > 0 && Date.now() >= this.grantDeadlineMs) {
+    if (this.grantDeadlineMs > 0 && MonotonicClock.nowMs() >= this.grantDeadlineMs) {
       this.onDelayExpiring(this.requestGeneration);
       return;
     }
@@ -107,7 +108,7 @@ export class BackgroundGenerationCoordinator {
   }
 
   private ensureSuspendDelay(): void {
-    const now: number = Date.now();
+    const now: number = MonotonicClock.nowMs();
     if (this.requestId !== NO_REQUEST || now < this.retryAfterMs) {
       return;
     }
@@ -144,7 +145,7 @@ export class BackgroundGenerationCoordinator {
       this.stopTickTimer();
       return;
     }
-    const now: number = Date.now();
+    const now: number = MonotonicClock.nowMs();
     if (this.requestId === NO_REQUEST ||
       (this.grantDeadlineMs > 0 && now >= this.grantDeadlineMs)) {
       this.onDelayExpiring(this.requestGeneration);

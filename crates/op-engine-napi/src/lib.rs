@@ -144,6 +144,10 @@ mod contract_tests {
         "editorMove",
         "editorRelease",
         "editorCancelGesture",
+        "editorPressAt",
+        "editorMoveAt",
+        "editorReleaseAt",
+        "editorCancelGestureAt",
         "editorBeginTransform",
         "editorRightPress",
         "editorPan",
@@ -261,11 +265,56 @@ mod contract_tests {
     fn the_kotlin_derived_prefix_matches_opnative_order() {
         // The leading names are `OpNative.kt`'s own order; the additions
         // follow. A new OHOS-only export must be appended, never spliced in.
-        const KOTLIN_DERIVED: usize = 66;
+        const KOTLIN_DERIVED: usize = 70;
         assert_eq!(EXPORTED_NAMES[KOTLIN_DERIVED], "setXcomponentListener");
         assert_eq!(EXPORTED_NAMES[0], "create");
         assert_eq!(EXPORTED_NAMES[KOTLIN_DERIVED - 1], "editorLocaleCode");
-        assert_eq!(EXPORTED_NAMES.len(), 81);
+        assert_eq!(EXPORTED_NAMES.len(), 85);
+    }
+
+    #[test]
+    fn editor_pointer_at_bindings_clamp_the_js_clock_before_u64() {
+        const EDITOR: &str = include_str!("bindings_editor.rs");
+        for (js_name, ffi) in [
+            (
+                "editorPressAt",
+                "op_editor_press_at(e, x as f32, y as f32, clamp_t_ms(t_ms))",
+            ),
+            (
+                "editorMoveAt",
+                "op_editor_move_at(e, x as f32, y as f32, clamp_t_ms(t_ms))",
+            ),
+            (
+                "editorReleaseAt",
+                "op_editor_release_at(e, x as f32, y as f32, clamp_t_ms(t_ms))",
+            ),
+            (
+                "editorCancelGestureAt",
+                "op_editor_cancel_gesture_at(e, clamp_t_ms(t_ms))",
+            ),
+        ] {
+            assert!(
+                EDITOR.contains(&format!("js_name = \"{js_name}\"")),
+                "{js_name} js_name missing"
+            );
+            assert!(EDITOR.contains(ffi), "{ffi} missing");
+            assert!(
+                !EDITOR.contains("t_ms as u64"),
+                "the JS clock must clamp at zero before u64"
+            );
+        }
+        // The header carries the same dedicated entries.
+        assert!(HEADER.contains(
+            "OpStatus op_editor_press_at(OpEngine *engine, float x, float y, uint64_t time_ms);"
+        ));
+        assert!(HEADER.contains(
+            "OpStatus op_editor_move_at(OpEngine *engine, float x, float y, uint64_t time_ms);"
+        ));
+        assert!(HEADER.contains(
+            "OpStatus op_editor_release_at(OpEngine *engine, float x, float y, uint64_t time_ms);"
+        ));
+        assert!(HEADER
+            .contains("OpStatus op_editor_cancel_gesture_at(OpEngine *engine, uint64_t time_ms);"));
     }
 
     #[test]

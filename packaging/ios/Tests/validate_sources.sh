@@ -267,6 +267,23 @@ grep -Fq -- 'keyboardLayoutGuide.followsUndockedKeyboard = false' "$player_dir/S
 grep -Fq -- 'op_prefers_light_system_icons(engine' "$player_dir/Sources/OpEngineHost.swift"
 grep -Fq -- 'op_editor_begin_transform(engine' "$player_dir/Sources/OpEngineHost.swift"
 grep -Fq -- 'host.editorBeginTransform(x: lastMidpoint.x, y: lastMidpoint.y)' "$player_dir/Sources/OpPlayerView.swift"
+
+# FACTUAL pointer timestamps: every live editor press/move/release carries
+# UITouch.timestamp*1000 into the `_at` C ABI, and every synthetic Cancel
+# (touchesCancelled, long-press / geometry / two-finger takeovers) carries
+# the same monotonic boot-uptime domain via CACurrentMediaTime*1000.
+grep -Fq -- 'editorPressAt(x: point.x, y: point.y, timeMs: touchTimestampMs(touch))' "$player_dir/Sources/OpPlayerView.swift"
+grep -Fq -- 'editorMoveAt(x: point.x, y: point.y, timeMs: touchTimestampMs(touch))' "$player_dir/Sources/OpPlayerView.swift"
+grep -Fq -- 'editorReleaseAt(x: point.x, y: point.y, timeMs: touchTimestampMs(touch))' "$player_dir/Sources/OpPlayerView.swift"
+grep -Fq -- 'editorCancelGestureAt(timeMs: OpEngineHost.syntheticCancelNowMs())' "$player_dir/Sources/OpPlayerView.swift"
+grep -Fq -- 'op_editor_press_at(engine, Float(x), Float(y), timeMs)' "$player_dir/Sources/OpEngineHost+Pointer.swift"
+grep -Fq -- 'op_editor_move_at(engine, Float(x), Float(y), timeMs)' "$player_dir/Sources/OpEngineHost+Pointer.swift"
+grep -Fq -- 'op_editor_release_at(engine, Float(x), Float(y), timeMs)' "$player_dir/Sources/OpEngineHost+Pointer.swift"
+grep -Fq -- 'op_editor_cancel_gesture_at(engine, timeMs)' "$player_dir/Sources/OpEngineHost+Pointer.swift"
+grep -Fq -- 'UInt64((touch.timestamp * 1_000).rounded(.down))' "$player_dir/Sources/OpPlayerView.swift"
+grep -Fq -- 'CACurrentMediaTime() * 1_000' "$player_dir/Sources/OpEngineHost+Pointer.swift"
+# The generic viewer pointer route must carry the touch timestamp too.
+grep -Fq -- 'timeMs: touchTimestampMs(touch)' "$player_dir/Sources/OpPlayerView.swift"
 grep -Fq -- 'prefersLightIcons ? .dark : .light' "$player_dir/Sources/OpPlayerView.swift"
 grep -Fq -- 'window.overrideUserInterfaceStyle = systemChromeStyle' "$player_dir/Sources/OpPlayerView.swift"
 
@@ -415,7 +432,7 @@ ruby - "$player_dir/Sources/OpEngineHost.swift" \
 host = File.read(ARGV.fetch(0))
 coordinator = File.read(ARGV.fetch(1))
 
-drain = host[/private func drainShellActions\b.*?(?=\n    \/\/\/ Polls the engine)/m]
+drain = host[/func drainShellActions\b.*?(?=\n    \/\/\/ Polls the engine)/m]
 raise "iOS export shell-action branch missing" unless drain
 action = drain.index("OpShellAction_ExportDocument.rawValue")
 defer_to_uikit = drain.index("DispatchQueue.main.async", action || 0)
@@ -441,7 +458,7 @@ ruby - "$player_dir/Sources/OpEngineHost.swift" \
 host = File.read(ARGV.fetch(0))
 coordinator = File.read(ARGV.fetch(1))
 
-drain = host[/private func drainShellActions\b.*?(?=\n    \/\/\/ Polls the engine)/m]
+drain = host[/func drainShellActions\b.*?(?=\n    \/\/\/ Polls the engine)/m]
 raise "iOS save shell-action branch missing" unless drain
 action = drain.index("OpShellAction_SaveDocument.rawValue")
 defer_to_uikit = drain.index("DispatchQueue.main.async", action || 0)
@@ -473,7 +490,7 @@ ruby - "$player_dir/Sources/OpEngineHost.swift" \
 host = File.read(ARGV.fetch(0))
 coordinator = File.read(ARGV.fetch(1))
 
-drain = host[/private func drainShellActions\b.*?(?=\n    \/\/\/ Polls the engine)/m]
+drain = host[/func drainShellActions\b.*?(?=\n    \/\/\/ Polls the engine)/m]
 raise "iOS image-import shell-action branch missing" unless drain
 action = drain.index("OpShellAction_ImportImageOrSvg.rawValue")
 defer_to_uikit = drain.index("DispatchQueue.main.async", action || 0)

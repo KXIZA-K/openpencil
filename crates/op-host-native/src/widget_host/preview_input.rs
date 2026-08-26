@@ -8,6 +8,32 @@
 use super::*;
 
 impl WidgetHostNative {
+    /// The factual timestamp for the live-preview pointer event being
+    /// dispatched: the scoped event time when a timestamped entry
+    /// variant (`apply_press_at` / `apply_cursor_move_at` /
+    /// `apply_release_with_viewport_at` / `cancel_native_touch_gestures_at`)
+    /// supplied one, else the host's global clock (`now_ms`). The
+    /// global clock and the event time are deliberately independent:
+    /// an out-of-order event (frame at 2000, Down at 950) keeps the
+    /// clock at 2000 while the Swipe recognizer measures the factual
+    /// 100 ms pair delta.
+    pub(in crate::widget_host) fn preview_pointer_time_ms(&self) -> u64 {
+        self.preview_event_time_ms.unwrap_or(self.now_ms)
+    }
+
+    /// Narrow test-only snapshot of one `$app` value from the live
+    /// preview runtime. CLONED out of `PreviewSession` — the runtime's
+    /// state is interior-mutable, so production callers never receive a
+    /// reference into it. Compiled only when the `testing` feature is
+    /// enabled (op-engine-ffi / op-host-native test builds).
+    #[cfg(feature = "testing")]
+    pub fn preview_app_state_value_for_test(
+        &self,
+        key: &str,
+    ) -> Option<jian_core::value::RuntimeValue> {
+        self.preview.as_ref()?.app_state_value_for_test(key)
+    }
+
     /// Center the canvas viewport on a scene-space `rect`, keeping zoom
     /// unchanged. Used by APP MODE preview to keep the mounted screen
     /// framed on entry and after a screen-switch reconcile. `viewport_w`
@@ -137,10 +163,11 @@ impl WidgetHostNative {
         // well past the tap-gesture's own same-spot Down/Up tolerance
         // before the pop fires, so it never completes as a stray tap.
         self.arm_edge_swipe_candidate(screen_x);
+        let t_ms = self.preview_pointer_time_ms();
         let handled = self
             .preview
             .as_mut()
-            .is_some_and(|p| p.dispatch_pointer_phase(doc.x, doc.y, PointerPhase::Down));
+            .is_some_and(|p| p.dispatch_pointer_phase_at(doc.x, doc.y, PointerPhase::Down, t_ms));
         self.mark_dirty();
         handled
     }
@@ -178,10 +205,11 @@ impl WidgetHostNative {
             PointerPhase::Hover
         };
         self.preview_last_doc = Some((doc.x, doc.y));
+        let t_ms = self.preview_pointer_time_ms();
         let emitted = self
             .preview
             .as_mut()
-            .is_some_and(|p| p.dispatch_pointer_phase(doc.x, doc.y, phase));
+            .is_some_and(|p| p.dispatch_pointer_phase_at(doc.x, doc.y, phase, t_ms));
         if emitted || self.preview_press_active {
             self.mark_dirty();
         }
@@ -200,8 +228,9 @@ impl WidgetHostNative {
         }
         self.preview_press_active = false;
         if let Some((x, y)) = self.preview_last_doc {
+            let t_ms = self.preview_pointer_time_ms();
             if let Some(p) = self.preview.as_mut() {
-                p.dispatch_pointer_phase(x, y, PointerPhase::Up);
+                p.dispatch_pointer_phase_at(x, y, PointerPhase::Up, t_ms);
             }
         }
         self.mark_dirty();

@@ -209,6 +209,44 @@ mod binding_contract_tests {
     }
 
     #[test]
+    fn editor_pointer_at_natives_forward_factual_timestamps_clamped_at_zero() {
+        let source = include_str!("bindings_editor.rs");
+        for (export, ffi) in [
+            (
+                "nativeEditorPressAt",
+                "op_engine_ffi::op_editor_press_at(e, x, y, t_ms.max(0) as u64)",
+            ),
+            (
+                "nativeEditorMoveAt",
+                "op_engine_ffi::op_editor_move_at(e, x, y, t_ms.max(0) as u64)",
+            ),
+            (
+                "nativeEditorReleaseAt",
+                "op_engine_ffi::op_editor_release_at(e, x, y, t_ms.max(0) as u64)",
+            ),
+            (
+                "nativeEditorCancelGestureAt",
+                "op_engine_ffi::op_editor_cancel_gesture_at(e, t_ms.max(0) as u64)",
+            ),
+        ] {
+            let signature = format!("fn {CANONICAL_JNI_PREFIX}{export}");
+            let start = source
+                .find(&signature)
+                .unwrap_or_else(|| panic!("{export} JNI export missing"));
+            let tail = &source[start..];
+            let end = tail[1..]
+                .find("#[no_mangle]")
+                .map_or(tail.len(), |offset| offset + 1);
+            let function = &tail[..end];
+            assert!(function.contains("call_status(engine"));
+            assert!(function.contains(ffi));
+            // The signed jlong clock must clamp at zero before u64 — a
+            // negative Android clock is never a valid timestamp.
+            assert!(!function.contains("t_ms as u64"));
+        }
+    }
+
+    #[test]
     fn editor_image_import_native_owns_java_arguments_before_dispatch() {
         let source = include_str!("bindings_editor.rs");
         let start = source

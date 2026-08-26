@@ -35,6 +35,11 @@ default = []
 # through the same `NativeFrameBackend` the desktop uses. Enabled on iOS /
 # Android by the player engine (`op-engine-ffi`).
 widget-host = ["dep:accesskit"]
+# Test-only narrow seams for cross-crate tests (the op-engine-ffi editor
+# pointer-clock suites). Enables op-preview-core's `testing` feature so the
+# live preview runtime hands out CLONED app-state snapshots — never a
+# reference into its interior-mutable state in production.
+testing = ["op-preview-core/testing"]
 # Collaboration/editor actor seam shared by desktop and mobile embedders.
 # This deliberately does not enable winit, glutin, or desktop GL: the mobile
 # engine owns the event loop and GPU surface while `WidgetHostNative` only

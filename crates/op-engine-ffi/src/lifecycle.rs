@@ -551,11 +551,7 @@ impl Session {
         if self.suspended {
             return Err(FfiError::new(OpStatus::Suspended, "engine is suspended"));
         }
-        self.now_ms = now_ms;
-        #[cfg(feature = "editor")]
-        if let Some(host) = self.editor.as_mut() {
-            host.set_now_ms(now_ms);
-        }
+        self.advance_global_clock(now_ms);
         #[cfg(feature = "editor")]
         crate::editor_template::drain_pending_scene_template(self)?;
         #[cfg(feature = "editor")]
@@ -648,11 +644,7 @@ impl Session {
         buffer_len: usize,
         stride: usize,
     ) -> FfiResult<()> {
-        self.now_ms = now_ms;
-        #[cfg(feature = "editor")]
-        if let Some(host) = self.editor.as_mut() {
-            host.set_now_ms(now_ms);
-        }
+        self.advance_global_clock(now_ms);
         #[cfg(feature = "editor")]
         crate::editor_template::drain_pending_scene_template(self)?;
         #[cfg(feature = "editor")]
@@ -776,6 +768,10 @@ fn build_surface(handle: *mut c_void) -> FfiResult<SurfaceSlot> {
 mod lifecycle_wake;
 #[cfg(feature = "editor")]
 use lifecycle_wake::earliest_wake;
+
+// Global monotonic clock feed (pure code motion — see the file's comment).
+#[path = "lifecycle_clock.rs"]
+mod lifecycle_clock;
 
 #[path = "lifecycle_engine.rs"]
 mod lifecycle_engine;

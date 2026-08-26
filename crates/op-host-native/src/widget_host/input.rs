@@ -558,6 +558,24 @@ impl WidgetHostNative {
     /// cursor move. See `crates/CLAUDE.md` for the canonical hit-test
     /// order before touching anything here.
     pub fn apply_cursor_move(&mut self, x: f32, y: f32) -> bool {
+        self.apply_cursor_move_inner(x, y)
+    }
+
+    /// Timestamped cursor-move variant: `t_ms` is the event's factual
+    /// monotonic timestamp. The tier ladder below runs byte-identically;
+    /// only the live-preview pointer path stamps `PointerEvent.t_ms`
+    /// with it (moves, hovers, and any edge-swipe Cancel the move
+    /// fires). The global clock is not advanced here — see
+    /// [`Self::apply_press_at`] for the monotonic-clock contract; the
+    /// scoped context is restored afterwards.
+    pub fn apply_cursor_move_at(&mut self, x: f32, y: f32, t_ms: u64) -> bool {
+        let previous = self.preview_event_time_ms.replace(t_ms);
+        let changed = self.apply_cursor_move_inner(x, y);
+        self.preview_event_time_ms = previous;
+        changed
+    }
+
+    fn apply_cursor_move_inner(&mut self, x: f32, y: f32) -> bool {
         if let Some(changed) = self.update_agent_settings_touch_gesture(x, y) {
             return changed;
         }

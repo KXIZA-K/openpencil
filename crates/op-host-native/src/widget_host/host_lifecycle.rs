@@ -87,6 +87,7 @@ impl WidgetHostNative {
             preview_surface_capture: None,
             preview_mode_transition: None,
             preview_press_active: false,
+            preview_event_time_ms: None,
             preview_last_doc: None,
             slideshow_press_screen: None,
             slideshow_cursor: None,
@@ -231,10 +232,17 @@ impl WidgetHostNative {
     /// host. Drives caret blink + any future time-based
     /// animations via `jian_core::anim`. Also forwarded to the live
     /// preview runtime (caret blink in Preview mode).
+    ///
+    /// Monotonic: `now_ms` is the greatest value ever pushed — an
+    /// out-of-order candidate (a frame pump at 2000 followed by a
+    /// pointer event carrying 950) never moves the global clock
+    /// backward. The event's own factual timestamp travels separately
+    /// through the scoped `preview_event_time_ms` context; see
+    /// `apply_press_at` / `preview_dispatch_press`.
     pub fn set_now_ms(&mut self, now_ms: u64) {
-        self.now_ms = now_ms;
+        self.now_ms = self.now_ms.max(now_ms);
         if let Some(preview) = self.preview.as_mut() {
-            preview.set_now_ms(now_ms);
+            preview.set_now_ms(self.now_ms);
         }
     }
 }

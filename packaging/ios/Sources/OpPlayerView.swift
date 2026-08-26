@@ -258,7 +258,7 @@ final class OpPlayerView: UIView, UITextViewDelegate, UIDocumentPickerDelegate {
         longPressWork?.cancel()
         suppressedTouches.suppress(touchIDs.keys)
         if host.editorMode {
-            host.editorCancelGesture()
+            host.editorCancelGestureAt(timeMs: OpEngineHost.syntheticCancelNowMs())
             resetEditorTouchTracking()
         } else {
             for (key, id) in touchIDs {
@@ -488,8 +488,10 @@ final class OpPlayerView: UIView, UITextViewDelegate, UIDocumentPickerDelegate {
         if host.editorMode {
             // UIKit cancellation is not a release: committing the host's
             // release ladder here can apply a drag/drop or a deferred tap
-            // that the system explicitly interrupted.
-            host.editorCancelGesture()
+            // that the system explicitly interrupted. The cancelled set has
+            // no trustworthy touch timestamp, so the Cancel carries the
+            // frame pump's own monotonic domain.
+            host.editorCancelGestureAt(timeMs: OpEngineHost.syntheticCancelNowMs())
             resetEditorTouchTracking()
         } else {
             finish(touches, phase: Int32(OpPointerPhase_Cancel.rawValue))
@@ -508,7 +510,20 @@ final class OpPlayerView: UIView, UITextViewDelegate, UIDocumentPickerDelegate {
         // The engine viewport is bounds.size in logical UIKit points.
         // Metal's contentsScale affects drawable pixels only, so touch
         // points are not scaled.
-        host.dispatchPointer(id: id, phase: phase, point: touch.location(in: self))
+        host.dispatchPointer(
+            id: id,
+            phase: phase,
+            point: touch.location(in: self),
+            timeMs: touchTimestampMs(touch)
+        )
+    }
+
+    /// `UITouch.timestamp` (seconds since the device boot) converted to
+    /// the engine's millisecond clock. Same boot-uptime domain as the
+    /// frame pump's `CACurrentMediaTime`, so touch events and frames
+    /// share one monotonic timeline.
+    private func touchTimestampMs(_ touch: UITouch) -> UInt64 {
+        UInt64((touch.timestamp * 1_000).rounded(.down))
     }
 
     private func allocateTouchID() -> UInt32 {
@@ -528,7 +543,7 @@ final class OpPlayerView: UIView, UITextViewDelegate, UIDocumentPickerDelegate {
             lastKnownPoint = point
             longPressFired = false
             armLongPress(at: point)
-            host.editorPress(x: point.x, y: point.y)
+            host.editorPressAt(x: point.x, y: point.y, timeMs: touchTimestampMs(touch))
         } else if touchIDs.count == 2 {
             // Second finger: pan + pinch take over. Track BOTH touches
             // (the primary was registered earlier, the new one now).
@@ -536,7 +551,7 @@ final class OpPlayerView: UIView, UITextViewDelegate, UIDocumentPickerDelegate {
             // The first finger has already entered the ordinary editor press
             // ladder. Cancel that capture before multi-touch starts so a
             // marquee/node drag cannot survive a two-finger gesture.
-            host.editorCancelGesture()
+            host.editorCancelGestureAt(timeMs: OpEngineHost.syntheticCancelNowMs())
             twoFingerActive = true
             pinchTouches.removeAll()
             for (candidateKey, _) in touchIDs {
@@ -576,7 +591,7 @@ final class OpPlayerView: UIView, UITextViewDelegate, UIDocumentPickerDelegate {
         }
         guard key == primaryTouchKey else { return }
         lastKnownPoint = point
-        host.editorMove(x: point.x, y: point.y)
+        host.editorMoveAt(x: point.x, y: point.y, timeMs: touchTimestampMs(touch))
         // Movement beyond the slop cancels the long-press candidate.
         if let work = longPressWork, !longPressFired {
             let slop = Self.editorLongPressSlop
@@ -597,7 +612,7 @@ final class OpPlayerView: UIView, UITextViewDelegate, UIDocumentPickerDelegate {
         pinchTouches.removeValue(forKey: key)
         if twoFingerActive {
             // Ends the explicit direct-transform ownership captured above.
-            host.editorCancelGesture()
+            host.editorCancelGestureAt(timeMs: OpEngineHost.syntheticCancelNowMs())
             // The surviving finger belongs to the same physical two-finger
             // sequence. Suppress it through its terminal event so its final Up
             // cannot re-enter the single-finger release ladder. A later clean
@@ -610,7 +625,7 @@ final class OpPlayerView: UIView, UITextViewDelegate, UIDocumentPickerDelegate {
         longPressWork?.cancel()
         longPressWork = nil
         if !longPressFired {
-            host.editorRelease(x: point.x, y: point.y)
+            host.editorReleaseAt(x: point.x, y: point.y, timeMs: touchTimestampMs(touch))
         }
         primaryTouchKey = nil
         longPressFired = false
@@ -644,7 +659,7 @@ final class OpPlayerView: UIView, UITextViewDelegate, UIDocumentPickerDelegate {
             if self.presentPasteMenuIfEditingText(at: self.lastKnownPoint) {
                 // The press capture opened at Down must not leak while the
                 // release is suppressed by `longPressFired`.
-                self.host.editorCancelGesture()
+                self.host.editorCancelGestureAt(timeMs: OpEngineHost.syntheticCancelNowMs())
             } else {
                 self.host.editorRightPress(x: self.lastKnownPoint.x, y: self.lastKnownPoint.y)
             }

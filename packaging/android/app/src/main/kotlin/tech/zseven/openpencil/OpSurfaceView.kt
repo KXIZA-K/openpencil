@@ -11,15 +11,9 @@ import android.view.SurfaceView
 import android.view.ViewTreeObserver
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
-import android.view.inputmethod.InputMethodManager
 import java.io.File
 
 private const val TAG = "OpenPencilPlayer"
-
-/** Long-press delay (ms) before a right-click context menu. */
-private const val LONG_PRESS_MS = 500L
-/** Movement (logical dp) that cancels a long-press candidate. */
-private const val LONG_PRESS_SLOP = 8f
 
 /** Pointer phases mirroring the C ABI `OpPointerPhase`. */
 private const val PHASE_DOWN = 0
@@ -41,6 +35,11 @@ private const val GPU_ERROR = 4
  * topmost node under the finger, single-finger drag pans, two-finger pinch
  * zooms around the pinch midpoint. The engine paints the document's active
  * page with the exact painter the desktop editor canvas uses.
+ *
+ * Cohesive subsystems live beside this file: [OpSurfaceViewEditorTouch]
+ * (editor touch ladder), [OpSurfaceViewImeCoordinator] (IME focus latches),
+ * and [OpSurfaceViewShellBridge] (Activity-owned shell actions + editor
+ * APIs).
  */
 class OpSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Callback {
 
@@ -48,6 +47,9 @@ class OpSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Call
         private set
 
     private val viewportInputState = ViewportInputState(resources.displayMetrics.density)
+    private val shellBridge = OpSurfaceViewShellBridge(this)
+    private val editorTouch = OpSurfaceViewEditorTouch(this)
+    private val ime = OpSurfaceViewImeCoordinator(this)
     private var attachedOnce = false
     private var docBytes: ByteArray = ByteArray(0)
     private var editorMode = false
@@ -55,28 +57,6 @@ class OpSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Call
     internal val authRuntime = AndroidAuthRuntime(context)
     private val privateStorageRoot =
         File(context.applicationContext.noBackupFilesDir, "config").absolutePath
-
-    // ---- editor-mode touch tracking --------------------------------------
-    private var primaryPointerId = -1
-    private var longPressArmed = false
-    private var longPressFired = false
-    private val longPressRunnable = Runnable { fireLongPress() }
-    private var lastMidX = 0f
-    private var lastMidY = 0f
-    private var lastPinchDist = 0f
-    private var twoFingerActive = false
-    private var editorReleaseSuppressed = false
-    /** Actual platform visibility, updated only from WindowInsets. */
-    private var imeVisible = false
-    /** Avoid duplicate requests while Android is accepting a show request. */
-    private var imeShowRequestPending = false
-    private var imeShowNeeded = false
-    private var imeWasFocused = false
-    private var imeShowAttempts = 0
-    private val clearImeShowRequest = Runnable {
-        imeShowRequestPending = false
-        if (imeShowNeeded && imeShowAttempts < 2) requestFrame()
-    }
 
     private val choreographer = Choreographer.getInstance()
     private var frameScheduled = false
@@ -135,24 +115,29 @@ class OpSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Call
      *  an atomic viewport tuple is committed. */
     private var safeAreaPx = intArrayOf(0, 0, 0, 0) // t, r, b, l
     private var keyboardHeight = 0f
-    private var openDocumentHandler: (() -> Unit)? = null
-    private var importImageOrSvgHandler: (() -> Unit)? = null
-    private var exportDocumentHandler: (() -> Unit)? = null
-    private var saveDocumentHandler: (() -> Unit)? = null
-    private var accountCenterHandler: (() -> Unit)? = null
-    private var requestLoginHandler: (() -> Unit)? = null
-    private var languagePickerHandler: (() -> Unit)? = null
-    private var openLoginUiHandler: ((String) -> Unit)? = null
-    private var closeLoginUiHandler: (() -> Unit)? = null
-    private var systemChromeAppearanceHandler: ((Boolean) -> Unit)? = null
     private var backgroundWorkActivationHandler: (() -> Unit)? = null
     private var backgroundPermissionPromptPending = false
-    private var prefersLightSystemIcons: Boolean? = null
 
     init {
         holder.addCallback(this)
         isFocusable = true
         isFocusableInTouchMode = true
+    }
+
+    // ---- Narrow seams the extracted subsystems read through --------------
+
+    internal fun editorEngine(): Long = engine
+
+    internal val committedInputDensity: Float
+        get() = viewportInputState.committedDensity
+
+    internal val isFrameGateOpen: Boolean
+        get() = surfaceReady
+
+    /** First paint + chrome drain right after a press lands (DOWN path). */
+    internal fun settleEditorPressFlow() {
+        shellBridge.pollShellAction()
+        requestFrame()
     }
 
     fun configure(doc: ByteArray, editorMode: Boolean, fonts: List<ByteArray> = emptyList()) {
@@ -163,187 +148,65 @@ class OpSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Call
 
     fun editorMode(): Boolean = editorMode
 
-    /** Registers the main-thread shell action handler owned by the Activity. */
-    fun setOpenDocumentHandler(handler: () -> Unit) {
-        openDocumentHandler = handler
-    }
+    // ---- Activity-owned handler registration (see the shell bridge) ------
 
-    /** Registers the Activity-owned image / SVG picker handler. */
-    fun setImportImageOrSvgHandler(handler: () -> Unit) {
-        importImageOrSvgHandler = handler
-    }
+    fun setOpenDocumentHandler(handler: () -> Unit) = shellBridge.setOpenDocumentHandler(handler)
 
-    /** Registers the Activity-owned save-UI handler for frozen exports. */
-    fun setExportDocumentHandler(handler: () -> Unit) {
-        exportDocumentHandler = handler
-    }
+    fun setImportImageOrSvgHandler(handler: () -> Unit) =
+        shellBridge.setImportImageOrSvgHandler(handler)
 
-    /**
-     * Registers the Activity-owned Save / Save As picker handler AND tells
-     * the engine this shell can present one. Without the declaration the
-     * engine keeps painting its own name dialog and writes into the private
-     * `documents/` fallback, which Android 11+ hides from the file manager.
-     */
-    fun setSaveDocumentHandler(handler: () -> Unit) {
-        saveDocumentHandler = handler
-        val current = engine
-        if (editorMode && current != 0L) {
-            OpNative.nativeEditorConfigureSavePicker(current, true)
-        }
-    }
+    fun setExportDocumentHandler(handler: () -> Unit) =
+        shellBridge.setExportDocumentHandler(handler)
 
-    /** Registers the Activity-owned native account-center handler. */
-    fun setAccountCenterHandler(handler: () -> Unit) {
-        accountCenterHandler = handler
-    }
+    fun setSaveDocumentHandler(handler: () -> Unit) = shellBridge.setSaveDocumentHandler(handler)
 
-    /** Registers the Activity-owned sign-in starter (lazy auth configure). */
-    fun setRequestLoginHandler(handler: () -> Unit) {
-        requestLoginHandler = handler
-    }
+    fun setAccountCenterHandler(handler: () -> Unit) =
+        shellBridge.setAccountCenterHandler(handler)
 
-    /** Registers the Activity-owned native language picker. */
-    fun setLanguagePickerHandler(handler: () -> Unit) {
-        languagePickerHandler = handler
-    }
+    fun setRequestLoginHandler(handler: () -> Unit) = shellBridge.setRequestLoginHandler(handler)
 
-    /** Registers lifecycle callbacks for the Activity-owned native login UI. */
-    fun setLoginUiHandlers(open: (String) -> Unit, close: () -> Unit) {
-        openLoginUiHandler = open
-        closeLoginUiHandler = close
-    }
+    fun setLanguagePickerHandler(handler: () -> Unit) =
+        shellBridge.setLanguagePickerHandler(handler)
+
+    fun setLoginUiHandlers(open: (String) -> Unit, close: () -> Unit) =
+        shellBridge.setLoginUiHandlers(open, close)
+
+    fun setSystemChromeAppearanceHandler(handler: (Boolean) -> Unit) =
+        shellBridge.setSystemChromeAppearanceHandler(handler)
 
     /** User close/back: cancel the single auth flow owned by this engine. */
-    fun cancelLogin() {
-        val current = engine
-        if (!editorMode || current == 0L) return
-        val status = OpNative.nativeEditorCancelLogin(current)
-        if (status != 0 && status != OpNative.STATUS_CLOSING) {
-            Log.i(TAG, "login cancel returned status=$status")
-        }
-        requestFrame()
-    }
+    fun cancelLogin() = shellBridge.cancelLogin()
 
     /** Starts the device flow; returns the raw engine status. */
-    fun beginLogin(): Int {
-        val current = engine
-        if (!editorMode || current == 0L) return OpNative.STATUS_CLOSING
-        val status = OpNative.nativeEditorBeginLogin(current)
-        requestFrame()
-        return status
-    }
+    fun beginLogin(): Int = shellBridge.beginLogin()
 
     /** Applies a UI locale tag; returns the raw engine status. */
-    fun setLocale(tag: String): Int {
-        val current = engine
-        if (!editorMode || current == 0L) return OpNative.STATUS_CLOSING
-        val status = OpNative.nativeEditorSetLocale(current, tag)
-        requestFrame()
-        return status
-    }
+    fun setLocale(tag: String): Int = shellBridge.setLocale(tag)
 
     /** The current UI locale's BCP-47 tag, if readable. */
-    fun localeCode(): String? {
-        val current = engine
-        if (!editorMode || current == 0L) return null
-        return OpNative.nativeEditorLocaleCode(current)
-    }
+    fun localeCode(): String? = shellBridge.localeCode()
 
     /** Copies the engine's JSON account snapshot (never consumed). */
-    fun accountSnapshot(): String? {
-        val current = engine
-        if (!editorMode || current == 0L) return null
-        return OpNative.nativeEditorAccountSnapshot(current)
-    }
+    fun accountSnapshot(): String? = shellBridge.accountSnapshot()
 
     /** Revokes the device session from the native account center. */
-    fun signOutAccount() {
-        val current = engine
-        if (!editorMode || current == 0L) return
-        val status = OpNative.nativeEditorSignOut(current)
-        if (status != 0 && status != OpNative.STATUS_CLOSING) {
-            Log.i(TAG, "sign out returned status=$status")
-        }
-        requestFrame()
-    }
+    fun signOutAccount() = shellBridge.signOutAccount()
 
     /** Copies the frozen export's file name without consuming the artifact. */
-    fun exportFileName(): String? {
-        val current = engine
-        if (!editorMode || current == 0L) return null
-        return OpNative.nativeEditorExportFileName(current)
-    }
+    fun exportFileName(): String? = shellBridge.exportFileName()
 
     /** Writes the frozen export into a new absolute staging file. */
-    fun exportToPath(path: String): Int {
-        val current = engine
-        if (!editorMode || current == 0L) return OpNative.STATUS_CLOSING
-        return OpNative.nativeEditorExportToPath(current, path)
-    }
+    fun exportToPath(path: String): Int = shellBridge.exportToPath(path)
 
     /** Discards the frozen export when the save UI cannot run. */
-    fun cancelExport() {
-        val current = engine
-        if (!editorMode || current == 0L) return
-        val status = OpNative.nativeEditorCancelExport(current)
-        if (status != 0 && status != OpNative.STATUS_CLOSING) {
-            Log.i(TAG, "export cancel returned status=$status")
-        }
-        requestFrame()
-    }
+    fun cancelExport() = shellBridge.cancelExport()
 
-    /** Registers a main-thread window-chrome updater owned by the Activity. */
-    fun setSystemChromeAppearanceHandler(handler: (Boolean) -> Unit) {
-        systemChromeAppearanceHandler = handler
-    }
+    /** Replays the last engine preference after an in-place configuration. */
+    fun replaySystemChromeAppearance() = shellBridge.replaySystemChromeAppearance()
 
     /** Requests notification permission on the inactive -> active edge. */
     fun setBackgroundWorkActivationHandler(handler: () -> Unit) {
         backgroundWorkActivationHandler = handler
-    }
-
-    /** Replays the last engine preference after an in-place configuration. */
-    fun replaySystemChromeAppearance() {
-        val preference = prefersLightSystemIcons ?: return
-        post { systemChromeAppearanceHandler?.invoke(preference) }
-    }
-
-    private val imm: InputMethodManager
-        get() = context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
-
-    /** Editor mode: the engine's host owns the IME focus; keep the system
-     *  keyboard in sync after every interaction + frame. */
-    fun syncIme() {
-        if (!editorMode || engine == 0L) return
-        val focused = OpNative.nativeEditorImeFocused(engine)
-        if (focused && !imeWasFocused) {
-            imeShowNeeded = true
-            imeShowAttempts = 0
-        }
-        imeWasFocused = focused
-        if (focused && !imeVisible && imeShowNeeded &&
-            !imeShowRequestPending && imeShowAttempts < 2
-        ) {
-            requestFocus()
-            // Insets, not this return value, are the visibility source of
-            // truth. If Android accepts but never shows (or rotation hides)
-            // the IME, a later frame may retry after the short request gate.
-            imeShowAttempts++
-            imeShowRequestPending = imm.showSoftInput(this, 0)
-            removeCallbacks(clearImeShowRequest)
-            if (imeShowAttempts < 2) {
-                // A rejected request also needs a later frame; otherwise no
-                // native animation may remain to drive the bounded retry.
-                postDelayed(clearImeShowRequest, 400L)
-            }
-        } else if (!focused && imeVisible) {
-            imm.hideSoftInputFromWindow(windowToken, 0)
-        }
-        if (!focused) {
-            imeShowNeeded = false
-            imeShowAttempts = 0
-            imeShowRequestPending = false
-        }
     }
 
     override fun onCheckIsTextEditor(): Boolean = editorMode && engine != 0L
@@ -407,7 +270,7 @@ class OpSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Call
             // The Activity may have registered the handler before the engine
             // existed (configure() runs in onCreate); re-declare here so the
             // capability is always in place before the first shell action.
-            if (editorMode && saveDocumentHandler != null) {
+            if (editorMode && shellBridge.hasSavePicker()) {
                 OpNative.nativeEditorConfigureSavePicker(engine, true)
             }
             EngineLanguage.storedPreference(context)?.let { tag ->
@@ -444,7 +307,10 @@ class OpSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Call
             BackgroundGenerationController.markSurfaceResuming(context, engine)
             // nativeResume is invalid until nativeAttachSurface has succeeded
             // once; attachOrResume owns that distinction.
-            if (attachedOnce) OpNative.nativeSuspend(engine)
+            if (attachedOnce) {
+                cancelStreamsBeforeSuspend()
+                OpNative.nativeSuspend(engine)
+            }
             val resumed = holder.surface.isValid && attachOrResume(holder.surface)
             if (resumed) {
                 openSurfaceFrameGate()
@@ -452,7 +318,7 @@ class OpSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Call
                 BackgroundGenerationController.markSurfaceSuspended(engine)
             }
         }
-        markImeForConfigurationRetry()
+        ime.retryAfterConfiguration()
         scheduleViewportUpdate()
     }
 
@@ -462,13 +328,15 @@ class OpSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Call
         // suspend barrier. A callback already queued by a background redraw
         // can no longer cross the barrier and call nativeFrame afterwards.
         closeSurfaceFrameGate()
-        resetEditorTouchTracking()
+        editorTouch.resetTracking()
         // This final foreground-originated observation starts the FGS before
         // handing pump ownership over. onPause performs the same probe before
         // Android's visible-activity start exemption can disappear.
         observeBackgroundGeneration(allowPermissionPrompt = false)
         // Blocking suspend BEFORE returning — the platform reclaims the
-        // Surface after this returns.
+        // Surface after this returns. Any live gesture stream is cancelled
+        // with the real monotonic clock first so it cannot cross the barrier.
+        cancelStreamsBeforeSuspend()
         OpNative.nativeSuspend(engine)
         BackgroundGenerationController.markSurfaceSuspended(engine)
     }
@@ -509,14 +377,7 @@ class OpSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Call
 
     fun updateKeyboard(h: Float, visible: Boolean) {
         val next = if (visible) h.coerceAtLeast(0f) else 0f
-        val visibilityChanged = imeVisible != visible
-        imeVisible = visible
-        imeShowRequestPending = false
-        removeCallbacks(clearImeShowRequest)
-        if (visible) {
-            imeShowNeeded = false
-            imeShowAttempts = 0
-        }
+        val visibilityChanged = ime.observeKeyboardVisibility(visible)
         if (keyboardHeight == next && !visibilityChanged) return
         keyboardHeight = next
         if (engine != 0L) OpNative.nativeSetKeyboard(engine, next)
@@ -534,31 +395,43 @@ class OpSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Call
         scheduleViewportUpdate()
         // A rotation can dismiss the IME while native input remains focused.
         // Insets clear the visibility latch; the next frame retries the show.
-        markImeForConfigurationRetry()
+        ime.retryAfterConfiguration()
         requestFrame()
-    }
-
-    private fun markImeForConfigurationRetry() {
-        imeShowNeeded = true
-        imeShowAttempts = 0
-        imeShowRequestPending = false
-        removeCallbacks(clearImeShowRequest)
-    }
-
-    private fun refreshDensityFromResources(): Boolean {
-        return viewportInputState.stageDensity(resources.displayMetrics.density)
     }
 
     private fun markViewportInputPending() {
         if (!viewportInputState.beginGeometryUpdate() || engine == 0L) return
         if (editorMode) {
-            OpNative.nativeEditorCancelGesture(engine)
-            resetEditorTouchTracking()
+            OpNative.nativeEditorCancelGestureAt(engine, uptimeClockMs())
+            editorTouch.resetTracking()
+        } else {
+            // Generic pointer Cancel is global in the engine; coordinates and
+            // pointer id are intentionally ignored for cancellation. This is
+            // a shell-fabricated geometry transition with no MotionEvent of
+            // its own, so it carries the monotonic uptime clock instead of a
+            // zero timestamp.
+            OpNative.nativePointer(engine, 0, PHASE_CANCEL, 0f, 0f, uptimeClockMs())
+        }
+    }
+
+    /**
+     * Cancels any live Editor/Viewer gesture stream with the platform cancel
+     * clock and clears local touch tracking. Every pre-suspend barrier
+     * (surfaceChanged / surfaceDestroyed / GPU recovery / destroy) MUST run
+     * this before [OpNative.nativeSuspend] — 先 Cancel、后 suspend — so an
+     * armed press/move ladder can never cross a suspended surface. Idempotent
+     * while no gesture is live.
+     */
+    private fun cancelStreamsBeforeSuspend() {
+        if (engine == 0L) return
+        if (editorMode) {
+            OpNative.nativeEditorCancelGestureAt(engine, uptimeClockMs())
         } else {
             // Generic pointer Cancel is global in the engine; coordinates and
             // pointer id are intentionally ignored for cancellation.
-            OpNative.nativePointer(engine, 0, PHASE_CANCEL, 0f, 0f, 0L)
+            OpNative.nativePointer(engine, 0, PHASE_CANCEL, 0f, 0f, uptimeClockMs())
         }
+        editorTouch.resetTracking()
     }
 
     private fun scheduleViewportUpdate() {
@@ -650,10 +523,10 @@ class OpSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Call
         when (status) {
             GPU_ERROR -> recoverGpu()
             0 -> {
-                syncSystemChromeAppearance()
-                syncIme()
-                drainCopyText()
-                pollShellAction()
+                shellBridge.syncSystemChromeAppearance()
+                ime.sync()
+                shellBridge.drainCopyText()
+                shellBridge.pollShellAction()
                 observeBackgroundGeneration(allowPermissionPrompt = true)
             }
         }
@@ -676,29 +549,6 @@ class OpSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Call
         }
     }
 
-    /** Outbound clipboard bridge: engine copy buttons (collab invite /
-     *  share address, MCP config, chat copy) queue text that the desktop
-     *  drains into the OS clipboard; here the same queue lands on the
-     *  Android clipboard. NotReady (null) is the common per-frame case. */
-    private fun drainCopyText() {
-        if (!editorMode || engine == 0L) return
-        val text = OpNative.nativeEditorTakeCopyText(engine) ?: return
-        val clipboard =
-            context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-        clipboard.setPrimaryClip(android.content.ClipData.newPlainText("OpenPencil", text))
-    }
-
-    /** Poll after a successful frame so a theme toggle and its icon contrast
-     *  are presented together. JNI errors/closing use a light-surface-safe
-     *  false fallback; the main-thread window update is value-deduplicated. */
-    private fun syncSystemChromeAppearance() {
-        if (engine == 0L) return
-        val next = OpNative.nativePrefersLightSystemIcons(engine)
-        if (prefersLightSystemIcons == next) return
-        prefersLightSystemIcons = next
-        post { systemChromeAppearanceHandler?.invoke(next) }
-    }
-
     /**
      * One suspend → resume recovery per surface generation on a GpuError.
      * A surfaceDestroyed that raced in wins (the surface is invalid → drop
@@ -714,17 +564,20 @@ class OpSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Call
         val surface = holder.surface
         if (gen == lastRecoveredGeneration) {
             Log.w(TAG, "GpuError with recovery budget spent (generation $gen) — pump stopped")
+            cancelStreamsBeforeSuspend()
             OpNative.nativeSuspend(engine)
             BackgroundGenerationController.markSurfaceSuspended(engine)
             return
         }
         if (surface == null || !surface.isValid) {
+            cancelStreamsBeforeSuspend()
             OpNative.nativeSuspend(engine)
             BackgroundGenerationController.markSurfaceSuspended(engine)
             return // raced surfaceDestroyed wins
         }
         lastRecoveredGeneration = gen
         Log.i(TAG, "GpuError → suspend/resume recovery (generation $gen)")
+        cancelStreamsBeforeSuspend()
         OpNative.nativeSuspend(engine)
         val resumed = surface.isValid && OpNative.nativeResume(engine, surface) == 0
         if (resumed) {
@@ -786,7 +639,7 @@ class OpSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Call
         if (!viewportInputState.acceptsTouch(event.actionMasked, event.pointerCount)) return true
         val tMs = event.eventTime
         if (editorMode) {
-            return editorTouch(event)
+            return editorTouch.editorTouch(event)
         }
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
@@ -822,185 +675,10 @@ class OpSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Call
         )
     }
 
-    // ---- Editor-mode touch: press/move/release + long-press + pan/pinch --
-
-    private fun editorTouch(event: MotionEvent): Boolean {
-        val inputDensity = viewportInputState.committedDensity
-        when (event.actionMasked) {
-            MotionEvent.ACTION_DOWN -> {
-                primaryPointerId = event.getPointerId(0)
-                longPressArmed = true
-                longPressFired = false
-                lastKnownX = event.x
-                lastKnownY = event.y
-                downX = event.x / inputDensity
-                downY = event.y / inputDensity
-                postDelayed(longPressRunnable, LONG_PRESS_MS)
-                OpNative.nativeEditorPress(engine, event.x / inputDensity, event.y / inputDensity)
-                pollShellAction()
-                requestFrame()
-            }
-            MotionEvent.ACTION_POINTER_DOWN -> {
-                if (event.pointerCount == 2) {
-                    // Two fingers: pan + pinch take over.
-                    longPressArmed = false
-                    removeCallbacks(longPressRunnable)
-                    // The first pointer already entered the editor press
-                    // ladder. Cancel that capture before multi-touch starts
-                    // so no marquee/node drag survives the takeover.
-                    OpNative.nativeEditorCancelGesture(engine)
-                    editorReleaseSuppressed = true
-                    twoFingerActive = true
-                    val (midX, midY) = midpoint(event)
-                    lastMidX = midX
-                    lastMidY = midY
-                    lastPinchDist = distance(event)
-                    OpNative.nativeEditorBeginTransform(
-                        engine,
-                        midX / inputDensity,
-                        midY / inputDensity,
-                    )
-                }
-            }
-            MotionEvent.ACTION_MOVE -> {
-                if (twoFingerActive && event.pointerCount >= 2) {
-                    val (midX, midY) = midpoint(event)
-                    val dx = (midX - lastMidX) / inputDensity
-                    val dy = (midY - lastMidY) / inputDensity
-                    val dist = distance(event)
-                    val pinchDelta = PinchZoomDelta.wheelDelta(
-                        previousDistance = lastPinchDist,
-                        currentDistance = dist,
-                    )
-                    lastMidX = midX
-                    lastMidY = midY
-                    lastPinchDist = dist
-                    if (dx != 0f || dy != 0f) {
-                        OpNative.nativeEditorPan(
-                            engine,
-                            midX / inputDensity,
-                            midY / inputDensity,
-                            dx,
-                            dy,
-                        )
-                    }
-                    if (pinchDelta != 0f) {
-                        OpNative.nativeEditorPinch(
-                            engine,
-                            midX / inputDensity,
-                            midY / inputDensity,
-                            pinchDelta,
-                        )
-                    }
-                    requestFrame()
-                } else if (primaryPointerId >= 0) {
-                    val index = event.findPointerIndex(primaryPointerId)
-                    if (index >= 0) {
-                        val x = event.getX(index) / inputDensity
-                        val y = event.getY(index) / inputDensity
-                        lastKnownX = event.getX(index)
-                        lastKnownY = event.getY(index)
-                        OpNative.nativeEditorMove(engine, x, y)
-                        // Movement cancels the long-press candidate.
-                        if (longPressArmed) {
-                            val deltaX = x - downX
-                            val deltaY = y - downY
-                            if (deltaX * deltaX + deltaY * deltaY >
-                                LONG_PRESS_SLOP * LONG_PRESS_SLOP
-                            ) {
-                                longPressArmed = false
-                                removeCallbacks(longPressRunnable)
-                            }
-                        }
-                        requestFrame()
-                    }
-                }
-            }
-            MotionEvent.ACTION_POINTER_UP -> {
-                if (twoFingerActive) {
-                    // End transform ownership before the remaining pointer is
-                    // re-armed; its eventual Up must never release the press
-                    // ladder cancelled at second-finger Down.
-                    OpNative.nativeEditorCancelGesture(engine)
-                    twoFingerActive = false
-                    // Track the remaining physical pointer only so its final
-                    // Up can terminate this suppressed stream. A fresh Down
-                    // is required before press/move/release may resume.
-                    val index = if (event.actionIndex == 0) 1 else 0
-                    if (index < event.pointerCount) {
-                        primaryPointerId = event.getPointerId(index)
-                        longPressArmed = false
-                    }
-                }
-            }
-            MotionEvent.ACTION_UP -> {
-                removeCallbacks(longPressRunnable)
-                if (twoFingerActive) {
-                    OpNative.nativeEditorCancelGesture(engine)
-                    twoFingerActive = false
-                } else if (!longPressFired && !editorReleaseSuppressed) {
-                    val x = event.x / inputDensity
-                    val y = event.y / inputDensity
-                    OpNative.nativeEditorRelease(engine, x, y)
-                }
-                resetEditorTouchTracking()
-                requestFrame()
-            }
-            MotionEvent.ACTION_CANCEL -> {
-                // A platform cancellation must never run the release ladder:
-                // release may commit a deferred tap, drag/drop, or history.
-                OpNative.nativeEditorCancelGesture(engine)
-                resetEditorTouchTracking()
-                requestFrame()
-            }
-            else -> return false
-        }
-        return true
-    }
-
-    private fun resetEditorTouchTracking() {
-        removeCallbacks(longPressRunnable)
-        primaryPointerId = -1
-        longPressArmed = false
-        longPressFired = false
-        twoFingerActive = false
-        editorReleaseSuppressed = false
-        lastMidX = 0f
-        lastMidY = 0f
-        lastPinchDist = 0f
-        lastKnownX = 0f
-        lastKnownY = 0f
-        downX = 0f
-        downY = 0f
-    }
-
-    private fun fireLongPress() {
-        longPressArmed = false
-        if (!surfaceReady || engine == 0L) return
-        longPressFired = true
-        val inputDensity = viewportInputState.committedDensity
-        // The Down at press time already ran the engine's press ladder, so
-        // the engine's IME focus reflects THIS touch: focused means the
-        // finger is holding an editable text field — offer Paste instead of
-        // the right-click context menu.
-        if (showPasteMenuIfEditingText(lastKnownX, lastKnownY)) {
-            // The press capture opened at Down must not leak while the
-            // release is suppressed by longPressFired.
-            OpNative.nativeEditorCancelGesture(engine)
-        } else {
-            OpNative.nativeEditorRightPress(
-                engine,
-                lastKnownX / inputDensity,
-                lastKnownY / inputDensity,
-            )
-        }
-        requestFrame()
-    }
-
     /** Floating "Paste" menu at view coordinates (px) over the focused
      *  engine text input. Returns false to fall back to the engine's
      *  long-press (right-click) path. */
-    private fun showPasteMenuIfEditingText(xPx: Float, yPx: Float): Boolean {
+    internal fun showPasteMenuIfEditingText(xPx: Float, yPx: Float): Boolean {
         if (!editorMode || engine == 0L) return false
         if (!OpNative.nativeEditorImeFocused(engine)) return false
         return EditorPasteMenu.show(this, xPx, yPx) { text ->
@@ -1012,115 +690,25 @@ class OpSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Call
         }
     }
 
-    private var lastKnownX = 0f
-    private var lastKnownY = 0f
-    private var downX = 0f
-    private var downY = 0f
-
-    /**
-     * Shell actions are consumed only after a blocking JNI call has returned.
-     * Posting the handler prevents the Activity Result launcher from running
-     * inside an engine callback or touch dispatch stack.
-     */
-    private fun pollShellAction() {
-        if (!editorMode || engine == 0L) return
-        val action = OpNative.nativeEditorTakeShellAction(engine)
-        when {
-            action < 0 || action == OpNative.SHELL_ACTION_NONE -> Unit
-            action == OpNative.SHELL_ACTION_OPEN_DOCUMENT -> post {
-                if (engine != 0L) openDocumentHandler?.invoke()
-            }
-            action == OpNative.SHELL_ACTION_IMPORT_IMAGE_OR_SVG -> post {
-                if (engine != 0L) importImageOrSvgHandler?.invoke()
-            }
-            action == OpNative.SHELL_ACTION_EXPORT_DOCUMENT -> post {
-                if (engine != 0L) exportDocumentHandler?.invoke()
-            }
-            action == OpNative.SHELL_ACTION_SAVE_DOCUMENT -> post {
-                if (engine != 0L) saveDocumentHandler?.invoke()
-            }
-            action == OpNative.SHELL_ACTION_OPEN_ACCOUNT_CENTER -> post {
-                if (engine != 0L) accountCenterHandler?.invoke()
-            }
-            action == OpNative.SHELL_ACTION_REQUEST_LOGIN -> post {
-                if (engine != 0L) requestLoginHandler?.invoke()
-            }
-            action == OpNative.SHELL_ACTION_OPEN_LANGUAGE_PICKER -> post {
-                if (engine != 0L) languagePickerHandler?.invoke()
-            }
-            action == OpNative.SHELL_ACTION_OPEN_LOGIN_WEBVIEW -> {
-                val url = OpNative.nativeEditorTakeLoginUrl(engine)
-                if (url.isNullOrBlank()) {
-                    Log.w(TAG, "login action had no URL; canceling the flow")
-                    OpNative.nativeEditorCancelLogin(engine)
-                } else {
-                    post {
-                        if (engine != 0L) openLoginUiHandler?.invoke(url)
-                    }
-                }
-            }
-            action == OpNative.SHELL_ACTION_CLOSE_LOGIN_WEBVIEW -> post {
-                closeLoginUiHandler?.invoke()
-            }
-            else -> Log.w(TAG, "unknown editor shell action=$action")
-        }
-    }
-
     /** Replaces the document atomically in the engine and schedules its first frame. */
-    fun openDocument(bytes: ByteArray, displayName: String): Int {
-        val current = engine
-        if (!editorMode || current == 0L) return OpNative.STATUS_CLOSING
-        val status = OpNative.nativeEditorOpenDocument(current, bytes, displayName)
-        if (status == 0) {
-            syncIme()
-            requestFrame()
-        }
-        return status
-    }
+    fun openDocument(bytes: ByteArray, displayName: String): Int =
+        shellBridge.openDocument(bytes, displayName)
 
     /** Returns one platform-picked image/SVG to Rust, then repaints success or rejection. */
-    fun importImageOrSvg(bytes: ByteArray, displayName: String): Int {
-        val current = engine
-        if (!editorMode || current == 0L) return OpNative.STATUS_CLOSING
-        val status = OpNative.nativeEditorImportImageOrSvg(current, bytes, displayName)
-        requestFrame()
-        return status
-    }
+    fun importImageOrSvg(bytes: ByteArray, displayName: String): Int =
+        shellBridge.importImageOrSvg(bytes, displayName)
 
-    private fun midpoint(event: MotionEvent): Pair<Float, Float> {
-        var sx = 0f
-        var sy = 0f
-        for (i in 0 until event.pointerCount) {
-            sx += event.getX(i)
-            sy += event.getY(i)
-        }
-        lastKnownX = sx / event.pointerCount
-        lastKnownY = sy / event.pointerCount
-        return lastKnownX to lastKnownY
-    }
-
-    private fun distance(event: MotionEvent): Float {
-        if (event.pointerCount < 2) return 0f
-        val dx = event.getX(0) - event.getX(1)
-        val dy = event.getY(0) - event.getY(1)
-        return Math.sqrt((dx * dx + dy * dy).toDouble()).toFloat()
+    /** Editor-mode IME sync kept in sync with the engine's focus each frame. */
+    fun syncIme() {
+        ime.sync()
     }
 
     fun destroy() {
-        openDocumentHandler = null
-        importImageOrSvgHandler = null
-        exportDocumentHandler = null
-        saveDocumentHandler = null
-        accountCenterHandler = null
-        requestLoginHandler = null
-        languagePickerHandler = null
-        openLoginUiHandler = null
-        closeLoginUiHandler = null
-        systemChromeAppearanceHandler = null
+        shellBridge.releaseHandlers()
         backgroundWorkActivationHandler = null
         backgroundPermissionPromptPending = false
-        removeCallbacks(longPressRunnable)
-        removeCallbacks(clearImeShowRequest)
+        editorTouch.detach()
+        ime.teardown()
         closeSurfaceFrameGate()
         if (viewTreeObserver.isAlive) {
             viewTreeObserver.removeOnPreDrawListener(viewportPreDrawListener)
@@ -1130,6 +718,7 @@ class OpSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Call
             // aggressive "don't keep activities" / OEM paths. Suspend here
             // as an idempotent barrier before a service-retained lease loses
             // its last View, otherwise the background pump gate never opens.
+            cancelStreamsBeforeSuspend()
             OpNative.nativeSuspend(engine)
             BackgroundGenerationController.markSurfaceSuspended(engine)
             BackgroundGenerationController.releaseView(context, engine, this)

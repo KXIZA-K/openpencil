@@ -5,14 +5,13 @@
 //! `op_editor_key(KEY_BACKSPACE)` for the system keyboard's delete key.
 
 use crate::desc::{Callbacks, CreateOptions};
-use crate::editor::{
-    op_editor_key, op_editor_press, op_editor_release, op_editor_text, KEY_BACKSPACE, KEY_DELETE,
-};
+use crate::editor::{op_editor_key, op_editor_text, KEY_BACKSPACE, KEY_DELETE};
 use crate::editor_ime::{
     op_editor_ime_commit, op_editor_ime_preedit, op_editor_paste_text, op_editor_take_copy_text,
 };
 use crate::lifecycle::{OpEngine, Session};
 use crate::OpStatus;
+use crate::{op_editor_press, op_editor_release};
 use op_editor_core::agent_settings::{BuiltinAgentField, SettingsFocus};
 
 const SAMPLE_DOC: &str =

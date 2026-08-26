@@ -142,9 +142,13 @@ only trust the fields when `status === 0`.
 | Function | Arguments | Returns |
 | --- | --- | --- |
 | `editorPress` | `engine: number, x, y: number` | `number` |
+| `editorPressAt` | `engine: number, x, y, tMs: number` | `number` — the event's factual monotonic timestamp (`TouchEvent.timestamp / 1e6`); the engine's global clock advances monotonically while the preview runtime measures the event's own time |
 | `editorMove` | `engine: number, x, y: number` | `number` |
+| `editorMoveAt` | `engine: number, x, y, tMs: number` | `number` — see `editorPressAt` |
 | `editorRelease` | `engine: number, x, y: number` | `number` |
+| `editorReleaseAt` | `engine: number, x, y, tMs: number` | `number` — the gesture endpoint's factual timestamp |
 | `editorCancelGesture` | `engine: number` | `number` |
+| `editorCancelGestureAt` | `engine: number, tMs: number` | `number` — synthetic Cancel carries the active-uptime clock (`MonotonicClock.nowMs()`) |
 | `editorBeginTransform` | `engine: number, x, y: number` | `number` — pass the second finger's Down MIDPOINT |
 | `editorRightPress` | `engine: number, x, y: number` | `number` |
 | `editorPan` | `engine: number, x, y, dx, dy: number` | `number` — only after `editorBeginTransform` |

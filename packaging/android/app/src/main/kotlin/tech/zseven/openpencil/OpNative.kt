@@ -88,6 +88,14 @@ object OpNative {
     external fun nativeEditorMove(engine: Long, x: Float, y: Float): Int
     external fun nativeEditorRelease(engine: Long, x: Float, y: Float): Int
     external fun nativeEditorCancelGesture(engine: Long): Int
+    /** Timestamped variants: `tMs` is the event's factual monotonic time
+     * (MotionEvent.eventTime on press/move/release, SystemClock.uptimeMillis
+     * on synthetic Cancels) — the engine keeps its global clock monotonic
+     * and passes the raw event time into the preview runtime separately. */
+    external fun nativeEditorPressAt(engine: Long, x: Float, y: Float, tMs: Long): Int
+    external fun nativeEditorMoveAt(engine: Long, x: Float, y: Float, tMs: Long): Int
+    external fun nativeEditorReleaseAt(engine: Long, x: Float, y: Float, tMs: Long): Int
+    external fun nativeEditorCancelGestureAt(engine: Long, tMs: Long): Int
     external fun nativeEditorBeginTransform(engine: Long, x: Float, y: Float): Int
     external fun nativeEditorRightPress(engine: Long, x: Float, y: Float): Int
     external fun nativeEditorPan(engine: Long, x: Float, y: Float, dx: Float, dy: Float): Int

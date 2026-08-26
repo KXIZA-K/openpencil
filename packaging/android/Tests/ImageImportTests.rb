@@ -4,6 +4,8 @@ player_dir = File.expand_path("..", __dir__)
 source_dir = File.join(player_dir, "app/src/main/kotlin/tech/zseven/openpencil")
 activity = File.read(File.join(source_dir, "MainActivity.kt"))
 surface = File.read(File.join(source_dir, "OpSurfaceView.kt"))
+# pollShellAction / importImageOrSvg moved into the shell bridge split.
+surface_bridge = File.read(File.join(source_dir, "OpSurfaceViewShellBridge.kt"))
 native = File.read(File.join(source_dir, "OpNative.kt"))
 
 raise "Android image-import shell action missing" unless native.include?("SHELL_ACTION_IMPORT_IMAGE_OR_SVG = 12")
@@ -12,7 +14,7 @@ raise "Activity must own the image picker" unless activity.include?("ActivityRes
 raise "surface must defer picker presentation to the Activity" unless surface.include?("setImportImageOrSvgHandler")
 raise "Activity must register the image picker handler" unless activity.include?("setImportImageOrSvgHandler(::launchImageOrSvgPicker)")
 
-action = surface[/private fun pollShellAction\(\).*?(?=\n    \/\*\*)/m]
+action = surface_bridge[/fun pollShellAction\(\).*?(?=\n    \/\*\*)/m]
 raise "shell-action drain missing" unless action
 branch = action.index("SHELL_ACTION_IMPORT_IMAGE_OR_SVG")
 post = action.index("post {", branch || 0)
@@ -35,11 +37,13 @@ raise "known-size image must be bounded" unless read.include?("metadata.size > M
 raise "unknown-size image must use the bounded reader" unless read.include?("readDocumentBytes(uri, metadata.size)")
 raise "image bytes must be read off the main thread" unless read.include?("OpenPencilImageImporter")
 
-return_bytes = surface[/fun importImageOrSvg\(.*?(?=\n    private fun midpoint)/m]
+return_bytes = surface_bridge[/fun importImageOrSvg\(.*?(?=\n    \/\*\*)/m]
 raise "image ABI return missing" unless return_bytes&.include?("nativeEditorImportImageOrSvg")
 raise "image ABI return must repaint collaboration rejection" unless return_bytes.include?("requestFrame()")
 raise "collaboration rejection must rely on the engine notice" unless activity.include?("status != OpNative.STATUS_BUSY")
 raise "SVG MIME must restore a missing SVG suffix" unless activity.include?("mime == \"image/svg+xml\"") && activity.include?('"$candidate.svg"')
-raise "teardown must drop the picker handler" unless surface.match?(/fun destroy\(\).*?importImageOrSvgHandler = null/m)
+# Handler release lives in the bridge; destroy() must route through it.
+raise "teardown must drop the picker handler" unless surface.match?(/fun destroy\(\).*?shellBridge\.releaseHandlers\(\)/m) &&
+  surface_bridge.match?(/fun releaseHandlers\(\).*?importImageOrSvgHandler = null/m)
 
 puts "Android image import contract validates"

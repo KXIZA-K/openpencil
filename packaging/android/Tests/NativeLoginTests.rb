@@ -11,6 +11,8 @@ region = File.read(File.join(root, "SsoRegion.kt"))
 request = File.read(File.join(root, "DeviceLoginRequest.kt"))
 activity = File.read(File.join(root, "MainActivity.kt"))
 surface = File.read(File.join(root, "OpSurfaceView.kt"))
+# Editor login/account APIs and their handlers moved into the shell bridge.
+surface_bridge = File.read(File.join(root, "OpSurfaceViewShellBridge.kt"))
 runtime = File.read(File.join(root, "AndroidAuthRuntime.kt"))
 client = File.read(File.join(root, "SsoAuthClient.kt"))
 header = File.read(File.expand_path(
@@ -18,13 +20,13 @@ header = File.read(File.expand_path(
 ))
 
 # The login URL comes only from native; the shell never manufactures one.
-raise "login URL must come from native" unless surface.include?(
-  "OpNative.nativeEditorTakeLoginUrl(engine)",
+raise "login URL must come from native" unless surface_bridge.include?(
+  "OpNative.nativeEditorTakeLoginUrl(view.editorEngine())",
 )
 raise "login screen must parse the engine verification URL" unless overlay.include?(
   "DeviceLoginRequest.parse(verificationUrl)",
 )
-[overlay, request, activity, surface, runtime].each do |source|
+[overlay, request, activity, surface, surface_bridge, runtime].each do |source|
   if source.match?(%r{https://(?:sso\.)?zseven\.(?:cn|tech)})
     raise "regional SSO origins must live only in SsoRegion"
   end

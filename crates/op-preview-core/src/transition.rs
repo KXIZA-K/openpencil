@@ -360,15 +360,18 @@ impl PreviewSession {
     }
 
     /// Whether a Track C-3 transition is currently playing, using the
-    /// clock the host last pushed via `set_now_ms`. `input.rs`'s pointer
-    /// dispatch gates on this — DISCARDING taps/drags/wheel while a
-    /// screen-transition animation plays, rather than queuing them, is
-    /// the "simple and doesn't break anything" choice: a tap mid-slide
-    /// has no stable target to land on anyway (the content is physically
-    /// moving), and the window is short (160-240ms) — a queued tap would
-    /// risk firing against whichever screen happens to be mounted once
-    /// the animation ends, which is not necessarily what the user was
-    /// aiming at when they tapped.
+    /// session's current clock (`last_now_ms` — the greatest value
+    /// pushed via `set_now_ms` or synchronized from an explicit
+    /// `dispatch_pointer_phase_at` timestamp, see `input.rs`).
+    /// `input.rs`'s pointer dispatch gates on this — DISCARDING
+    /// taps/drags/wheel while a screen-transition animation plays,
+    /// rather than queuing them, is the "simple and doesn't break
+    /// anything" choice: a tap mid-slide has no stable target to land on
+    /// anyway (the content is physically moving), and the window is
+    /// short (160-240ms) — a queued tap would risk firing against
+    /// whichever screen happens to be mounted once the animation ends,
+    /// which is not necessarily what the user was aiming at when they
+    /// tapped.
     /// Public so a host can keep driving frames while the screen slide
     /// plays: an event-driven shell (the web host) repaints only when
     /// something asks it to, and without this the animation renders as

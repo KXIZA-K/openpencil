@@ -738,7 +738,7 @@ impl super::WidgetHost {
         use jian_core::gesture::pointer::PointerPhase;
         if let Some((x, y)) = self.preview_last_doc {
             if let Some(p) = self.preview.as_mut() {
-                p.dispatch_pointer_phase(x, y, PointerPhase::Cancel);
+                p.dispatch_pointer_phase_at(x, y, PointerPhase::Cancel, self.now_ms);
             }
         }
         self.preview_press_active = false;

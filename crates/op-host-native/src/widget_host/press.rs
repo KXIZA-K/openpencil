@@ -160,6 +160,31 @@ impl WidgetHostNative {
         self.apply_press_inner(x, y, viewport_width, viewport_height, true)
     }
 
+    /// Timestamped press variant: `t_ms` is the event's factual
+    /// monotonic timestamp. The ordinary tier ladder runs
+    /// byte-identically; only the live-preview pointer path
+    /// (`preview_dispatch_press` and anything it cancels) stamps
+    /// `PointerEvent.t_ms` with `t_ms` instead of the host's global
+    /// clock. The global clock is NOT advanced here — callers advance
+    /// it separately (monotonically) via [`Self::set_now_ms`], so an
+    /// out-of-order event keeps its factual time without regressing
+    /// the clock. The scoped context is restored afterwards; a panic
+    /// inside the ladder poisons the engine at the ABI boundary, at
+    /// which point no further event can ever observe a stale ticket.
+    pub fn apply_press_at(
+        &mut self,
+        x: f32,
+        y: f32,
+        viewport_width: f32,
+        viewport_height: f32,
+        t_ms: u64,
+    ) -> bool {
+        let previous = self.preview_event_time_ms.replace(t_ms);
+        let changed = self.apply_press_inner(x, y, viewport_width, viewport_height, true);
+        self.preview_event_time_ms = previous;
+        changed
+    }
+
     /// Re-enter the ordinary press ladder after a touch-panel tap has been
     /// confirmed on release. `allow_touch_panel_defer = false` prevents the
     /// replayed point from arming itself again.

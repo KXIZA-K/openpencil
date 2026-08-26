@@ -308,6 +308,13 @@ OpStatus op_set_active_page(OpEngine *engine, uint32_t index);
  * desktop chrome. Pointer press (single finger). */
 OpStatus op_editor_press(OpEngine *engine, float x, float y);
 
+/* Press with the event's factual monotonic timestamp (milliseconds,
+ * platform boot/uptime domain — UITouch.timestamp*1000, MotionEvent.eventTime,
+ * TouchEvent.timestamp/1e6). The engine's global clocks advance
+ * monotonically to time_ms; the preview runtime still measures the event's
+ * own timestamp. */
+OpStatus op_editor_press_at(OpEngine *engine, float x, float y, uint64_t time_ms);
+
 /* Desktop-chrome hover (cursor motion without a pressed button); drives
  * hover highlighting and needs no pointer capture. */
 OpStatus op_editor_hover(OpEngine *engine, float x, float y);
@@ -319,11 +326,21 @@ OpStatus op_editor_wheel(OpEngine *engine, float x, float y, float dx, float dy,
 /* Pointer move (single finger). */
 OpStatus op_editor_move(OpEngine *engine, float x, float y);
 
+/* Move with the event's factual monotonic timestamp (see op_editor_press_at). */
+OpStatus op_editor_move_at(OpEngine *engine, float x, float y, uint64_t time_ms);
+
 /* Pointer release (single finger). */
 OpStatus op_editor_release(OpEngine *engine, float x, float y);
 
+/* Release with the gesture endpoint's factual monotonic timestamp. */
+OpStatus op_editor_release_at(OpEngine *engine, float x, float y, uint64_t time_ms);
+
 /* Cancel the active pointer gesture without dispatching release actions. */
 OpStatus op_editor_cancel_gesture(OpEngine *engine);
+
+/* Cancel with the platform cancel's monotonic timestamp (CACurrentMediaTime*1000
+ * / SystemClock.uptimeMillis / TouchEvent.timestamp/1e6). */
+OpStatus op_editor_cancel_gesture_at(OpEngine *engine, uint64_t time_ms);
 
 /* Long-press -> right-click (context menus). */
 OpStatus op_editor_right_press(OpEngine *engine, float x, float y);

@@ -11,6 +11,7 @@ import { ViewportBands } from './WindowBridge';
 import { ViewportInputState } from './ViewportInputState';
 import { SystemFontRegistry } from './SystemFontRegistry';
 import { BackgroundGenerationCoordinator } from './BackgroundGenerationCoordinator';
+import { MonotonicClock } from './MonotonicClock';
 
 const DOMAIN = 0x0001;
 const TAG = 'OpenPencilPlayer';
@@ -20,44 +21,8 @@ const PUMP_INTERVAL_MS = 100;
 /** Remote image fetch budget. */
 const REMOTE_IMAGE_TIMEOUT_MS = 15000;
 
-/**
- * Which of the TopBar's painted traffic-light dots the user pressed. The
- * engine owns no window, so it can only name the intent.
- */
-export enum WindowControlKind {
-  CLOSE = 0,
-  MINIMIZE = 1,
-  ZOOM = 2,
-}
-
-/** Main-thread handlers the page installs for engine-requested shell work. */
-export interface ShellActionSink {
-  onOpenDocument: () => void;
-  onImportImageOrSvg: () => void;
-  onExportDocument: () => void;
-  /** The engine asked for the Save / Save As file picker (action 11). */
-  onSaveDocument: () => void;
-  onOpenAccountCenter: () => void;
-  onRequestLogin: () => void;
-  onOpenLanguagePicker: () => void;
-  /** A TopBar traffic-light dot asked the shell to drive the window. */
-  onWindowControl: (kind: WindowControlKind) => void;
-  /**
-   * The engine gained or lost text-input focus. The page moves the hidden
-   * IME proxy's ArkUI focus to match — that proxy is what makes the app a
-   * real input client, which a SURFACE XComponent is not.
-   */
-  onImeFocusChanged: (focused: boolean) => void;
-  /** The engine produced a device-login verification URL. */
-  onOpenLoginUi: (url: string) => void;
-  /** The engine terminated the login flow itself. */
-  onCloseLoginUi: () => void;
-  /** The engine's backdrop needs light system glyphs. */
-  onSystemChromeAppearance: (prefersLightIcons: boolean) => void;
-  /** Long-press over a focused engine input: show Paste at `(x, y)` vp. */
-  onEditorPasteMenu: (x: number, y: number) => void;
-}
-
+import { ShellActionSink, WindowControlKind } from './EngineHostTypes';
+export { ShellActionSink, WindowControlKind } from './EngineHostTypes';
 /**
  * Owns the engine handle for one XComponent surface.
  *
@@ -267,7 +232,12 @@ export class EngineHost implements PointerRouterHost, ImeConduitHost {
     if (this.engine === 0) {
       return;
     }
-    const now: number = Date.now();
+    // The frame pump feeds the engine's monotonic clock. Never `Date.now()`:
+    // ArkUI touch timestamps are boot-uptime nanoseconds, so frame time,
+    // the engine's global clock, and raw touch events must share one
+    // active-uptime domain or the first touch would jump the clock by the
+    // boot offset.
+    const now: number = MonotonicClock.nowMs();
     const timedWakeDue: boolean = this.nextWakeAtMs > 0 && now >= this.nextWakeAtMs;
     if (!this.framePending && !timedWakeDue) {
       return;
@@ -301,6 +271,10 @@ export class EngineHost implements PointerRouterHost, ImeConduitHost {
     if (this.engine === 0) {
       return;
     }
+    // Cancel first, suspend second: a live pointer ladder must never cross
+    // the blocking barrier, and the same idempotent call clears the
+    // router's active map and long-press timer.
+    this.pointerRouter.cancelAll();
     this.backgroundGeneration.prepareForBackground();
     this.suspended = true;
     this.stopPump();
@@ -328,6 +302,9 @@ export class EngineHost implements PointerRouterHost, ImeConduitHost {
     if (this.engine === 0) {
       return;
     }
+    // Same contract as suspend(): cancel any live stream while the handle
+    // is still valid, then destroy.
+    this.pointerRouter.cancelAll();
     const engine: number = this.engine;
     this.engine = 0;
     napi.destroy(engine);

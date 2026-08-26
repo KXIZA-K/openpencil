@@ -1,6 +1,7 @@
 import napi, { OpPointerPhase } from './OpNative';
 import { PinchZoomDelta } from './PinchZoomDelta';
 import { ViewportInputAction, ViewportInputState } from './ViewportInputState';
+import { MonotonicClock } from './MonotonicClock';
 
 /** Long-press delay (ms) before a right-click context menu. */
 const LONG_PRESS_MS = 500;
@@ -173,11 +174,13 @@ export class PointerRouter {
       return;
     }
     if (this.host.isEditorMode()) {
-      napi.editorCancelGesture(engine);
+      napi.editorCancelGestureAt(engine, MonotonicClock.nowMs());
     } else {
       // Generic pointer Cancel is global in the engine; coordinates and
-      // pointer id are intentionally ignored for cancellation.
-      napi.pointer(engine, 0, OpPointerPhase.CANCEL, 0, 0, 0);
+      // pointer id are intentionally ignored for cancellation. This cancel
+      // is synthetic (no single event's TouchObject owns it), so it
+      // carries the shared monotonic engine clock, never a zero timestamp.
+      napi.pointer(engine, 0, OpPointerPhase.CANCEL, 0, 0, MonotonicClock.nowMs());
     }
     this.reset();
   }
@@ -199,7 +202,7 @@ export class PointerRouter {
       this.lastKnownX = x;
       this.lastKnownY = y;
       this.armLongPress();
-      napi.editorPress(engine, x, y);
+      napi.editorPressAt(engine, x, y, tMs);
       this.host.onPointerActivity();
       return;
     }
@@ -207,8 +210,11 @@ export class PointerRouter {
       // Two fingers: pan + pinch take over. The first pointer already
       // entered the editor press ladder; cancel that capture before
       // multi-touch starts so no marquee/node drag survives the takeover.
+      // The takeover is synthetic (no single event's TouchObject owns it),
+      // so it carries the shared monotonic engine clock — the same
+      // boot-uptime domain as TouchEvent.timestamp.
       this.clearLongPress();
-      napi.editorCancelGesture(engine);
+      napi.editorCancelGestureAt(engine, MonotonicClock.nowMs());
       this.releaseSuppressed = true;
       this.twoFingerActive = true;
       this.lastMidX = this.midpointX();
@@ -254,7 +260,7 @@ export class PointerRouter {
     }
     this.lastKnownX = sample.x;
     this.lastKnownY = sample.y;
-    napi.editorMove(engine, sample.x, sample.y);
+    napi.editorMoveAt(engine, sample.x, sample.y, tMs);
     if (this.longPressArmed) {
       const deltaX: number = sample.x - this.downX;
       const deltaY: number = sample.y - this.downY;
@@ -274,7 +280,7 @@ export class PointerRouter {
       // End transform ownership before the remaining pointer is re-armed;
       // its eventual Up must never release the press ladder cancelled at
       // second-finger Down.
-      napi.editorCancelGesture(engine);
+      napi.editorCancelGestureAt(engine, MonotonicClock.nowMs());
       this.twoFingerActive = false;
       this.longPressArmed = false;
       const remaining: number[] = Array.from(this.active.keys());
@@ -285,7 +291,7 @@ export class PointerRouter {
     }
     this.clearLongPress();
     if (!this.longPressFired && !this.releaseSuppressed) {
-      napi.editorRelease(engine, x, y);
+      napi.editorReleaseAt(engine, x, y, tMs);
     }
     this.reset();
     this.host.onPointerActivity();
@@ -296,7 +302,7 @@ export class PointerRouter {
     // commit a deferred tap, drag/drop, or history.
     this.active.clear();
     if (this.host.isEditorMode()) {
-      napi.editorCancelGesture(engine);
+      napi.editorCancelGestureAt(engine, tMs);
     } else {
       napi.pointer(engine, 0, OpPointerPhase.CANCEL, 0, 0, tMs);
     }
@@ -329,7 +335,7 @@ export class PointerRouter {
     if (this.host.onEditorLongPressPasteMenu(this.lastKnownX, this.lastKnownY)) {
       // The press capture opened at Down must not leak while the release
       // is suppressed by `longPressFired`.
-      napi.editorCancelGesture(engine);
+      napi.editorCancelGestureAt(engine, MonotonicClock.nowMs());
       this.host.onPointerActivity();
       return;
     }

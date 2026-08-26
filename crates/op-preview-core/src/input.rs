@@ -23,6 +23,13 @@
 //! `dispatch_pointer_phase` / `dispatch_wheel` DISCARD their event
 //! outright while `transition_active()` — see that method's doc
 //! (`crate::preview::transition`) for why discard, not queue.
+//!
+//! The explicit-timestamp pointer path synchronizes the session clock
+//! BEFORE consulting that gate: `dispatch_pointer_phase_at` advances
+//! `last_now_ms` + the jian runtime clock monotonically to the event's
+//! host timestamp first, because the web host passes event host time
+//! directly and never pushes `set_now_ms` — a stale session clock must
+//! not keep a finished transition "active" and discard live input.
 
 use super::{apply_widget_state, PreviewSession};
 
@@ -78,14 +85,64 @@ impl PreviewSession {
     /// through whatever node the pointer crosses (a slider drag past
     /// its own edge would jump into a neighbour's coordinate space and
     /// could activate a widget the pointer isn't visually over).
+    ///
+    /// Source-compatible timestamp wrapper: the event is stamped with
+    /// the session's `last_now_ms` (the last value the host pushed via
+    /// [`Self::set_now_ms`]), so a clock-pushing host gets real
+    /// timestamps without changing call sites, and a host that never
+    /// pushes a clock gets `0` exactly as before. Prefer
+    /// [`Self::dispatch_pointer_phase_at`] when the host already has the
+    /// event's own timestamp in hand.
     pub fn dispatch_pointer_phase(
         &mut self,
         scene_x: f32,
         scene_y: f32,
         phase: PointerPhase,
     ) -> bool {
+        self.dispatch_pointer_phase_at(scene_x, scene_y, phase, self.last_now_ms)
+    }
+
+    /// [`Self::dispatch_pointer_phase`] with an explicit monotonic event
+    /// timestamp `t_ms`: the mapping/capture semantics are identical
+    /// (anchor on `Down`, reuse on held `Move`, take on `Up`/`Cancel`),
+    /// and only the runtime `PointerEvent.t_ms` differs. Gesture
+    /// recognizers that measure velocity (Swipe) and timer deadlines
+    /// (LongPress) need real per-event timestamps, so every live
+    /// preview pointer path in the hosts routes through this method
+    /// with the host clock.
+    ///
+    /// The session/runtime monotonic clock is synchronized from `t_ms`
+    /// BEFORE the transition gate and dispatch run, so an event that
+    /// carries its own timestamp past a transition's end is never
+    /// discarded because the host's last `set_now_ms` push still sits
+    /// inside the window (a pointer event between frames, for example).
+    /// The sync is monotonic: an out-of-order event (`t_ms` behind the
+    /// last pushed clock) leaves the clock where it is, while the event
+    /// itself always keeps `t_ms` as the runtime `PointerEvent.t_ms` —
+    /// the caller's factual timestamp.
+    ///
+    /// Pointer identity/kind compatibility note (R4): the synthetic id
+    /// (1), `PointerKind::Mouse` and the LEFT-button semantics are kept
+    /// for now; full pointer identity/kind mapping remains the R4
+    /// pointer-identity work.
+    pub fn dispatch_pointer_phase_at(
+        &mut self,
+        scene_x: f32,
+        scene_y: f32,
+        phase: PointerPhase,
+        t_ms: u64,
+    ) -> bool {
         use jian_core::geometry::point;
         use jian_core::gesture::pointer::{MouseButtons, PointerEvent, PointerKind};
+        // Sync the session/runtime clock from the event's own timestamp
+        // BEFORE `transition_active` consults `last_now_ms` — that gate
+        // is only as fresh as the last host clock push, and an explicit
+        // `t_ms` past the transition end must dispatch, not be
+        // discarded on a stale push. Guarded so an out-of-order event
+        // never moves the clock backwards.
+        if t_ms > self.last_now_ms {
+            self.set_now_ms(t_ms);
+        }
         // Track C-3: discard pointer input while a screen-transition
         // animation plays — see `transition_active`'s doc for why discard
         // (not queue) is the right call here.
@@ -93,7 +150,7 @@ impl PreviewSession {
             return false;
         }
         let (rt_x, rt_y) = self.resolve_runtime_point(scene_x, scene_y, phase);
-        let mut ev = PointerEvent::simple(1, phase, point(rt_x, rt_y));
+        let mut ev = PointerEvent::simple_at(1, phase, point(rt_x, rt_y), t_ms);
         ev.kind = PointerKind::Mouse;
         if matches!(phase, PointerPhase::Hover) {
             ev.buttons = MouseButtons::empty();

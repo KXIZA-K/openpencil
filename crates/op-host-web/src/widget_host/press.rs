@@ -260,7 +260,12 @@ impl WidgetHost {
         let Some(session) = self.preview.as_mut() else {
             return false;
         };
-        let handled = session.dispatch_pointer_phase(doc_point.x, doc_point.y, PointerPhase::Down);
+        let handled = session.dispatch_pointer_phase_at(
+            doc_point.x,
+            doc_point.y,
+            PointerPhase::Down,
+            self.now_ms,
+        );
         self.preview_press_active = true;
         self.preview_last_doc = Some((doc_point.x, doc_point.y));
         // Arm edge-swipe candidate after the runtime has the pointer Down
@@ -318,7 +323,8 @@ impl WidgetHost {
         };
         self.preview_last_doc = Some((doc_point.x, doc_point.y));
         if let Some(session) = self.preview.as_mut() {
-            let emitted = session.dispatch_pointer_phase(doc_point.x, doc_point.y, phase);
+            let emitted =
+                session.dispatch_pointer_phase_at(doc_point.x, doc_point.y, phase, self.now_ms);
             if emitted || self.preview_press_active {
                 self.mark_dirty();
             }
@@ -370,7 +376,7 @@ impl WidgetHost {
         // a tap by where the pointer came up, so an Up at the origin never
         // completes the tap on the widget the Down landed on.
         if let Some(session) = self.preview.as_mut() {
-            session.dispatch_pointer_phase(x, y, PointerPhase::Up);
+            session.dispatch_pointer_phase_at(x, y, PointerPhase::Up, self.now_ms);
         }
         self.mark_dirty();
         true

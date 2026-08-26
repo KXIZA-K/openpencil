@@ -31,11 +31,33 @@ pub fn editor_press(engine: i64, x: f64, y: f64) -> i32 {
     })
 }
 
+/// `editorPressAt` — press with the event's factual monotonic timestamp
+/// (ArkUI `TouchEvent.timestamp / 1e6`, boot-uptime ms). The JS `number`
+/// clamps at zero before the u64 ABI — a negative or NaN clock is never
+/// a valid timestamp.
+#[napi(js_name = "editorPressAt")]
+pub fn editor_press_at(engine: i64, x: f64, y: f64, t_ms: f64) -> i32 {
+    // SAFETY: dispatched onto the engine's owner thread.
+    call_status(engine, move |e| unsafe {
+        op_engine_ffi::op_editor_press_at(e, x as f32, y as f32, clamp_t_ms(t_ms))
+    })
+}
+
 #[napi(js_name = "editorMove")]
 pub fn editor_move(engine: i64, x: f64, y: f64) -> i32 {
     // SAFETY: dispatched onto the engine's owner thread.
     call_status(engine, move |e| unsafe {
         op_engine_ffi::op_editor_move(e, x as f32, y as f32)
+    })
+}
+
+/// `editorMoveAt` — move with `TouchEvent.timestamp / 1e6`; clamped at
+/// zero before u64.
+#[napi(js_name = "editorMoveAt")]
+pub fn editor_move_at(engine: i64, x: f64, y: f64, t_ms: f64) -> i32 {
+    // SAFETY: dispatched onto the engine's owner thread.
+    call_status(engine, move |e| unsafe {
+        op_engine_ffi::op_editor_move_at(e, x as f32, y as f32, clamp_t_ms(t_ms))
     })
 }
 
@@ -47,12 +69,39 @@ pub fn editor_release(engine: i64, x: f64, y: f64) -> i32 {
     })
 }
 
+/// `editorReleaseAt` — release with the gesture endpoint's factual
+/// timestamp; clamped at zero before u64.
+#[napi(js_name = "editorReleaseAt")]
+pub fn editor_release_at(engine: i64, x: f64, y: f64, t_ms: f64) -> i32 {
+    // SAFETY: dispatched onto the engine's owner thread.
+    call_status(engine, move |e| unsafe {
+        op_engine_ffi::op_editor_release_at(e, x as f32, y as f32, clamp_t_ms(t_ms))
+    })
+}
+
 #[napi(js_name = "editorCancelGesture")]
 pub fn editor_cancel_gesture(engine: i64) -> i32 {
     // SAFETY: dispatched onto the engine's owner thread.
     call_status(engine, move |e| unsafe {
         op_engine_ffi::op_editor_cancel_gesture(e)
     })
+}
+
+/// `editorCancelGestureAt` — cancel with the synthetic-clock timestamp
+/// (MonotonicClock.nowMs / TouchEvent.timestamp / 1e6); clamped at zero
+/// before u64.
+#[napi(js_name = "editorCancelGestureAt")]
+pub fn editor_cancel_gesture_at(engine: i64, t_ms: f64) -> i32 {
+    // SAFETY: dispatched onto the engine's owner thread.
+    call_status(engine, move |e| unsafe {
+        op_engine_ffi::op_editor_cancel_gesture_at(e, clamp_t_ms(t_ms))
+    })
+}
+
+/// JS number → u64 clock with a floor at zero (`f64 as u64` saturates past
+/// u64::MAX; negative / NaN shrink to 0, which is never a valid timestamp).
+fn clamp_t_ms(t_ms: f64) -> u64 {
+    t_ms.max(0.0) as u64
 }
 
 /// `editorBeginTransform` — begin a two-finger transform at the second

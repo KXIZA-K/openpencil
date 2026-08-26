@@ -112,9 +112,12 @@ pub struct PreviewSession {
     /// (including the entire classic workbench-mode session, which never
     /// switches screens).
     pub(crate) transition: Option<ScreenTransition>,
-    /// The last value passed to [`Self::set_now_ms`] — `transition`'s
-    /// idle input dispatch guard (`input.rs`) needs "now" but the
-    /// dispatch methods don't take a clock param of their own.
+    /// The session's current clock: the greatest value pushed via
+    /// [`Self::set_now_ms`] or (in the explicit-timestamp pointer path)
+    /// an event's own `t_ms` — `transition`'s idle input dispatch guard
+    /// (`input.rs`) needs "now" but the dispatch methods don't take a
+    /// clock param of their own. Monotonic: never moves backward, exactly
+    /// like the jian runtime clock it mirrors.
     pub(crate) last_now_ms: u64,
 }
 
@@ -385,9 +388,13 @@ impl PreviewSession {
     }
 
     /// Push the host clock so the runtime can drive caret blink etc.
+    /// Monotonic like the runtime's own clock (`Runtime::set_now_ms`
+    /// already refuses to move backward): a later push never regresses
+    /// the session clock, so an out-of-order host clock cannot re-arm a
+    /// finished screen transition's input gate.
     pub fn set_now_ms(&mut self, now_ms: u64) {
         self.runtime.set_now_ms(now_ms);
-        self.last_now_ms = now_ms;
+        self.last_now_ms = self.last_now_ms.max(now_ms);
     }
 
     /// Resize hook for the host's `Resized` handler. Layout is derived
@@ -398,11 +405,31 @@ impl PreviewSession {
         let _ = canvas_size;
     }
 
-    /// Test-only read access to the live runtime so the host test can
-    /// assert injected text reached the widget state graph.
+    /// Test-only read access to the live runtime so the crate's own
+    /// tests can assert injected text reached the widget state graph.
     #[cfg(all(test, not(target_os = "windows")))]
     pub(crate) fn runtime(&self) -> &Runtime {
         &self.runtime
+    }
+
+    /// Narrow test-only snapshot of one `$app` state value, CLONED out
+    /// of the runtime. `Runtime.state` is interior-mutable, so it must
+    /// never be handed out in production — cross-crate tests read this
+    /// cloned seam instead (op-host-native's test builds enable the
+    /// `testing` feature; see its Cargo.toml dev-dependency).
+    #[cfg(any(all(test, not(target_os = "windows")), feature = "testing"))]
+    pub fn app_state_value_for_test(&self, key: &str) -> Option<jian_core::value::RuntimeValue> {
+        self.runtime.state.app_get(key)
+    }
+
+    /// Narrow test-only clock readout: the session's current monotonic
+    /// time (`last_now_ms`). Cross-crate tests (op-host-native's
+    /// timestamp regression suite) assert the global clock stays where
+    /// the frame pump put it even when pointer events carry out-of-order
+    /// factual timestamps.
+    #[cfg(any(all(test, not(target_os = "windows")), feature = "testing"))]
+    pub fn now_ms_for_test(&self) -> u64 {
+        self.last_now_ms
     }
 
     /// Test-only: the session's own scene with live runtime widget

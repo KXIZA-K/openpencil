@@ -181,6 +181,18 @@ export const setActivePage: (engine: number, index: number) => number;
 
 // ---- Full-editor mode (desktop chrome) ------------------------------------
 
+/**
+ * `tMs` is the event's factual monotonic timestamp in milliseconds
+ * (`TouchEvent.timestamp / 1e6` — boot-uptime domain, the same domain
+ * `frame` / `backgroundTick` use). The engine keeps its global clock
+ * monotonic while the preview runtime measures the event's own time; a
+ * negative or NaN clock clamps to zero.
+ */
+export const editorPressAt: (engine: number, x: number, y: number, tMs: number) => number;
+export const editorMoveAt: (engine: number, x: number, y: number, tMs: number) => number;
+export const editorReleaseAt: (engine: number, x: number, y: number, tMs: number) => number;
+/** `tMs` is `SystemClock.uptimeMillis()` / `MonotonicClock.nowMs()` on synthetic cancels. */
+export const editorCancelGestureAt: (engine: number, tMs: number) => number;
 export const editorPress: (engine: number, x: number, y: number) => number;
 export const editorMove: (engine: number, x: number, y: number) => number;
 export const editorRelease: (engine: number, x: number, y: number) => number;

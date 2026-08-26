@@ -22,7 +22,8 @@ final class OpEngineHost: NSObject {
     private lazy var documentExportCoordinator = DocumentExportCoordinator(host: self)
     private lazy var documentSaveCoordinator = DocumentSaveCoordinator(host: self)
     private lazy var imageImportCoordinator = ImageImportCoordinator(host: self)
-    private lazy var generationBackgroundCoordinator = GenerationBackgroundCoordinator(host: self)
+    // Internal (not private) so OpEngineHost+Pointer.swift's `editor*At` wrappers can observe engine work.
+    lazy var generationBackgroundCoordinator = GenerationBackgroundCoordinator(host: self)
     /// Editor mode (full desktop chrome) vs bare viewer.
     let editorMode: Bool
     private var imeFocused = false
@@ -114,6 +115,8 @@ final class OpEngineHost: NSObject {
         generationBackgroundCoordinator.teardown()
 
         if let engine {
+            // A live press/move ladder must never cross the suspend barrier.
+            cancelGesturesBeforeSuspend()
             let suspendStatus = op_suspend(engine)
             if suspendStatus != OpStatus_Ok {
                 NSLog("op_suspend failed with status %d", suspendStatus.rawValue)
@@ -425,9 +428,8 @@ final class OpEngineHost: NSObject {
         requestImmediateFrame()
     }
 
-    /// Drains one-shot requests emitted by engine-painted chrome. Presentation
-    /// is deferred so UIKit is never entered inside an editor ABI call stack.
-    private func drainShellActions() {
+    /// Drains one-shot requests emitted by engine-painted chrome (deferred so UIKit is never entered inside an editor ABI call stack).
+    func drainShellActions() {
         precondition(Thread.isMainThread)
         guard let engine, editorMode else { return }
         for _ in 0..<8 {
@@ -593,15 +595,6 @@ final class OpEngineHost: NSObject {
         }
     }
 
-    func dispatchPointer(id: UInt32, phase: Int32, point: CGPoint) {
-        precondition(Thread.isMainThread)
-        guard let engine else { return }
-        let status = op_pointer(engine, id, phase, Float(point.x), Float(point.y), Self.nowMilliseconds())
-        if status != OpStatus_Ok && status != OpStatus_Suspended {
-            reportFailure(status, operation: "op_pointer", engine: engine)
-        }
-    }
-
     func displayLinkDidFire(_ link: CADisplayLink) {
         precondition(Thread.isMainThread)
         link.isPaused = true
@@ -645,6 +638,10 @@ final class OpEngineHost: NSObject {
         precondition(Thread.isMainThread)
         guard let engine, !isSuspended else { return }
         displayLink?.isPaused = true
+        // Cancel first, suspend second: cancelGesturesBeforeSuspend issues
+        // the raw entry points so it cannot re-light the just-paused
+        // display link before the engine suspends.
+        cancelGesturesBeforeSuspend()
         let status = op_suspend(engine)
         if status == OpStatus_Ok {
             isSuspended = true

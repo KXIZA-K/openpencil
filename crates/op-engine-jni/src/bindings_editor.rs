@@ -537,6 +537,24 @@ pub extern "system" fn Java_tech_zseven_openpencil_OpNative_nativeEditorPress<'l
     })
 }
 
+/// `OpNative.nativeEditorPressAt` — press with the event's factual
+/// monotonic timestamp (`MotionEvent.eventTime`). The signed `jlong`
+/// clamps at zero before the `u64` ABI (a negative value is never a
+/// valid clock).
+#[no_mangle]
+pub extern "system" fn Java_tech_zseven_openpencil_OpNative_nativeEditorPressAt<'local>(
+    _env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    engine: jlong,
+    x: jfloat,
+    y: jfloat,
+    t_ms: jlong,
+) -> jint {
+    call_status(engine, move |e| unsafe {
+        op_engine_ffi::op_editor_press_at(e, x, y, t_ms.max(0) as u64)
+    })
+}
+
 #[no_mangle]
 pub extern "system" fn Java_tech_zseven_openpencil_OpNative_nativeEditorMove<'local>(
     _env: JNIEnv<'local>,
@@ -547,6 +565,22 @@ pub extern "system" fn Java_tech_zseven_openpencil_OpNative_nativeEditorMove<'lo
 ) -> jint {
     call_status(engine, move |e| unsafe {
         op_engine_ffi::op_editor_move(e, x, y)
+    })
+}
+
+/// `OpNative.nativeEditorMoveAt` — move with `MotionEvent.eventTime`.
+/// Signed `jlong` clamps at zero before `u64`.
+#[no_mangle]
+pub extern "system" fn Java_tech_zseven_openpencil_OpNative_nativeEditorMoveAt<'local>(
+    _env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    engine: jlong,
+    x: jfloat,
+    y: jfloat,
+    t_ms: jlong,
+) -> jint {
+    call_status(engine, move |e| unsafe {
+        op_engine_ffi::op_editor_move_at(e, x, y, t_ms.max(0) as u64)
     })
 }
 
@@ -563,6 +597,23 @@ pub extern "system" fn Java_tech_zseven_openpencil_OpNative_nativeEditorRelease<
     })
 }
 
+/// `OpNative.nativeEditorReleaseAt` — release with the gesture endpoint's
+/// factual `MotionEvent.eventTime`. Signed `jlong` clamps at zero before
+/// `u64`.
+#[no_mangle]
+pub extern "system" fn Java_tech_zseven_openpencil_OpNative_nativeEditorReleaseAt<'local>(
+    _env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    engine: jlong,
+    x: jfloat,
+    y: jfloat,
+    t_ms: jlong,
+) -> jint {
+    call_status(engine, move |e| unsafe {
+        op_engine_ffi::op_editor_release_at(e, x, y, t_ms.max(0) as u64)
+    })
+}
+
 #[no_mangle]
 pub extern "system" fn Java_tech_zseven_openpencil_OpNative_nativeEditorCancelGesture<'local>(
     _env: JNIEnv<'local>,
@@ -571,6 +622,21 @@ pub extern "system" fn Java_tech_zseven_openpencil_OpNative_nativeEditorCancelGe
 ) -> jint {
     call_status(engine, move |e| unsafe {
         op_engine_ffi::op_editor_cancel_gesture(e)
+    })
+}
+
+/// `OpNative.nativeEditorCancelGestureAt` — cancel with the synthetic
+/// `SystemClock.uptimeMillis()` timestamp. Signed `jlong` clamps at zero
+/// before `u64`.
+#[no_mangle]
+pub extern "system" fn Java_tech_zseven_openpencil_OpNative_nativeEditorCancelGestureAt<'local>(
+    _env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    engine: jlong,
+    t_ms: jlong,
+) -> jint {
+    call_status(engine, move |e| unsafe {
+        op_engine_ffi::op_editor_cancel_gesture_at(e, t_ms.max(0) as u64)
     })
 }
 

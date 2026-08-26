@@ -112,9 +112,13 @@ mod tests_bindings;
 #[cfg(all(test, not(target_os = "windows")))]
 mod tests_caret;
 #[cfg(all(test, not(target_os = "windows")))]
+mod tests_clock_gate;
+#[cfg(all(test, not(target_os = "windows")))]
 mod tests_device_frame;
 #[cfg(all(test, not(target_os = "windows")))]
 mod tests_geometry_parity;
+#[cfg(all(test, not(target_os = "windows")))]
+mod tests_swipe;
 #[cfg(all(test, not(target_os = "windows")))]
 mod tests_tabs;
 #[cfg(all(test, not(target_os = "windows")))]

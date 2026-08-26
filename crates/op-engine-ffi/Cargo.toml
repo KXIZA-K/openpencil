@@ -169,3 +169,7 @@ rquickjs = { version = "0.12", features = ["bindgen"], optional = true }
 # Host-side tests render through the raster CPU path only.
 serde_json = { workspace = true }
 op-collab-host = { path = "../op-collab-host", features = ["test-support"] }
+# The editor pointer-clock suites read the live preview runtime's CLONED
+# app-state snapshot through op-preview-core's `testing` seam — never a
+# reference into its interior-mutable state in production.
+op-host-native = { path = "../op-host-native", features = ["testing"] }

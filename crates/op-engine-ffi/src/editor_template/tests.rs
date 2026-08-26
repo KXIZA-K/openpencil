@@ -1,7 +1,7 @@
 use super::*;
 use crate::desc::{Callbacks, CreateOptions};
-use crate::editor::op_editor_release;
 use crate::lifecycle::{OpEngine, Session};
+use crate::op_editor_release;
 use op_editor_core::size_class::EditorSizeClass;
 
 const SAMPLE_DOC: &str =

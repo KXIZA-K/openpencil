@@ -355,10 +355,30 @@ impl Session {
     }
 
     pub(crate) fn cancel_editor_collab_gesture(&mut self) -> FfiResult<bool> {
+        self.cancel_editor_collab_gesture_at(None)
+    }
+
+    /// [`Self::cancel_editor_collab_gesture`] with an optional factual
+    /// event timestamp: `Some(t_ms)` scopes the timestamped host cancel
+    /// path so the live-preview `Cancel` dispatch carries the platform
+    /// cancel's own time, while the global clocks are advanced
+    /// independently (monotonically) by the caller. `None` is the
+    /// legacy synthetic path (suspend / no event timestamp), which
+    /// dispatches with the host's global clock.
+    pub(crate) fn cancel_editor_collab_gesture_at(
+        &mut self,
+        event_time_ms: Option<u64>,
+    ) -> FfiResult<bool> {
         if let Some(collab) = self.editor_collab.as_mut() {
             collab.suppressed_pointer = None;
         }
-        let cancelled = self.editor_mut()?.cancel_native_touch_gestures();
+        let cancelled = {
+            let host = self.editor_mut()?;
+            match event_time_ms {
+                Some(t_ms) => host.cancel_native_touch_gestures_at(t_ms),
+                None => host.cancel_native_touch_gestures(),
+            }
+        };
         Ok(cancelled | self.finish_collab_pointer_edit())
     }
 

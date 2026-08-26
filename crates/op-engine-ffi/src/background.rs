@@ -28,16 +28,13 @@ impl Session {
 
     /// Advance generation without touching a Metal/EGL surface.
     pub(crate) fn pump_background_work(&mut self, now_ms: u64) -> FfiResult<bool> {
-        self.now_ms = now_ms;
+        self.advance_global_clock(now_ms);
         #[cfg(feature = "editor")]
         {
             let revision_before = self
                 .editor
                 .as_ref()
                 .map(|host| host.editor_state().document_revision());
-            if let Some(host) = self.editor.as_mut() {
-                host.set_now_ms(now_ms);
-            }
             self.pump_editor_chat(now_ms);
             self.pump_editor_codegen(now_ms);
             self.pump_editor_image_search(now_ms);

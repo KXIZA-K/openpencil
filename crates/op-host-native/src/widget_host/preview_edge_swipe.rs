@@ -75,8 +75,9 @@ impl super::WidgetHostNative {
     /// replaying a stale `Up`.
     pub(in crate::widget_host) fn cancel_preview_gesture_for_edge_swipe(&mut self) {
         if let Some((x, y)) = self.preview_last_doc {
+            let t_ms = self.preview_pointer_time_ms();
             if let Some(p) = self.preview.as_mut() {
-                p.dispatch_pointer_phase(x, y, PointerPhase::Cancel);
+                p.dispatch_pointer_phase_at(x, y, PointerPhase::Cancel, t_ms);
             }
         }
         self.preview_press_active = false;

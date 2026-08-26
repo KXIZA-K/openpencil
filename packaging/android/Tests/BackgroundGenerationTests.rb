@@ -9,6 +9,7 @@ manifest = REXML::Document.new(
 )
 activity = File.read(File.join(source_dir, "MainActivity.kt"))
 surface = File.read(File.join(source_dir, "OpSurfaceView.kt"))
+surface_touch = File.read(File.join(source_dir, "OpSurfaceViewEditorTouch.kt"))
 native = File.read(File.join(source_dir, "OpNative.kt"))
 callbacks = File.read(File.join(source_dir, "OpCallbacksImpl.kt"))
 controller = File.read(File.join(source_dir, "BackgroundGenerationController.kt"))
@@ -55,7 +56,7 @@ raise "notification permission must be contextual" unless activity.include?("set
 raise "notification denial must not stop the FGS" unless activity.include?("FGS remains visible in Task Manager")
 
 raise "successful foreground frames must observe work and may request permission" unless surface.match?(/nativeFrame.*?0 -> \{.*?observeBackgroundGeneration\(allowPermissionPrompt = true\)/m)
-raise "failed or suspended frames must not run shell bridges" unless surface.match?(/when \(status\).*?GPU_ERROR -> recoverGpu\(\).*?0 -> \{.*?syncSystemChromeAppearance\(\).*?syncIme\(\).*?drainCopyText\(\).*?pollShellAction\(\)/m)
+raise "failed or suspended frames must not run shell bridges" unless surface.match?(/when \(status\).*?GPU_ERROR -> recoverGpu\(\).*?0 -> \{.*?syncSystemChromeAppearance\(\).*?ime\.sync\(\).*?drainCopyText\(\).*?pollShellAction\(\)/m)
 raise "surface teardown must close the frame gate before suspend" unless surface.match?(/surfaceDestroyed.*?closeSurfaceFrameGate\(\).*?nativeSuspend\(engine\).*?markSurfaceSuspended\(engine\)/m)
 raise "onPause probe must not launch notification permission UI" unless surface.match?(/prepareForBackground.*?observeBackgroundGeneration\(allowPermissionPrompt = false\)/m)
 raise "surface resume must close the background gate first" unless surface.match?(/markSurfaceResuming\(context, engine\).*?attachOrResume/m)
@@ -66,10 +67,12 @@ raise "queued frame callbacks must recheck their generation" unless surface.matc
 raise "frame-gate close must cancel and invalidate a queued callback" unless surface.match?(/closeSurfaceFrameGate.*?surfaceReady = false.*?surfaceFrameEpoch = nextSurfaceFrameEpoch\(\).*?removeFrameCallback\(frameCallback\).*?frameScheduled = false/m)
 raise "delayed frame wakes must retain their original generation" unless surface.match?(/scheduleFrame\(delayMs: Long\).*?requestedEpoch = surfaceFrameEpoch.*?scheduleFrameForEpoch\(delayMs, requestedEpoch\)/m) && surface.match?(/scheduleFrameForEpoch.*?postDelayed\(\{ requestFrame\(requestedEpoch\) \}, delayMs\)/m)
 raise "queued viewport updates must retain their original generation" unless surface.match?(/scheduleViewportUpdate\(requestedEpoch: Long\).*?requestedEpoch != surfaceFrameEpoch.*?viewportUpdateEpoch = requestedEpoch/m) && surface.match?(/onPreDraw.*?requestedEpoch = viewportUpdateEpoch.*?requestedEpoch != surfaceFrameEpoch/m)
-raise "surfaceChanged must retry an unopened same-size Surface" unless surface.match?(/surfaceChanged.*?if \(!surfaceReady \|\| extentChanged\).*?markSurfaceResuming\(context, engine\).*?if \(attachedOnce\) OpNative\.nativeSuspend\(engine\).*?attachOrResume\(holder\.surface\).*?openSurfaceFrameGate\(\)/m)
+raise "surfaceChanged must retry an unopened same-size Surface" unless surface.match?(/surfaceChanged.*?if \(!surfaceReady \|\| extentChanged\).*?markSurfaceResuming\(context, engine\).*?if \(attachedOnce\) \{\s*cancelStreamsBeforeSuspend\(\)\s*OpNative\.nativeSuspend\(engine\)\s*\}.*?attachOrResume\(holder\.surface\).*?openSurfaceFrameGate\(\)/m)
 raise "GPU recovery must close before validity checks and gate background work" unless surface.match?(/recoverGpu.*?closeSurfaceFrameGate\(\).*?markSurfaceResuming\(context, engine\).*?holder\.surface.*?isValid/m)
-raise "surface teardown must cancel a pending long press before suspend" unless surface.match?(/surfaceDestroyed.*?resetEditorTouchTracking\(\).*?nativeSuspend\(engine\)/m)
-raise "a stale long press must not enter JNI while suspended" unless surface.match?(/fireLongPress.*?!surfaceReady.*?return.*?nativeEditorRightPress/m)
+# Every suspend barrier cancels the live gesture stream (uptime clock) and
+# clears local touch tracking BEFORE the blocking nativeSuspend.
+raise "surface teardown must cancel a pending long press before suspend" unless surface.match?(/surfaceDestroyed.*?editorTouch\.resetTracking\(\).*?cancelStreamsBeforeSuspend\(\).*?nativeSuspend\(engine\)/m)
+raise "a stale long press must not enter JNI while suspended" unless surface_touch.match?(/fun fireLongPress.*?!view\.isFrameGateOpen \|\| view\.editorEngine\(\) == 0L\) return.*?nativeEditorRightPress/m)
 raise "Activity destruction must close frames before suspend" unless surface.match?(/fun destroy\(\).*?closeSurfaceFrameGate\(\).*?nativeSuspend\(engine\).*?markSurfaceSuspended\(engine\).*?releaseView/m)
 raise "destroy must release through the process owner" unless surface.include?("BackgroundGenerationController.releaseView(context, engine, this)")
 

@@ -85,6 +85,55 @@ called = ets_sources.flat_map { |source| File.read(source).scan(/\bnapi\.([A-Za-
 unknown = (called - exported).sort
 raise "ArkTS calls undeclared NAPI functions: #{unknown.join(', ')}" unless unknown.empty?
 
+# ---- Monotonic engine clock + factual pointer timestamps -------------------
+
+# The engine's clocks (op_frame / op_background_tick) and the raw pointer
+# event times must share ONE active-uptime domain: ArkUI TouchEvent.timestamp
+# is boot-uptime nanoseconds, so Date.now() (epoch) must never feed the
+# engine — a mixed-domain clock would jump by the boot offset at the first
+# touch and corrupt velocity-sensing recognizers (Swipe).
+raise "EngineHost frame pump must use the shared monotonic clock" unless engine_host.include?(
+  "const now: number = MonotonicClock.nowMs();",
+)
+raise "the frame pump must not feed epoch time to op_frame" if engine_host.match?(/napi\.frame\(this\.engine, Date\.now/m)
+raise "background ticks must use the shared monotonic clock" unless background.include?(
+  "const now: number = MonotonicClock.nowMs();",
+)
+raise "background ticks must not feed epoch time to the engine" if background.match?(/napi\.backgroundTick\(this\.engine, Date\.now/m)
+raise "the monotonic clock helper must use ACTIVE uptime" unless read(
+  ets_dir, "common/MonotonicClock.ets"
+).include?("systemDateTime.getUptime(systemDateTime.TimeType.ACTIVE, false)")
+
+# The dedicated editor `_at` NAPI calls must carry the event's factual time:
+# touch Down/Move/Up use TouchEvent.timestamp / 1e6; synthetic cancels
+# (two-finger takeover, geometry transitions, long-press paste) use the
+# same shared MonotonicClock.
+pointer_router = read(ets_dir, "common/PointerRouter.ets")
+raise "editor press must carry TouchEvent.timestamp ms" unless pointer_router.include?(
+  "napi.editorPressAt(engine, x, y, tMs)",
+)
+raise "editor move must carry TouchEvent.timestamp ms" unless pointer_router.include?(
+  "napi.editorMoveAt(engine, sample.x, sample.y, tMs)",
+)
+raise "editor release must carry TouchEvent.timestamp ms" unless pointer_router.include?(
+  "napi.editorReleaseAt(engine, x, y, tMs)",
+)
+raise "editor cancel must carry TouchEvent.timestamp ms" unless pointer_router.include?(
+  "napi.editorCancelGestureAt(engine, tMs)",
+)
+raise "synthetic cancels must use the shared monotonic clock" unless pointer_router.include?(
+  "napi.editorCancelGestureAt(engine, MonotonicClock.nowMs())",
+)
+napi_editor = read(repo_dir, "crates/op-engine-napi/src/bindings_editor.rs")
+raise "the NAPI binding must forward the dedicated _at entry points" unless napi_editor.include?(
+  "op_engine_ffi::op_editor_press_at(",
+) && napi_editor.include?("op_engine_ffi::op_editor_move_at(") &&
+  napi_editor.include?("op_engine_ffi::op_editor_release_at(") &&
+  napi_editor.include?("op_engine_ffi::op_editor_cancel_gesture_at(")
+raise "the NAPI clock must clamp at zero before u64" unless napi_editor.include?(
+  "t_ms.max(0.0) as u64",
+) || napi_editor.include?("clamp_t_ms(t_ms)")
+
 # ---- Shell actions 1-7 -----------------------------------------------------
 
 action_codes = {

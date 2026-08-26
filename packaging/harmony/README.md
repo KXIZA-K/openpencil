@@ -69,8 +69,9 @@ bash scripts/build-ohos.sh
 ```
 
 After Cargo succeeds, the script verifies that the new module contains the
-`editorImportImageOrSvg`, `hasBackgroundWork`, and `backgroundTick` NAPI
-registration markers. It then installs the library through a temporary file
+`editorImportImageOrSvg`, `hasBackgroundWork`, `backgroundTick`, and the four
+timestamped editor-pointer (`editorPressAt` / `editorMoveAt` /
+`editorReleaseAt` / `editorCancelGestureAt`) NAPI registration markers. It then installs the library through a temporary file
 and an atomic rename to:
 
 ```text

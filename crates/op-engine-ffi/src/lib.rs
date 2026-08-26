@@ -71,6 +71,10 @@ mod editor_ime;
 #[cfg(feature = "editor")]
 mod editor_model_discovery;
 #[cfg(feature = "editor")]
+mod editor_pointer;
+#[cfg(all(feature = "editor", test))]
+mod editor_pointer_clock_tests;
+#[cfg(feature = "editor")]
 mod editor_pointer_release;
 #[cfg(all(feature = "editor", test))]
 mod editor_settings_input_tests;
@@ -98,8 +102,7 @@ pub use desc::{
 };
 #[cfg(feature = "editor")]
 pub use editor::{
-    op_editor_cancel_gesture, op_editor_key, op_editor_locale_code, op_editor_move,
-    op_editor_open_document, op_editor_pan, op_editor_pinch, op_editor_press, op_editor_release,
+    op_editor_key, op_editor_locale_code, op_editor_open_document, op_editor_pan, op_editor_pinch,
     op_editor_right_press, op_editor_set_locale, op_editor_take_shell_action, op_editor_text,
     KEY_ARROW_DOWN, KEY_ARROW_LEFT, KEY_ARROW_RIGHT, KEY_ARROW_UP, KEY_BACKSPACE, KEY_DELETE,
     KEY_DUPLICATE, KEY_ENTER, KEY_ESCAPE, KEY_REDO, KEY_UNDO,
@@ -130,6 +133,11 @@ pub use editor_image_import::{op_editor_import_image_or_svg, SHELL_ACTION_IMPORT
 pub use editor_ime::{
     op_editor_ime_commit, op_editor_ime_focused, op_editor_ime_preedit, op_editor_paste_text,
     op_editor_take_copy_text,
+};
+#[cfg(feature = "editor")]
+pub use editor_pointer::{
+    op_editor_cancel_gesture, op_editor_cancel_gesture_at, op_editor_move, op_editor_move_at,
+    op_editor_press, op_editor_press_at, op_editor_release, op_editor_release_at,
 };
 #[cfg(feature = "editor")]
 pub use editor_transform::{op_editor_begin_transform, op_editor_hover, op_editor_wheel};
@@ -417,7 +425,18 @@ pub unsafe extern "C" fn op_pointer(
                 3 => OpPointerPhase::Cancel,
                 _ => return Err(FfiError::invalid("unknown pointer phase")),
             };
-            session.now_ms = time_ms;
+            // A pointer event between frames carries its factual
+            // monotonic timestamp. Advance the global clocks (session +
+            // editor host + live preview runtime) MONOTONICALLY before
+            // EVERY editor pointer route below — the safe-area gate, the
+            // collab-suppressed early return, and Cancel included — or
+            // velocity-sensing recognizers (Swipe) and the
+            // screen-transition gate read the last frame pump's stale
+            // time. The event's own timestamp then travels separately
+            // through the timestamped host entries below, so a backward
+            // event never regresses a clock while still measuring its
+            // factual delta.
+            session.advance_global_clock(time_ms);
             let (x, y) = session.safe_area_point(x, y);
             if !session.route_safe_area_pointer(id, phase, x, y) {
                 return Ok(());
@@ -446,15 +465,19 @@ pub unsafe extern "C" fn op_pointer(
                     session.begin_collab_pointer_edit();
                 }
                 let (changed, camera_changed) = match phase {
-                    OpPointerPhase::Down => (session.editor_mut()?.apply_press(x, y, w, h), false),
+                    OpPointerPhase::Down => (
+                        session.editor_mut()?.apply_press_at(x, y, w, h, time_ms),
+                        false,
+                    ),
                     OpPointerPhase::Move => {
                         let host = session.editor_mut()?;
                         let before = host.editor_state().viewport;
-                        let changed = host.apply_cursor_move(x, y);
+                        let changed = host.apply_cursor_move_at(x, y, time_ms);
                         (changed, host.editor_state().viewport != before)
                     }
                     OpPointerPhase::Up => {
-                        let release = crate::editor_pointer_release::release(session, x, y);
+                        let release =
+                            crate::editor_pointer_release::release_at(session, x, y, time_ms);
                         let template = if release.is_ok() {
                             crate::editor_template::drain_pending_scene_template(session)
                         } else {
@@ -463,7 +486,10 @@ pub unsafe extern "C" fn op_pointer(
                         let collab_changed = session.finish_collab_pointer_edit();
                         (release? | template? | collab_changed, false)
                     }
-                    OpPointerPhase::Cancel => (session.cancel_editor_collab_gesture()?, false),
+                    OpPointerPhase::Cancel => (
+                        session.cancel_editor_collab_gesture_at(Some(time_ms))?,
+                        false,
+                    ),
                 };
                 if camera_changed {
                     session.user_interacted = true;
