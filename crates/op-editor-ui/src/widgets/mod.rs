@@ -406,6 +406,8 @@ mod top_bar_title;
 pub mod top_bar_tooltip;
 #[cfg(test)]
 mod top_bar_tooltip_tests;
+#[cfg(test)]
+mod top_bar_vscode_tests;
 mod top_bar_window_control;
 pub mod variables_panel;
 pub mod variables_panel_geometry_flow;

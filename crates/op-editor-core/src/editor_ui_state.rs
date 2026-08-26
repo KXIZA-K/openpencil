@@ -5,8 +5,6 @@
 //! actions. Painting and hit-testing stay in the UI layer. Its plain-data
 //! types keep `op-editor-core` wasm32-clean.
 //!
-//! # Module layout
-//!
 //! This public spine contains [`EditorUiState`] and shared re-exports;
 //! implementations live in sibling modules without changing import paths:
 //!

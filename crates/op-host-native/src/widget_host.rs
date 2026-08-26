@@ -3,8 +3,6 @@
 //! shell-web `widget_host.rs` so the editor-UI composition is
 //! cross-platform: same widget code, same paint output.
 //!
-//! ### Module layout
-//!
 //! This file is the public spine. Implementation methods are split
 //! across sibling submodules (per the 800-line-per-file ceiling):
 //! - `NativeFrameBackend` (`RenderBackend` impl) — moved to `crate::backend`
