@@ -24,7 +24,7 @@ fn tools_list_response_includes_all_registered_tools() {
     // TOOL_SCHEMAS without being added to the list below.
     assert_eq!(
         TOOL_SCHEMAS.len(),
-        131,
+        134,
         "tools/list catalog count must match the registered tools — add the new tool to this test"
     );
     // Production catalog excludes debug tools (we removed the
@@ -96,6 +96,8 @@ fn tools_list_response_includes_all_registered_tools() {
         "get_style_guide_tags",
         "get_style_guide",
         "get_guidelines",
+        "get_design_agent_prompt",
+        "get_design_quality",
         "spawn_agents",
         "ToolSearch",
         "get_screenshot",
@@ -103,6 +105,7 @@ fn tools_list_response_includes_all_registered_tools() {
         "export_nodes",
         "get_active_theme",
         "list_components",
+        "list_ui_kits",
         "get_component",
         "batch_get",
         "read_nodes",
@@ -416,6 +419,46 @@ fn read_nodes_accepts_structured_ids_over_mcp() {
         "{result}"
     );
     assert!(result.contains(&node_id), "{result}");
+}
+
+#[test]
+fn full_design_context_tools_dispatch_as_read_only_nested_json() {
+    let mut state = op_editor_core::EditorState::new();
+    let calls = [
+        (
+            "get_design_agent_prompt",
+            r#"{"userMessage":"Design an analytics dashboard","verifyProtocol":"layout"}"#,
+            &["prompt", "verifyProtocol", "Product-Design Depth"][..],
+        ),
+        (
+            "list_ui_kits",
+            r#"{"kitId":"openpencil-starter","limit":2}"#,
+            &["kits", "scriptRef", "starter/btn-primary"][..],
+        ),
+        (
+            "get_design_quality",
+            r#"{}"#,
+            &["geometryIssues", "contrastIssues", "navIssues"][..],
+        ),
+    ];
+    for (index, (tool, arguments, expected)) in calls.iter().enumerate() {
+        let line = format!(
+            r#"{{"jsonrpc":"2.0","id":{},"method":"tools/call","params":{{"name":"{tool}","arguments":{arguments}}}}}"#,
+            index + 30
+        );
+        let mut applied = false;
+        let response = process_message_with_applier(&mut state, &line, |_, _, _| {
+            applied = true;
+            true
+        })
+        .expect("dispatch")
+        .expect("response");
+        assert!(!applied, "read tool {tool} must emit no editor command");
+        let result = crate::mcp_serve::tool_text(&response);
+        for needle in *expected {
+            assert!(result.contains(needle), "{tool} missing {needle}: {result}");
+        }
+    }
 }
 
 #[test]

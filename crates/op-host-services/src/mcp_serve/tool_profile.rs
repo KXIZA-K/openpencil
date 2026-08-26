@@ -463,8 +463,18 @@ pub const TOOL_PROFILES: &[ToolProfile] = &[
     ToolProfile::new("get_active_theme", ToolAccess::Read, ToolSurface::InMemory),
     ToolProfile::new("get_canvas_bounds", ToolAccess::Read, ToolSurface::InMemory),
     ToolProfile::new("get_component", ToolAccess::Read, ToolSurface::InMemory),
+    ToolProfile::new(
+        "get_design_agent_prompt",
+        ToolAccess::Read,
+        ToolSurface::InMemory,
+    ),
     ToolProfile::new("get_design_md", ToolAccess::Read, ToolSurface::InMemory),
     ToolProfile::new("get_design_prompt", ToolAccess::Read, ToolSurface::InMemory),
+    ToolProfile::new(
+        "get_design_quality",
+        ToolAccess::Read,
+        ToolSurface::InMemory,
+    ),
     ToolProfile::new("get_document_info", ToolAccess::Read, ToolSurface::InMemory),
     ToolProfile::new("get_editor_state", ToolAccess::Read, ToolSurface::InMemory),
     ToolProfile::new("get_guidelines", ToolAccess::Read, ToolSurface::InMemory),
@@ -519,6 +529,7 @@ pub const TOOL_PROFILES: &[ToolProfile] = &[
         ToolAccess::Read,
         ToolSurface::LocalFilesystem,
     ),
+    ToolProfile::new("list_ui_kits", ToolAccess::Read, ToolSurface::InMemory),
     ToolProfile::new("list_variables", ToolAccess::Read, ToolSurface::InMemory),
     ToolProfile::new(
         "load_theme_preset",

@@ -48,6 +48,10 @@ pub(super) fn rebuild_registry(
     register_tool!("load_theme_preset", load_theme_preset_snapshot());
     register_tool!("list_theme_presets", list_theme_presets_snapshot());
     register_tool!("get_design_md", get_design_md_snapshot(doc));
+    register_tool!(
+        "get_design_agent_prompt",
+        get_design_agent_prompt_snapshot()
+    );
     register_tool!("set_design_md", set_design_md_snapshot(doc));
     register_tool!("export_design_md", export_design_md_snapshot(doc));
     register_tool!("get_style_guide_tags", get_style_guide_tags_snapshot());
@@ -77,6 +81,7 @@ pub(super) fn rebuild_registry(
     );
     register_tool!("get_active_theme", get_active_theme_snapshot(doc));
     register_tool!("list_components", list_components_snapshot(doc));
+    register_tool!("list_ui_kits", list_ui_kits_snapshot(doc));
     register_tool!("get_component", get_component_snapshot(doc));
     register_tool!("batch_get", batch_get_snapshot(doc));
     register_tool!("read_nodes", read_nodes_snapshot(doc));
@@ -104,6 +109,7 @@ pub(super) fn rebuild_registry(
     register_tool!("get_viewport", get_viewport_snapshot(doc));
     register_tool!("get_selection_set", get_selection_set_snapshot(doc));
     register_tool!("get_editor_state", get_editor_state_snapshot(doc));
+    register_tool!("get_design_quality", get_design_quality_snapshot(doc));
     #[cfg(feature = "mcp-debug-tools")]
     if debug_tools_enabled() {
         register_tool!(

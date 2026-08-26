@@ -46,6 +46,64 @@ pub const DESIGN_TOOLS: &[(&str, &str)] = &[
     ("ToolSearch", "read"),
 ];
 
+/// Non-destructive quality report shared by the in-process design loop and
+/// the public `get_design_quality` MCP tool. Every field is evidence only:
+/// collecting the report never applies cleanup, rewrites layout, or changes
+/// editor state.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DesignQualityDiagnostics {
+    pub geometry_issues: Vec<String>,
+    pub layout_issues: Vec<String>,
+    pub contrast_issues: Vec<ContrastIssue>,
+    pub icon_issues: Vec<String>,
+    pub structure_issues: Vec<String>,
+    pub empty_shells: Vec<String>,
+    pub intent_questions: Vec<String>,
+    pub variable_issues: Vec<String>,
+    pub image_slots: Vec<String>,
+    pub nav_issues: Vec<String>,
+}
+
+/// Collect the exact detect-only diagnostics used after a design-agent batch.
+///
+/// Deliberately excludes the two repair calls in the post-batch path
+/// (`remove_nested_duplicate_status_bars` and mobile-nav reflow), making this
+/// safe for read-only MCP credentials and repeated polling.
+pub fn collect_design_quality(state: &EditorState) -> DesignQualityDiagnostics {
+    let geometry_issues = op_orchestrator::geometry_validation::geometry_diagnostics(state);
+    let effective_theme = op_editor_core::variables_resolve::effective_theme(
+        &state.doc,
+        &state.ui.variables.active_theme,
+    );
+    let mut contrast_issues = scan_contrast_issues(
+        state.active_children(),
+        state.doc.variables.as_ref(),
+        &effective_theme,
+    );
+    contrast_issues.truncate(12);
+    let icon_issues = scan_icon_issues(state.active_children());
+    let mut structure_issues = scan_duplicate_root_issues(state.active_children());
+    structure_issues.extend(scan_ring_issues(state.active_children()));
+    structure_issues.extend(scan_header_icon_row_issues(state.active_children()));
+    structure_issues.truncate(12);
+    let empty_shells = scan_empty_shells(state.active_children());
+    let diagnostics = crate::design_agent_diagnostics::collect_batch_design_diagnostics(state);
+    let nav_issues = op_orchestrator::nav_issues::scan_nav_issues(state);
+    DesignQualityDiagnostics {
+        geometry_issues,
+        layout_issues: diagnostics.layout_issues,
+        contrast_issues,
+        icon_issues,
+        structure_issues,
+        empty_shells,
+        intent_questions: diagnostics.intent_questions,
+        variable_issues: diagnostics.variable_issues,
+        image_slots: diagnostics.image_slot_candidates,
+        nav_issues,
+    }
+}
+
 /// Auth level for a design tool name (`None` = not in the design set).
 pub fn design_tool_level(name: &str) -> Option<&'static str> {
     DESIGN_TOOLS

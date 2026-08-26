@@ -118,7 +118,10 @@ fn the_online_profile_still_serves_the_in_memory_catalog() {
         "insert_node",
         "get_node",
         "batch_design",
+        "get_design_agent_prompt",
+        "get_design_quality",
         "list_scene_templates",
+        "list_ui_kits",
         "undo",
         "use_scene_template",
     ] {
@@ -176,7 +179,15 @@ fn online_scene_template_calls_keep_shipped_ids_but_refuse_user_ids() {
 #[test]
 fn a_read_only_credential_may_read_but_not_write() {
     let profile = McpAccessProfile::online(McpScopes::READ_ONLY);
-    for read_tool in ["get_node", "list_pages", "snapshot_layout", "lint_document"] {
+    for read_tool in [
+        "get_node",
+        "list_pages",
+        "snapshot_layout",
+        "lint_document",
+        "get_design_agent_prompt",
+        "get_design_quality",
+        "list_ui_kits",
+    ] {
         assert_eq!(profile.refuse(read_tool), None, "{read_tool}");
     }
     for write_tool in [

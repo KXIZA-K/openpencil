@@ -266,3 +266,44 @@ fn status_bar_internals_are_not_empty_shells() {
     );
     assert!(issues[0].contains("Empty Section"), "{issues:?}");
 }
+
+#[test]
+fn design_quality_collection_is_read_only_and_keeps_categories_separate() {
+    let doc: jian_ops_schema::PenDocument = serde_json::from_str(
+        r##"{ "version": "1.0", "children": [
+            { "type": "frame", "id": "root-a", "name": "Home",
+              "width": 390, "height": 844, "layout": "vertical",
+              "children": [
+                { "type": "frame", "id": "empty", "name": "Content Shell",
+                  "width": "fill_container", "height": 120, "children": [] },
+                { "type": "icon_font", "id": "bad-icon", "iconFontName": "lucide",
+                  "width": 20, "height": 20 }
+              ] },
+            { "type": "frame", "id": "root-b", "name": "Home",
+              "width": 390, "height": 844, "children": [] }
+        ] }"##,
+    )
+    .expect("doc");
+    let state = op_editor_core::EditorState::from_document(doc);
+    let before = serde_json::to_string(&state.doc).expect("before");
+
+    let report = collect_design_quality(&state);
+
+    assert!(report
+        .icon_issues
+        .iter()
+        .any(|issue| issue.contains("bad-icon")));
+    assert!(report
+        .structure_issues
+        .iter()
+        .any(|issue| issue.contains("duplicate top-level roots")));
+    assert!(report
+        .empty_shells
+        .iter()
+        .any(|shell| shell.contains("Content Shell")));
+    assert_eq!(
+        serde_json::to_string(&state.doc).expect("after"),
+        before,
+        "quality collection must not mutate the document"
+    );
+}

@@ -6,15 +6,15 @@
 use super::*;
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
-pub(super) struct ContrastIssue {
+pub struct ContrastIssue {
     #[serde(rename = "nodeId")]
-    pub(super) node_id: String,
+    pub node_id: String,
     #[serde(rename = "nodeName")]
-    pub(super) node_name: Option<String>,
-    pub(super) fg: String,
-    pub(super) bg: String,
-    pub(super) ratio: f64,
-    pub(super) target: f64,
+    pub node_name: Option<String>,
+    pub fg: String,
+    pub bg: String,
+    pub ratio: f64,
+    pub target: f64,
 }
 
 pub(super) const CONTRAST_AA_TARGET: f64 = 4.5;
