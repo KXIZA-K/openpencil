@@ -186,12 +186,19 @@ git commit -m "chore(renderer): update jian interaction schema"
 
 ### Task R2: Press, Swipe, Context Menu, and Correct Double-Tap Arbitration
 
+**Ordered execution split:**
+
+- [x] **R2A — Press, ContextMenu, handler-aware Tap/DoubleTap, factual envelopes/payloads.** Jian commit `82ca16b` (`feat(renderer): add press and tap gesture semantics`). Verified with the full `jian-core` suite, Jian workspace check, wasm `jian-host-web`, and `op-preview-core` tests. The pinned Jian `0.0.1` integration accepts the narrow versioned API change where `ArenaHandle::pending_semantic` now carries `SemanticEventEnvelope`; legacy `emit(event)` and `reject()` entry points remain bridged.
+- [ ] **R2B — Swipe, corrected drag-family arbitration, Scale+Rotate co-winning, third-finger and 2→1→2 session repair.** Run only after R2A; it shares Router/Arena/recognizer files and must not have a parallel writer.
+
 **Files:**
 - Create: `vendor/jian/crates/jian-core/src/gesture/recognizers/press.rs`
 - Create: `vendor/jian/crates/jian-core/src/gesture/recognizers/swipe.rs`
 - Modify: `vendor/jian/crates/jian-core/src/gesture/recognizers/mod.rs`
 - Modify: `vendor/jian/crates/jian-core/src/gesture/recognizer.rs`
 - Modify: `vendor/jian/crates/jian-core/src/gesture/arena.rs`
+- Create: `vendor/jian/crates/jian-core/src/gesture/config.rs`
+- Create: `vendor/jian/crates/jian-core/src/gesture/router_tap.rs`
 - Modify: `vendor/jian/crates/jian-core/src/gesture/recognizers/pan.rs`
 - Modify: `vendor/jian/crates/jian-core/src/gesture/recognizers/long_press.rs`
 - Modify: `vendor/jian/crates/jian-core/src/gesture/recognizers/tap.rs`
@@ -205,6 +212,10 @@ git commit -m "chore(renderer): update jian interaction schema"
 - Modify: `vendor/jian/crates/jian-core/src/runtime/pointer_input.rs`
 - Test: `vendor/jian/crates/jian-core/tests/gesture_rich_events.rs`
 - Test: `vendor/jian/crates/jian-core/tests/gesture_event_payloads.rs`
+- Test: `vendor/jian/crates/jian-core/tests/gesture_r2a_regressions.rs`
+- Test: `vendor/jian/crates/jian-core/tests/gesture_r2a_due_order.rs`
+- Test: `vendor/jian/crates/jian-core/tests/gesture_r2a_disabled_owner.rs`
+- Test: `vendor/jian/crates/jian-core/tests/gesture_r2a_payload_actions.rs`
 - Modify: `vendor/jian/crates/jian-core/tests/gesture_tap_counter.rs`
 
 - [ ] **Step 1: Write failing semantic trace tests**
