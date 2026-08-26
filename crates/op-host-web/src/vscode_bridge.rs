@@ -34,11 +34,18 @@ use web_sys::MessageEvent;
 #[path = "vscode_bridge_snapshot.rs"]
 mod document_snapshot;
 mod early_listener;
+mod external_relay;
 mod helpers;
 mod startup;
 
 pub(crate) use early_listener::install_early;
 pub(crate) use startup::{await_init, in_iframe};
+
+/// Hold an external-navigation request until the locked bridge proves it is
+/// attached to the token-authenticated managed daemon.
+pub(crate) fn request_external_navigation(url: &str) {
+    external_relay::request(url);
+}
 
 use crate::document_json::{parse_document_json, with_borrowed_parsed_document};
 use crate::live_sync;

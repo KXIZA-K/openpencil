@@ -1,14 +1,15 @@
 //! Drive the daemon's device-login proxy from the web shell.
 //!
-//! The wasm bundle ships no auth code. The SignIn press opens a
-//! same-origin loading popup and fires `POST /api/auth/login/begin`
-//! immediately (both inside the click's user-activation window); the
-//! daemon holds that request until the pairing's verification URI is
-//! known, and the response callback navigates the popup to it — no poll
-//! cycle sits between the click and the sso page. The interval tick then
-//! polls `GET /api/auth/login/status` for approval progress and folds it
-//! into the same `login_modal_status` / `account` fields the desktop
-//! host uses, so the login modal renders identically on both hosts.
+//! The wasm bundle ships no auth code. In a standalone tab, the SignIn press
+//! opens a same-origin loading popup and fires `POST /api/auth/login/begin`
+//! immediately (both inside the click's user-activation window); the daemon
+//! holds that request until the pairing's verification URI is known, and the
+//! response callback navigates the popup to it. In a VS Code embed, the URI is
+//! instead held behind the managed-daemon bridge proof and opened by the
+//! extension host. The interval tick then polls `GET /api/auth/login/status`
+//! for approval progress and folds it into the same `login_modal_status` /
+//! `account` fields the desktop host uses, so the login modal renders
+//! identically on both hosts.
 //!
 //! On startup one `GET /api/auth/status` seeds `account_ui_available`
 //! and (when the daemon restored a shared session) the signed-in state;
@@ -109,13 +110,25 @@ struct FlowCells {
 /// URI to navigate it to.
 pub(crate) fn begin_login_now() {
     let base = crate::daemon_base::daemon_base();
-    let opened = web_sys::window()
-        .and_then(|window| {
-            window
-                .open_with_url_and_target(&format!("{base}{}", auth_routes::LOADING_PAGE), "_blank")
-                .ok()
-        })
-        .flatten();
+    // A nested VS Code iframe cannot reliably create or later navigate a
+    // browser popup. In that embed the verification URL is held until a
+    // token-authenticated managed-daemon probe authorizes the relay to the
+    // locked extension origin. Standalone web keeps the synchronous
+    // loading-popup path so browser popup blockers remain satisfied.
+    let opened = if crate::web_clipboard::is_vscode_embed() {
+        None
+    } else {
+        web_sys::window()
+            .and_then(|window| {
+                window
+                    .open_with_url_and_target(
+                        &format!("{base}{}", auth_routes::LOADING_PAGE),
+                        "_blank",
+                    )
+                    .ok()
+            })
+            .flatten()
+    };
     PENDING_POPUP.with(|slot| *slot.borrow_mut() = opened);
     POPUP_NAVIGATED.set(false);
     BEGIN_INFLIGHT.set(true);
@@ -158,11 +171,14 @@ pub(crate) fn close_login_popup_placeholder() {
     });
 }
 
-/// Point the loading popup at the verification page; when it is missing
-/// (blocked, or already consumed) fall back to a direct open — that may
-/// be blocked outside a gesture, but the approval also works from any
-/// logged-in browser tab, so the flow still completes.
+/// Point the loading popup at the verification page. A VS Code embed consumes
+/// the navigation into its proof-gated host relay. Standalone web falls back to
+/// a direct open when its loading popup is missing; that may be blocked outside
+/// a gesture, but approval also works from any logged-in browser tab.
 fn navigate_login_popup(url: &str) {
+    if crate::web_clipboard::post_open_external_to_parent(url) {
+        return;
+    }
     let pending = PENDING_POPUP.with(|slot| slot.borrow_mut().take());
     match pending {
         Some(popup) => {
