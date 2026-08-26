@@ -7,7 +7,7 @@
 //! profiles deliberately exercise phone/tablet size classes and asymmetric
 //! Android cutouts without depending on an iOS or Android simulator.
 
-use op_editor_ui::Theme;
+use op_editor_ui::{Color, Theme};
 use op_engine_ffi::{
     op_create, op_destroy, op_frame_cpu, op_get_pixel_size, op_set_keyboard, op_set_safe_area,
     OpCreateDesc, OpEngine, OpStatus,
@@ -173,7 +173,7 @@ fn mobile_safe_area_profiles_paint_continuous_unobscured_chrome() {
         let _ = harness.frame();
         let frame = harness.frame();
         assert_surface_is_opaque(profile, &frame);
-        assert_safe_bands_use_theme_background(profile, &frame);
+        assert_safe_bands_use_theme_surfaces(profile, &frame);
         assert_top_chrome_starts_at_safe_boundary(profile, &frame);
         assert_bottom_chrome_respects_safe_boundary(profile, &frame);
     }
@@ -209,8 +209,17 @@ fn assert_surface_is_opaque(profile: Profile, frame: &[u8]) {
     );
 }
 
-fn assert_safe_bands_use_theme_background(profile: Profile, frame: &[u8]) {
-    let theme_background = dark_theme_background();
+fn assert_safe_bands_use_theme_surfaces(profile: Profile, frame: &[u8]) {
+    // Since d20be2410 the safe-area bands are deliberately tinted toward the
+    // chrome they extend instead of repeating the raw root background: the
+    // top band matches the app bar (blend 0.42) and the compact bottom band
+    // matches the edge-to-edge dock (blend 0.48). Tablets float their dock,
+    // so their bottom band — and every side cutout/gesture band — keeps the
+    // plain root background.
+    let root_background = dark_theme_bytes(Theme::dark().background);
+    let top_band = blended_band_bytes(Theme::dark().background, Theme::dark().card, 0.42);
+    let compact_bottom_band =
+        blended_band_bytes(Theme::dark().background, Theme::dark().card, 0.48);
     let Insets {
         top,
         right,
@@ -223,12 +232,17 @@ fn assert_safe_bands_use_theme_background(profile: Profile, frame: &[u8]) {
     if top > 0 {
         assert_eq!(
             pixel_at(frame, profile.width, content_mid_x, top / 2),
-            theme_background,
-            "{} top safe band should extend the app surface, not introduce a black strip",
+            top_band,
+            "{} top safe band should blend into the app bar surface, not introduce a black strip",
             profile.name
         );
     }
     if bottom > 0 {
+        let expected_bottom_band = if profile.compact {
+            compact_bottom_band
+        } else {
+            root_background
+        };
         assert_eq!(
             pixel_at(
                 frame,
@@ -236,15 +250,20 @@ fn assert_safe_bands_use_theme_background(profile: Profile, frame: &[u8]) {
                 content_mid_x,
                 profile.height - (bottom / 2).max(1),
             ),
-            theme_background,
-            "{} bottom safe band should extend the app surface behind system gestures",
-            profile.name
+            expected_bottom_band,
+            "{} bottom safe band should continue {} behind system gestures",
+            profile.name,
+            if profile.compact {
+                "the dock surface"
+            } else {
+                "the root app surface"
+            }
         );
     }
     if left > 0 {
         assert_eq!(
             pixel_at(frame, profile.width, left / 2, content_mid_y),
-            theme_background,
+            root_background,
             "{} left cutout band should use the root app surface",
             profile.name
         );
@@ -257,7 +276,7 @@ fn assert_safe_bands_use_theme_background(profile: Profile, frame: &[u8]) {
                 profile.width - (right / 2).max(1),
                 content_mid_y,
             ),
-            theme_background,
+            root_background,
             "{} right gesture/cutout band should use the root app surface",
             profile.name
         );
@@ -359,12 +378,26 @@ fn pixel_at(buffer: &[u8], width: usize, x: usize, y: usize) -> [u8; 4] {
     ]
 }
 
-fn dark_theme_background() -> [u8; 4] {
-    let color = Theme::dark().background;
+fn dark_theme_bytes(color: Color) -> [u8; 4] {
     [
         (color.r.clamp(0.0, 1.0) * 255.0).round() as u8,
         (color.g.clamp(0.0, 1.0) * 255.0).round() as u8,
         (color.b.clamp(0.0, 1.0) * 255.0).round() as u8,
         (color.a.clamp(0.0, 1.0) * 255.0).round() as u8,
     ]
+}
+
+/// Mirrors the engine's linear blend (`mix(background, card, t)`) at the
+/// same f32 precision so expectations cannot drift from production mixing.
+fn blended_band_bytes(background: Color, card: Color, t: f32) -> [u8; 4] {
+    [
+        ((background.r + (card.r - background.r) * t).clamp(0.0, 1.0) * 255.0).round() as u8,
+        ((background.g + (card.g - background.g) * t).clamp(0.0, 1.0) * 255.0).round() as u8,
+        ((background.b + (card.b - background.b) * t).clamp(0.0, 1.0) * 255.0).round() as u8,
+        ((background.a + (card.a - background.a) * t).clamp(0.0, 1.0) * 255.0).round() as u8,
+    ]
+}
+
+fn dark_theme_background() -> [u8; 4] {
+    dark_theme_bytes(Theme::dark().background)
 }
