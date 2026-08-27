@@ -161,5 +161,8 @@ pub fn apply_tree_heuristics(
 }
 
 #[cfg(test)]
+#[path = "tree_heuristics_media_tests.rs"]
+mod media_tests;
+#[cfg(test)]
 #[path = "tree_heuristics_tests.rs"]
 mod tests;

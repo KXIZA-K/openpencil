@@ -126,6 +126,8 @@ mod keyboard;
 mod keyboard_edit_ops;
 mod keyboard_escape;
 mod keyboard_git;
+#[cfg(test)]
+mod keyboard_git_tests;
 mod keyboard_ime;
 mod keyboard_settings_commit;
 #[cfg(test)]
@@ -151,6 +153,8 @@ mod page_switch_center_tests;
 mod paint;
 #[cfg(test)]
 mod paint_caret_tests;
+mod paint_overlays;
+mod paint_topmost_overlays;
 #[cfg(test)]
 mod pan_tests;
 mod pen_press;

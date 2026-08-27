@@ -484,3 +484,5 @@ mod cli_selection_tests;
 mod cli_start_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_arg_mapping;
