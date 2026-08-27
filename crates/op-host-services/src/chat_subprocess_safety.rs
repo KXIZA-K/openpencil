@@ -250,6 +250,22 @@ impl IsolatedTurn {
             home.join(".gemini").to_string_lossy()
         ));
         args.push("--app_data_dir=antigravity-cli".into());
+        // Point the CLI's own log into this turn's private directory. Its
+        // stderr can be as uninformative as a bare "Agent execution
+        // terminated due to error." while the real cause (a server-side
+        // FAILED_PRECONDITION, an auth refusal) is only ever written here —
+        // see `chat_subprocess_antigravity_log`. The file dies with the turn
+        // directory, so this adds no retained state.
+        if let Some(log) = self.log_file() {
+            args.push(format!("--log-file={}", log.to_string_lossy()));
+        }
+    }
+
+    /// Where this turn's CLI log lives, for the CLIs that write one.
+    /// `None` for every turn without a private home (i.e. everything but
+    /// Antigravity).
+    pub(crate) fn log_file(&self) -> Option<PathBuf> {
+        Some(self.home_dir()?.join("cli.log"))
     }
 }
 

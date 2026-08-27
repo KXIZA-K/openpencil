@@ -734,6 +734,10 @@ impl SubprocessProvider {
                             &stderr_text,
                             &stdout_text,
                         );
+                        let msg = crate::chat_subprocess_antigravity_log::with_log_evidence(
+                            msg,
+                            _isolation.as_ref(),
+                        );
                         let _ = tx.send(ChatDelta::Error(msg)).await;
                     }
                     let _ = tx

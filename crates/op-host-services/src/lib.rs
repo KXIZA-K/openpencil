@@ -38,6 +38,7 @@ pub mod chat_provider_llm;
 pub mod chat_runtime;
 pub mod chat_spawn;
 pub mod chat_subprocess;
+mod chat_subprocess_antigravity_log;
 mod chat_subprocess_dsh;
 mod chat_subprocess_exit;
 mod chat_subprocess_lifecycle;
