@@ -144,6 +144,7 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "builtin.typeModelManually" => "No se pudo obtener la lista de modelos. Introduce los IDs manualmente, uno por línea.",
         "settings.provider.deepSeekHarness" => "Modelos DeepSeek Harness",
         "settings.agents.deleteProvider" => "Eliminar proveedor",
+        "chat.mcpRequired" => "{cli} necesita la integración MCP de OpenPencil activada en Ajustes",
         _ => return None,
     })
 }

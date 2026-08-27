@@ -221,6 +221,14 @@ pub fn apply_chat_hit(state: &mut EditorState, hit: AIChatHit, now_ms: u64) -> C
             state.editor_ui.open_prompt_center(now_ms);
             ChatClickStep::Dirty
         }
+        AIChatHit::OpenMcpSettings => {
+            // Land on the tab that carries the toggle the notice is about —
+            // dropping the user on the Agents tab would make them hunt for it.
+            state.editor_ui.agent_settings.tab =
+                op_editor_core::agent_settings::AgentSettingsTab::Mcp;
+            state.editor_ui.agent_settings_open = true;
+            ChatClickStep::Dirty
+        }
         AIChatHit::CycleAgentTeam => {
             state.cycle_agent_team_size();
             ChatClickStep::Dirty

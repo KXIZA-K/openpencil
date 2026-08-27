@@ -144,6 +144,7 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "builtin.typeModelManually" => "Model listesi alınamadı. Kimlikleri elle, her satıra bir tane girin.",
         "settings.provider.deepSeekHarness" => "DeepSeek Harness modelleri",
         "settings.agents.deleteProvider" => "Sağlayıcıyı sil",
+        "chat.mcpRequired" => "{cli} için Ayarlar'da OpenPencil MCP entegrasyonunu açın",
         _ => return None,
     })
 }

@@ -169,6 +169,21 @@ impl<'a> AIChatPlaceholder<'a> {
             return Some(AIChatHit::ToggleParallelAgentsPicker);
         }
         if (input_rect).contains(point) {
+            // Pre-flight MCP notice — the actual topmost band when it shows,
+            // and a button: clicking it opens Settings on the MCP tab. Every
+            // row below is measured from `rows_rect`, the input block with
+            // the notice already taken off the top, so their geometry is
+            // identical whether or not the notice is up.
+            if let Some(notice) = self.mcp_notice_row(rect) {
+                if crate::widgets::ai_chat_mcp_notice::notice_rect(notice).contains(point) {
+                    return Some(AIChatHit::OpenMcpSettings);
+                }
+            }
+            let notice_h = self.mcp_notice_row_h();
+            let input_rect = Rect {
+                origin: Point2D::new(input_rect.origin.x, input_rect.origin.y + notice_h),
+                size: Point2D::new(input_rect.size.x, (input_rect.size.y - notice_h).max(0.0)),
+            };
             // Topmost band of the input block, so it is tested first. Both
             // chips share the row, so both ✕ targets are probed here — the
             // rects come from the same `chip_row` paint draws from.

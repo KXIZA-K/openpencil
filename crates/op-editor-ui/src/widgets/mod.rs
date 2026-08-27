@@ -298,6 +298,7 @@ pub mod agent_settings_system;
 pub(crate) mod ai_chat_chip_row;
 mod ai_chat_hit;
 pub(crate) mod ai_chat_input_text;
+pub mod ai_chat_mcp_notice;
 pub mod ai_chat_model_picker;
 #[cfg(test)]
 mod ai_chat_model_picker_tests;

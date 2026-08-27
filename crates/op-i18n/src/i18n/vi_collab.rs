@@ -156,6 +156,7 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "builtin.typeModelManually" => "Không lấy được danh sách model. Nhập ID thủ công, mỗi dòng một mã.",
         "settings.provider.deepSeekHarness" => "Mô hình DeepSeek Harness",
         "settings.agents.deleteProvider" => "Xóa nhà cung cấp",
+        "chat.mcpRequired" => "{cli} cần bật tích hợp OpenPencil MCP trong Cài đặt",
         _ => return None,
     })
 }

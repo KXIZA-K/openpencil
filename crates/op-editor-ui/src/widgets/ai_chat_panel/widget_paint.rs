@@ -192,12 +192,28 @@ impl<'a> Widget for AIChatPlaceholder<'a> {
             );
         }
         let input_block_rect = self.input_rect(rect);
+        // Above even the chips: a turn that cannot start at all outranks
+        // anything describing what the turn would do.
+        let notice_h = self.mcp_notice_row_h();
+        if let (Some(row), Some(label)) = (self.mcp_notice_row(rect), self.mcp_notice.as_deref()) {
+            crate::widgets::ai_chat_mcp_notice::paint_mcp_notice(cx, row, self.theme, label);
+        }
+        let rows_rect = Rect {
+            origin: Point2D::new(
+                input_block_rect.origin.x,
+                input_block_rect.origin.y + notice_h,
+            ),
+            size: Point2D::new(
+                input_block_rect.size.x,
+                (input_block_rect.size.y - notice_h).max(0.0),
+            ),
+        };
         // Above everything else in the input block: the chips describe the
         // next turn and what it is aimed at, not the turn's content.
-        crate::widgets::ai_chat_chip_row::paint_chip_row(cx, &self.theme, self, input_block_rect);
+        crate::widgets::ai_chat_chip_row::paint_chip_row(cx, &self.theme, self, rows_rect);
         let chip_row_h = self.chip_row_h();
         let input_rect = Rect {
-            origin: Point2D::new(rect.origin.x + PAD, sep_y + 1.0 + chip_row_h),
+            origin: Point2D::new(rect.origin.x + PAD, sep_y + 1.0 + notice_h + chip_row_h),
             size: Point2D::new(
                 rect.size.x - PAD * 2.0,
                 self.input_area_height_for_rect(rect),

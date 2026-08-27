@@ -28,6 +28,7 @@ pub mod button_press_state;
 mod catalog_toml;
 pub mod chat;
 pub mod chat_activity;
+pub mod chat_agent_readiness;
 pub mod chat_button_state;
 mod chat_design_apply;
 mod chat_model_mutators;

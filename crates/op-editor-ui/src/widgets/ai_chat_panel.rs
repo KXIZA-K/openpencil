@@ -134,6 +134,10 @@ pub struct AIChatPlaceholder<'a> {
     pub(crate) parallel_agents_picker_open: bool,
     /// Which row (1–6) the cursor is over inside the Parallel Agents picker.
     pub(crate) parallel_agents_picker_hover: Option<u32>,
+    /// Localised pre-flight notice for the selected agent's missing MCP
+    /// integration, or `None` when it can run a canvas turn. See
+    /// `ai_chat_mcp_notice`.
+    pub(crate) mcp_notice: Option<String>,
     /// Opaque, stable per-panel-INSTANCE id used to scope the thread-local
     /// transcript cache. A host allocates ONE id (`Self::next_owner`) for its
     /// persistent widget-host state and stamps every constructed panel with it
@@ -143,6 +147,17 @@ pub struct AIChatPlaceholder<'a> {
     /// Defaults to `UNOWNED` (0) for plain `from_editor*` constructions (unit
     /// tests / paths that never touch the hint).
     pub(crate) owner: u64,
+}
+
+/// The localised notice for the selected agent's missing MCP integration, or
+/// `None` when nothing is missing. The CLI name is substituted rather than
+/// baked into fifteen catalogs, so a second gated agent needs no new key.
+fn mcp_notice_label(ui: &op_editor_core::EditorUiState) -> Option<String> {
+    ui.chat_agent_mcp_gap()?;
+    let agent = op_editor_core::chat::models::AgentProvider::ALL
+        .get(ui.chat_selected_agent)
+        .copied()?;
+    Some(translate(ui, "chat.mcpRequired").replace("{cli}", agent.name()))
 }
 
 /// Minimal per-tab snapshot used by the tab-row painter.
@@ -205,6 +220,7 @@ impl<'a> AIChatPlaceholder<'a> {
                 _ => None,
             },
             examples: example_cards(ui.effective_locale()),
+            mcp_notice: mcp_notice_label(ui),
             locale: ui.effective_locale(),
             tabs_snapshot,
             active_tab_index,
@@ -251,6 +267,43 @@ impl<'a> AIChatPlaceholder<'a> {
         }
     }
 
+    /// Height of the pre-flight MCP notice — `0` when the selected agent can
+    /// run a canvas turn, so a correctly configured panel never pays a row
+    /// for it (same rule as the attachment and chip rows above).
+    pub(crate) fn mcp_notice_row_h(&self) -> f32 {
+        if self.mcp_notice.is_some() {
+            crate::widgets::ai_chat_mcp_notice::MCP_NOTICE_ROW_HEIGHT
+        } else {
+            0.0
+        }
+    }
+
+    /// The MCP notice's row, at the top of the input block. `None` when there
+    /// is nothing to say — the single rect source paint and hit-test read.
+    pub(crate) fn mcp_notice_row(&self, rect: Rect) -> Option<Rect> {
+        let h = self.mcp_notice_row_h();
+        if h <= 0.0 {
+            return None;
+        }
+        let input = self.input_rect(rect);
+        Some(Rect {
+            origin: input.origin,
+            size: Point2D::new(input.size.x, h),
+        })
+    }
+
+    /// The input block with the notice row (if any) already taken off the top,
+    /// so every row below it lands in the same place whether or not the notice
+    /// is showing.
+    fn input_rows_rect(&self, rect: Rect) -> Rect {
+        let input = self.input_rect(rect);
+        let offset = self.mcp_notice_row_h();
+        Rect {
+            origin: Point2D::new(input.origin.x, input.origin.y + offset),
+            size: Point2D::new(input.size.x, (input.size.y - offset).max(0.0)),
+        }
+    }
+
     /// Where the live chips sit. The single rect source paint and hit-test
     /// both read — see `ai_chat_chip_row`.
     pub(crate) fn chip_row(&self, input_rect: Rect) -> ChipRowLayout {
@@ -280,7 +333,7 @@ impl<'a> AIChatPlaceholder<'a> {
     /// Where the pinned-style chip sits, or `None` when no style is in force.
     /// The same rect paint and hit-test read — see `ai_chat_chip_row`.
     pub fn style_chip_rect(&self, rect: Rect) -> Option<Rect> {
-        self.chip_row(self.input_rect(rect)).style
+        self.chip_row(self.input_rows_rect(rect)).style
     }
 
     /// Whether the chip's detail card is on screen at this panel's `now_ms`.
@@ -301,7 +354,7 @@ impl<'a> AIChatPlaceholder<'a> {
         if self.state.is_minimized() || self.model_picker.open || self.style_receipt.is_none() {
             return false;
         }
-        self.chip_row(self.input_rect(rect))
+        self.chip_row(self.input_rows_rect(rect))
             .style
             .is_some_and(|chip| chip.contains(point))
     }
@@ -355,7 +408,8 @@ impl<'a> AIChatPlaceholder<'a> {
     }
 
     pub(crate) fn input_height_for_width(&self, panel_w: f32, panel_h: f32) -> f32 {
-        self.chip_row_h()
+        self.mcp_notice_row_h()
+            + self.chip_row_h()
             + self.input_area_height_for_width(panel_w, panel_h)
             + INPUT_TOOLBAR_HEIGHT
             + self.attachment_row_h()
@@ -494,7 +548,7 @@ impl<'a> AIChatPlaceholder<'a> {
     }
 
     pub fn input_text_rect(&self, rect: Rect) -> Rect {
-        let input_block = self.input_rect(rect);
+        let input_block = self.input_rows_rect(rect);
         Rect {
             origin: Point2D::new(
                 input_block.origin.x,

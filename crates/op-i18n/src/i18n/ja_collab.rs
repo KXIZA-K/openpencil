@@ -160,6 +160,7 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "builtin.typeModelManually" => "モデル一覧の取得に失敗しました。モデル ID を 1 行に 1 つ入力してください",
         "settings.provider.deepSeekHarness" => "DeepSeek Harness モデル",
         "settings.agents.deleteProvider" => "プロバイダーを削除",
+        "chat.mcpRequired" => "{cli} を使うには設定で OpenPencil MCP 連携を有効にしてください",
         _ => return None,
     })
 }
