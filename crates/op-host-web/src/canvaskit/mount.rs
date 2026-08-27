@@ -54,6 +54,12 @@ pub(super) async fn mount_ck(canvas_id: String) -> Result<(), JsValue> {
     let search = window.location().search().unwrap_or_default();
     host.editor_state_mut().editor_ui.embed = op_editor_core::EmbedHost::from_query(&search);
     let credential_load = crate::web_settings::load_into(host.editor_state_mut());
+    // Managed embeds may require deterministic chrome language. Apply the URL
+    // policy after persisted browser settings so an old saved locale cannot
+    // override the embedding host on reload.
+    if let Some(locale) = op_editor_core::Locale::from_query(&search) {
+        host.editor_state_mut().editor_ui.locale = locale;
+    }
     // Theme is device-level, so it is resolved from its own unpartitioned key
     // rather than from the partition blob just loaded. On a browser that has
     // never run the split build this adopts the blob's theme and writes the

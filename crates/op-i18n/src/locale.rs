@@ -131,6 +131,18 @@ impl Locale {
         Self::from_tag(tag).unwrap_or(Locale::EnUs)
     }
 
+    /// Read a locale override from a URL query string.
+    ///
+    /// The leading `?` is optional. Invalid or unsupported values are ignored
+    /// so an older editor remains usable when a host adds a newer locale.
+    pub fn from_query(search: &str) -> Option<Self> {
+        let query = search.strip_prefix('?').unwrap_or(search);
+        query.split('&').find_map(|pair| {
+            let (key, value) = pair.split_once('=')?;
+            (key == "locale").then(|| Self::from_tag(value)).flatten()
+        })
+    }
+
     /// Resolve locale environment values in POSIX precedence order.
     ///
     /// The first non-empty value controls the result. `C`, `POSIX`, and
@@ -217,6 +229,17 @@ mod tests {
         assert_eq!(Locale::from_tag("in-ID"), Some(Locale::Id));
         assert_eq!(Locale::from_tag("C"), None);
         assert_eq!(Locale::from_tag("xx-ZZ"), None);
+    }
+
+    #[test]
+    fn parses_locale_query_override() {
+        assert_eq!(Locale::from_query("?locale=en-US"), Some(Locale::EnUs));
+        assert_eq!(
+            Locale::from_query("?tenant=acme&locale=zh-TW&embed=vscode"),
+            Some(Locale::ZhTw)
+        );
+        assert_eq!(Locale::from_query("?locale=unsupported"), None);
+        assert_eq!(Locale::from_query("?language=en-US"), None);
     }
 
     #[test]

@@ -18,7 +18,7 @@ impl Default for EditorUiState {
             layer_panel_width: 240.0,
             property_panel_width: 256.0,
             theme_mode: ThemeMode::Dark,
-            locale: Locale::ZhCn,
+            locale: Locale::EnUs,
             locale_picker: jian_widgets::components::select::SelectState::default(),
             preferred_agent_team_size: 1,
             collab: Default::default(),

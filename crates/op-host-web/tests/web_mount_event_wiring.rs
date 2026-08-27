@@ -100,6 +100,24 @@ fn canvaskit_mount_loads_browser_settings_before_fingerprints_and_first_repaint(
 }
 
 #[test]
+fn canvaskit_mount_applies_host_locale_after_browser_settings() {
+    let source = canvaskit_source();
+    let load = source
+        .find("let credential_load = crate::web_settings::load_into")
+        .expect("browser settings load");
+    let locale = source[load..]
+        .find("Locale::from_query(&search)")
+        .map(|idx| load + idx)
+        .expect("host locale override");
+    let fingerprint = source[locale..]
+        .find("initial_settings_fingerprint")
+        .map(|idx| locale + idx)
+        .expect("settings fingerprint");
+
+    assert!(load < locale && locale < fingerprint);
+}
+
+#[test]
 fn canvaskit_repaint_persists_local_settings_and_syncs_only_credential_changes() {
     let source = canvaskit_source();
     let repaint_start = source.find("impl CkInner").expect("CkInner implementation");

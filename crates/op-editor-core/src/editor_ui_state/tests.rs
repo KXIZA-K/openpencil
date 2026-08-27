@@ -9,7 +9,7 @@ fn default_editor_ui_is_quiescent() {
     let c = EditorUiState::new();
     assert!(c.sidebar_open);
     assert_eq!(c.theme_mode, ThemeMode::Dark);
-    assert_eq!(c.locale, Locale::ZhCn);
+    assert_eq!(c.locale, Locale::EnUs);
     assert!(!c.file_menu_open);
     assert!(!c.export_dialog_open);
     assert!(!c.agent_settings_open);
