@@ -215,10 +215,8 @@ pub(super) fn register_keyboard_listeners(
                         let mut chars = key.chars();
                         if let (Some(c), None) = (chars.next(), chars.next()) {
                             // Printable characters — dispatch as text
-                            if !c.is_control() {
-                                if b.host.apply_preview_text(&c.to_string()) {
-                                    consumed = true;
-                                }
+                            if !c.is_control() && b.host.apply_preview_text(&c.to_string()) {
+                                consumed = true;
                             }
                         }
                         // Dispatch non-printable named keys to preview
