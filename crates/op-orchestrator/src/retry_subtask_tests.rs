@@ -152,3 +152,89 @@ fn plan_for_retry_derives_root_frame_from_the_live_document_not_the_stale_subtas
     );
     assert_eq!(plan.subtasks[0].screen.as_deref(), Some("Home"));
 }
+
+/// A screen rebuilt between the original run and the retry: the `screen`
+/// marker survives, every id under it does not. Reproduces `0827-gk-1`, where
+/// the saved page went from `n117` to `n380` and two sections then failed
+/// pointing at a frame that no longer existed.
+fn sink_with_rebuilt_screen() -> VecDocSink {
+    let doc: PenDocument = serde_json::from_str(
+        r##"{ "version": "1.0", "children": [
+            { "type": "frame", "id": "n380", "name": "收藏", "screen": "/screen-1",
+              "width": 390, "height": 844, "layout": "vertical",
+              "fill": [{ "type": "solid", "color": "#112233" }] }
+        ] }"##,
+    )
+    .expect("doc");
+    let mut sink = VecDocSink::new();
+    sink.state = op_editor_core::EditorState::from_document(doc);
+    sink
+}
+
+fn subtask_on_screen(parent_frame_id: &str, screen: &str) -> Subtask {
+    let mut subtask = failed_subtask(Some(parent_frame_id));
+    subtask.screen = Some(screen.to_string());
+    subtask
+}
+
+#[test]
+fn a_renumbered_screen_reparents_instead_of_making_the_user_re_describe_it() {
+    let mut sink = sink_with_rebuilt_screen();
+    let subtask = subtask_on_screen("n117", "/screen-1");
+    let request = design_request();
+    let llm = ScriptedLlm::new(vec![ScriptResponse::Text(node_json("browse-all-grid"))]);
+    let abort = AbortFlag::new();
+
+    let outcome = futures::executor::block_on(retry_subtask(
+        &subtask, &request, &llm, &mut sink, &abort, None, None,
+    ));
+
+    assert!(
+        outcome.error.is_none(),
+        "the screen marker still resolves this section's home: {outcome:?}"
+    );
+    assert!(outcome.node_count > 0, "{outcome:?}");
+}
+
+#[test]
+fn the_reparent_resolves_through_the_screen_marker_not_the_frame_name() {
+    // Names are not routing identity — two screens can share a label, and a
+    // rename must not silently move a section to a different screen.
+    let sink = sink_with_rebuilt_screen();
+    assert_eq!(
+        reparent_by_screen(&sink, &subtask_on_screen("n117", "/screen-1")),
+        Some("n380".to_string())
+    );
+    assert_eq!(
+        reparent_by_screen(&sink, &subtask_on_screen("n117", "/screen-9")),
+        None,
+        "an unknown screen path must not fall back to whatever frame is there"
+    );
+    let mut no_screen = failed_subtask(Some("n117"));
+    no_screen.screen = None;
+    assert_eq!(
+        reparent_by_screen(&sink, &no_screen),
+        None,
+        "without a screen marker there is nothing to resolve through"
+    );
+}
+
+#[test]
+fn two_frames_claiming_one_screen_path_decline_rather_than_guess() {
+    let doc: PenDocument = serde_json::from_str(
+        r##"{ "version": "1.0", "children": [
+            { "type": "frame", "id": "a", "name": "收藏", "screen": "/screen-1",
+              "width": 390, "height": 844, "layout": "vertical" },
+            { "type": "frame", "id": "b", "name": "收藏(旧)", "screen": "/screen-1",
+              "width": 390, "height": 844, "layout": "vertical" }
+        ] }"##,
+    )
+    .expect("doc");
+    let mut sink = VecDocSink::new();
+    sink.state = op_editor_core::EditorState::from_document(doc);
+    assert_eq!(
+        reparent_by_screen(&sink, &subtask_on_screen("n117", "/screen-1")),
+        None,
+        "picking either would be a coin flip that lands the section on the wrong screen"
+    );
+}

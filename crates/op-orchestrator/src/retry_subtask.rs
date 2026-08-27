@@ -83,11 +83,11 @@ fn plan_for_retry(sink: &dyn DocSink, subtask: &Subtask) -> OrchestratorPlan {
 /// insertion point. The approved v1 scope is "tell the user the truth"; see
 /// the TODO below for the deferred structural fix.
 ///
-/// TODO(v2): once the concurrent Track-A screen-navigation work reliably
-/// marks every top-level frame with `FrameNode.screen`, resolve a stale
-/// `parent_frame_id` by matching `subtask.screen` against the CURRENT
-/// top-level frames' `screen` markers instead of failing — deferred so this
-/// feature doesn't couple to that in-flight effort.
+/// A stale `parent_frame_id` is re-resolved through the subtask's own
+/// `screen` marker before giving up (see [`reparent_by_screen`]): a screen
+/// rebuilt between the original run and the retry keeps its `screen` path
+/// while every id under it changes, and failing on the old id made the user
+/// re-describe a location that had simply been renumbered.
 pub async fn retry_subtask(
     subtask: &Subtask,
     request: &DesignRequest,
@@ -97,25 +97,34 @@ pub async fn retry_subtask(
     indicator_epoch: Option<u64>,
     on_progress: Option<&mut dyn FnMut(Progress)>,
 ) -> SubtaskOutcome {
-    if let Some(parent_id) = &subtask.parent_frame_id {
+    // Owned so a re-resolved parent can replace the stale one without
+    // touching the caller's persisted subtask.
+    let mut subtask = subtask.clone();
+    if let Some(parent_id) = subtask.parent_frame_id.clone() {
         let resolves = op_editor_core::walkers::find_node(
             sink.state().active_children(),
             &op_editor_core::NodeId::new(parent_id.clone()),
         )
         .is_some();
         if !resolves {
-            return SubtaskOutcome {
-                id: subtask.id.clone(),
-                node_count: 0,
-                error: Some(format!(
-                    "this section's original location (frame \"{parent_id}\") no longer exists \
-                     in the document — describe where to add it instead"
-                )),
-                inserted_root_ids: Vec::new(),
-                subtask: None,
-            };
+            match reparent_by_screen(sink, &subtask) {
+                Some(recovered) => subtask.parent_frame_id = Some(recovered),
+                None => {
+                    return SubtaskOutcome {
+                        id: subtask.id.clone(),
+                        node_count: 0,
+                        error: Some(format!(
+                            "this section's original location (frame \"{parent_id}\") no longer \
+                             exists in the document — describe where to add it instead"
+                        )),
+                        inserted_root_ids: Vec::new(),
+                        subtask: None,
+                    };
+                }
+            }
         }
     }
+    let subtask = &subtask;
     let plan = plan_for_retry(sink, subtask);
     run_subtask_with_reveal_at(
         &plan.subtasks[0],
@@ -131,6 +140,37 @@ pub async fn retry_subtask(
         on_progress,
     )
     .await
+}
+
+/// The CURRENT top-level frame that carries this subtask's `screen` path, when
+/// the subtask's recorded parent id has gone stale.
+///
+/// A screen regenerated between the original run and the retry keeps its
+/// `screen` marker (that is the routing contract every top-level frame is
+/// stamped with) while every id beneath it is renumbered — measured on
+/// `0827-gk-1`, where the saved page rebuilt from `n117` to `n380` and two
+/// sections then failed pointing at a frame that no longer existed.
+///
+/// Deliberately conservative: no `screen` on the subtask, or no unique
+/// top-level frame carrying it, resolves to `None` and the caller still fails
+/// with its own message. Guessing a parent would put a section on the wrong
+/// screen, which is worse than asking.
+fn reparent_by_screen(sink: &dyn DocSink, subtask: &Subtask) -> Option<String> {
+    let screen = subtask.screen.as_deref()?;
+    let mut matches = sink
+        .state()
+        .active_children()
+        .iter()
+        .filter_map(|node| match node {
+            jian_ops_schema::node::PenNode::Frame(frame) => {
+                (frame.screen.as_deref() == Some(screen)).then(|| frame.base.id.clone())
+            }
+            _ => None,
+        });
+    let first = matches.next()?;
+    // Two frames claiming one screen path is a document-level defect; picking
+    // either would be a coin flip, so decline and let the caller report.
+    matches.next().is_none().then_some(first)
 }
 
 #[cfg(test)]
