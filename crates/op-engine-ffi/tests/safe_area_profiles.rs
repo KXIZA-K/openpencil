@@ -7,6 +7,7 @@
 //! profiles deliberately exercise phone/tablet size classes and asymmetric
 //! Android cutouts without depending on an iOS or Android simulator.
 
+use op_editor_ui::widgets::mobile_chrome;
 use op_editor_ui::{Color, Theme};
 use op_engine_ffi::{
     op_create, op_destroy, op_frame_cpu, op_get_pixel_size, op_set_keyboard, op_set_safe_area,
@@ -212,14 +213,15 @@ fn assert_surface_is_opaque(profile: Profile, frame: &[u8]) {
 fn assert_safe_bands_use_theme_surfaces(profile: Profile, frame: &[u8]) {
     // Since d20be2410 the safe-area bands are deliberately tinted toward the
     // chrome they extend instead of repeating the raw root background: the
-    // top band matches the app bar (blend 0.42) and the compact bottom band
-    // matches the edge-to-edge dock (blend 0.48). Tablets float their dock,
-    // so their bottom band — and every side cutout/gesture band — keeps the
-    // plain root background.
+    // top band matches the app bar and the compact bottom band matches the
+    // edge-to-edge dock. Tablets float their dock, so their bottom band —
+    // and every side cutout/gesture band — keeps the plain root background.
+    // The expectations call the SAME production helpers the chrome paints
+    // with, so a re-tuned blend cannot leave this test asserting a stale
+    // constant.
     let root_background = dark_theme_bytes(Theme::dark().background);
-    let top_band = blended_band_bytes(Theme::dark().background, Theme::dark().card, 0.42);
-    let compact_bottom_band =
-        blended_band_bytes(Theme::dark().background, Theme::dark().card, 0.48);
+    let top_band = dark_theme_bytes(mobile_chrome::app_bar_surface(Theme::dark()));
+    let compact_bottom_band = dark_theme_bytes(mobile_chrome::dock_surface(Theme::dark()));
     let Insets {
         top,
         right,
@@ -384,17 +386,6 @@ fn dark_theme_bytes(color: Color) -> [u8; 4] {
         (color.g.clamp(0.0, 1.0) * 255.0).round() as u8,
         (color.b.clamp(0.0, 1.0) * 255.0).round() as u8,
         (color.a.clamp(0.0, 1.0) * 255.0).round() as u8,
-    ]
-}
-
-/// Mirrors the engine's linear blend (`mix(background, card, t)`) at the
-/// same f32 precision so expectations cannot drift from production mixing.
-fn blended_band_bytes(background: Color, card: Color, t: f32) -> [u8; 4] {
-    [
-        ((background.r + (card.r - background.r) * t).clamp(0.0, 1.0) * 255.0).round() as u8,
-        ((background.g + (card.g - background.g) * t).clamp(0.0, 1.0) * 255.0).round() as u8,
-        ((background.b + (card.b - background.b) * t).clamp(0.0, 1.0) * 255.0).round() as u8,
-        ((background.a + (card.a - background.a) * t).clamp(0.0, 1.0) * 255.0).round() as u8,
     ]
 }
 

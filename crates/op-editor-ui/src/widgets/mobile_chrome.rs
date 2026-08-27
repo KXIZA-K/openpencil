@@ -41,6 +41,20 @@ pub fn centered_icon_rect(target: Rect, icon_size: f32) -> Rect {
     }
 }
 
+/// The app bar's elevated surface. The top safe-area band paints this
+/// same color so bar and band read as one surface — single-sourced here
+/// so the two paint sites and the FFI band test cannot drift apart.
+pub fn app_bar_surface(theme: Theme) -> Color {
+    mix(theme.background, theme.card, 0.42)
+}
+
+/// The compact (phone) dock's surface. The bottom safe-area band extends
+/// it behind the system gesture area; see [`app_bar_surface`] for why the
+/// blend lives in one place.
+pub fn dock_surface(theme: Theme) -> Color {
+    mix(theme.background, theme.card, 0.48)
+}
+
 /// Paint a Lucide glyph inside a larger touch target without changing
 /// its canonical 24×24 coordinate system. Every subpath must share the
 /// same transform; fitting each subpath independently deforms compound
@@ -54,14 +68,14 @@ pub fn safe_area_band_colors(state: &EditorState) -> (Option<Color>, Option<Colo
         return (None, None);
     }
     let theme = crate::widgets::editor_state_ext::theme_for(&state.editor_ui);
-    let top = Some(mix(theme.background, theme.card, 0.42));
+    let top = Some(app_bar_surface(theme));
     // Mirrors the dock's paint gating: a modal sheet or the variables panel
     // hides the dock, so the band returns to the plain background.
     let bottom = if state.editor_ui.compact_layout()
         && state.editor_ui.mobile_sheet.is_none()
         && !state.editor_ui.variables_panel_open
     {
-        Some(mix(theme.background, theme.card, 0.48))
+        Some(dock_surface(theme))
     } else {
         None
     };
@@ -172,8 +186,7 @@ impl MobileAppBar {
 
     pub fn paint(&self, cx: &mut PaintCx<'_>, rect: Rect) {
         // Elevated surface + bottom hairline.
-        cx.backend
-            .fill_rect(rect, mix(self.theme.background, self.theme.card, 0.42));
+        cx.backend.fill_rect(rect, app_bar_surface(self.theme));
         cx.backend.fill_rect(
             Rect {
                 origin: Point2D::new(rect.origin.x, rect.origin.y + rect.size.y - 1.0),
@@ -339,8 +352,7 @@ impl MobileDock {
 
     pub fn paint(&self, cx: &mut PaintCx<'_>, rect: Rect) {
         if self.compact {
-            cx.backend
-                .fill_rect(rect, mix(self.theme.background, self.theme.card, 0.48));
+            cx.backend.fill_rect(rect, dock_surface(self.theme));
             cx.backend.fill_rect(
                 Rect {
                     origin: rect.origin,
