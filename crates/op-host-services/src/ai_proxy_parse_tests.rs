@@ -333,6 +333,40 @@ fn models_json_lists_ready_agent_models() {
 }
 
 #[test]
+fn models_json_labels_coco_host_catalog_entries() {
+    let mut editor = EditorState::new();
+    editor.editor_ui.agent_settings.add_builtin_agent_config(
+        "GPT-5.6 Sol",
+        "host-token",
+        "gpt-5.6-sol",
+        op_editor_core::BuiltinAgentKind::OpenAiCompat,
+        "http://127.0.0.1:4567/v1/openai-codex",
+    );
+    editor.editor_ui.agent_settings.builtin_agents[0].id = "ids-openai-codex-catalog".into();
+    let parsed: Value = serde_json::from_str(&models_json(&editor)).expect("valid model array");
+    assert_eq!(parsed[0]["provider"], "codex-cli");
+    assert_eq!(
+        parsed[0]["value"],
+        "builtin:ids-openai-codex-catalog:gpt-5.6-sol"
+    );
+    assert_eq!(parsed[0]["displayName"], "GPT-5.6 Sol");
+    assert_eq!(parsed[0]["providerDisplayName"], "Coco Host · Codex");
+}
+
+#[test]
+fn structured_catalog_identity_matches_scoped_browser_credentials() {
+    let mut editor = EditorState::new();
+    editor
+        .editor_ui
+        .agent_settings
+        .add_builtin_agent_with_defaults("GPT-5.6 Sol", "host-token", "gpt-5.6-sol");
+    let agent = &mut editor.editor_ui.agent_settings.builtin_agents[0];
+    agent.id = "web-credential:builtin:ids-openai-codex-catalog".into();
+    assert!(builtin_agent_id_matches(agent, "ids-openai-codex-catalog"));
+    assert!(!builtin_agent_id_matches(agent, "ids-openai-codex-other"));
+}
+
+#[test]
 fn models_json_excludes_verified_cli_models() {
     let mut editor = EditorState::new();
     editor.chat.discovered_models = vec![op_editor_core::ModelEntry::new(

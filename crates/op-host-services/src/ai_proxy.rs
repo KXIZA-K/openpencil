@@ -297,18 +297,44 @@ fn browser_owned_endpoint_is_allowed(agent: &BuiltinAgentConfig) -> bool {
 /// JSON body for `GET /api/ai/models`. Only permitted ready built-in model ids
 /// are exposed; host CLI discovery remains private to the native desktop.
 pub fn models_json(editor: &EditorState) -> String {
-    let mut models: Vec<String> = editor
+    let mut seen = std::collections::HashSet::new();
+    let models: Vec<Value> = editor
         .editor_ui
         .agent_settings
         .builtin_agents
         .iter()
         .filter(|agent| agent.ready() && browser_owned_endpoint_is_allowed(agent))
-        .map(|agent| agent.model.trim())
-        .filter(|model| !model.is_empty())
-        .map(str::to_string)
+        .filter(|agent| {
+            let local_id = agent.id.rsplit(':').next().unwrap_or(&agent.id);
+            let identity = if local_id.starts_with("ids-") {
+                format!("{local_id}\0{}", agent.model.trim())
+            } else {
+                agent.model.trim().to_owned()
+            };
+            seen.insert(identity)
+        })
+        .map(|agent| {
+            let local_id = agent.id.rsplit(':').next().unwrap_or(&agent.id);
+            if !local_id.starts_with("ids-") {
+                return Value::String(agent.model.trim().to_owned());
+            }
+            let provider_display_name = if local_id.starts_with("ids-openai-codex-") {
+                "Coco Host · Codex"
+            } else if local_id.starts_with("ids-xai-") {
+                "Coco Host · xAI"
+            } else if local_id.starts_with("ids-ids-") {
+                "Coco Host · System"
+            } else {
+                "Server API Key"
+            };
+            json!({
+                "provider": agent.kind.model_provider().wire_id(),
+                "value": format!("builtin:{local_id}:{}", agent.model.trim()),
+                "displayName": agent.display_name.trim(),
+                "providerDisplayName": provider_display_name,
+            })
+        })
         .collect();
-    let mut seen = std::collections::HashSet::new();
-    models.retain(|model| seen.insert(model.clone()));
     serde_json::to_string(&models).unwrap_or_else(|_| "[]".to_string())
 }
 
@@ -337,7 +363,7 @@ fn proxy_builtin_for_identity(
             .find(|agent| {
                 agent.ready()
                     && browser_owned_endpoint_is_allowed(agent)
-                    && agent.id == builtin_id
+                    && builtin_agent_id_matches(agent, builtin_id)
                     && agent.model.trim() == builtin_model
                     && provider.is_none_or(|expected| agent.kind.model_provider() == expected)
             })?;
@@ -367,6 +393,12 @@ fn proxy_builtin_for_identity(
             && provider.is_none_or(|expected| agent.kind.model_provider() == expected)
     })?;
     web_provider_for_agent(chosen)
+}
+
+fn builtin_agent_id_matches(agent: &BuiltinAgentConfig, requested: &str) -> bool {
+    agent.id == requested
+        || (crate::web_credentials::browser_owns_builtin_agent(agent)
+            && agent.id.rsplit(':').next() == Some(requested))
 }
 
 fn parse_builtin_model_key(value: &str) -> Option<(&str, &str)> {
