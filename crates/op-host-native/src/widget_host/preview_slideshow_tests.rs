@@ -777,11 +777,9 @@ fn preview_build_failure_still_releases_focus_ime_and_capture() {
         .set_composition("hao", 3, 1);
     host.editor_state_mut().editor_ui.prompt_center.open = true;
     host.begin_canvas_touch_gesture(VW / 2.0, VH / 2.0, VW, VH);
-    assert!(
-        !host.enter_preview_with_builder((VW, VH), |_, _| Err(
-            crate::preview::PreviewEnterError::BuildRuntime("injected".into())
-        ))
-    );
+    assert!(!host.enter_preview_with_builder((VW, VH), |_, _| Err(
+        crate::preview::PreviewEnterError::BuildRuntime("injected".into())
+    )));
     assert!(host.preview.is_none());
     assert!(host.editor_state().ui.property_focus.is_none());
     assert!(host

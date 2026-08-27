@@ -13,7 +13,6 @@
 //! today) or a horizontal drag inside ordinary content — those never
 //! start within the 24px dead zone in the first place.
 
-
 /// Screen-space distance from the framed content's left edge a press
 /// must start within to arm an edge-swipe candidate.
 const EDGE_ZONE_PX: f32 = 24.0;
