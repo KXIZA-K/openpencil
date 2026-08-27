@@ -4,6 +4,16 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$repo_root"
 
+# Every check below matches with ripgrep (multiline + PCRE2 lookahead, which
+# grep cannot replicate portably). Without this guard a missing `rg` makes each
+# call fail as "command not found" and the script reports a policy VIOLATION
+# that is not there — which is exactly how it read on CI from 215100234 until
+# the runners were given ripgrep. A missing tool must say so.
+if ! command -v rg >/dev/null 2>&1; then
+  echo "error: ripgrep (rg) is required by this policy check but is not installed" >&2
+  exit 127
+fi
+
 scan_roots=(crates vendor/anthropic-agent-sdk)
 
 if rg -n 'reqwest::(blocking::)?Client::(new|default)\(\)' "${scan_roots[@]}" -g '*.rs'; then

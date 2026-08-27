@@ -82,6 +82,12 @@ jobs:
             libegl1-mesa-dev libgles2-mesa-dev libgbm-dev mesa-utils
             libfreetype-dev libfontconfig1-dev fonts-noto-cjk
             pkg-config libssl-dev
+            # `check-rustls-client-policy.sh` matches with ripgrep's multiline
+            # + PCRE2 lookahead, which grep cannot replicate portably. Without
+            # it the script's `rg` calls fail as "command not found" and the
+            # policy reports a violation that is not there — red on every
+            # Linux/macOS run since 215100234 introduced the dependency.
+            ripgrep
           )
           for attempt in 1 2 3 4; do
             if sudo env DEBIAN_FRONTEND=noninteractive \
@@ -96,6 +102,11 @@ jobs:
             fi
             sleep $((attempt * 20))
           done
+      # macOS runners ship no ripgrep and have no apt block above; same
+      # dependency, same reason (see the Linux packages list).
+      - name: Install ripgrep (macOS)
+        if: runner.os == 'macOS'
+        run: brew list ripgrep >/dev/null 2>&1 || brew install ripgrep
       - run: cargo fmt --all -- --check
       - run: tools/check-rustls-client-policy.sh
       - run: tools/check-file-line-cap.sh
