@@ -406,6 +406,29 @@ fn builtin_groups_stay_separate_when_ids_differ_but_provider_matches() {
 }
 
 #[test]
+fn managed_builtin_models_share_one_display_provider_group() {
+    let models = vec![
+        ModelEntry::builtin_with_display_name(
+            AgentProvider::CodexCli,
+            "ids-openai-codex-gpt-5-5",
+            "Coco Host · Codex",
+            "builtin:ids-openai-codex-gpt-5-5:gpt-5.5",
+            "GPT-5.5",
+        ),
+        ModelEntry::builtin_with_display_name(
+            AgentProvider::CodexCli,
+            "ids-openai-codex-gpt-5-6-sol",
+            "coco host · codex",
+            "builtin:ids-openai-codex-gpt-5-6-sol:gpt-5.6-sol",
+            "GPT-5.6-Sol",
+        ),
+    ];
+
+    let expected = MODEL_SEARCH_H + MODEL_GROUP_H + 2.0 * MODEL_ROW_H + MODEL_PICKER_PAD_Y * 2.0;
+    assert!((picker_content_height(&models, "") - expected).abs() < 0.01);
+}
+
+#[test]
 fn acp_models_with_same_placeholder_provider_stay_in_separate_groups() {
     let models = vec![
         ModelEntry::new(AgentProvider::CodexCli, "acp:acp-1", "Local ACP"),

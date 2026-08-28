@@ -73,6 +73,27 @@ fn same_group(a: &ModelEntry, b: &ModelEntry) -> bool {
     if is_acp(a) || is_acp(b) {
         return is_acp(a) && is_acp(b) && a.value == b.value;
     }
+    if is_builtin(a) || is_builtin(b) {
+        if !is_builtin(a) || !is_builtin(b) {
+            return false;
+        }
+        let a_label = a
+            .builtin_provider_display_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|label| !label.is_empty());
+        let b_label = b
+            .builtin_provider_display_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|label| !label.is_empty());
+        if let (Some(a_label), Some(b_label)) = (a_label, b_label) {
+            // Managed catalogs use a distinct credential identity per model,
+            // while the display label is the stable provider section (for
+            // example every Codex row belongs under "Coco Host · Codex").
+            return a_label.eq_ignore_ascii_case(b_label);
+        }
+    }
     a.provider == b.provider && a.builtin_provider_id == b.builtin_provider_id
 }
 
