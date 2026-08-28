@@ -1,5 +1,7 @@
 use super::WidgetHost;
+use op_editor_core::chat::{AgentProvider, ModelEntry};
 use op_editor_core::Tool;
+use op_editor_ui::widgets::{AIChatPlaceholder, AI_CHAT_MIN_HEIGHT};
 use op_editor_ui::Point2D;
 
 const VIEWPORT_W: f32 = 1200.0;
@@ -8,6 +10,78 @@ const VIEWPORT_H: f32 = 800.0;
 fn canvas_point(host: &WidgetHost, x: f32, y: f32) -> Point2D {
     let (cx0, cy0, _, _) = host.canvas_region(VIEWPORT_W, VIEWPORT_H);
     Point2D::new(cx0 + x, cy0 + y)
+}
+
+fn open_populated_model_picker(host: &mut WidgetHost) -> Point2D {
+    for index in 0..12 {
+        host.editor_state_mut()
+            .chat
+            .available_models
+            .push(ModelEntry::new(
+                AgentProvider::CodexCli,
+                format!("gpt-{index}"),
+                format!("GPT {index}"),
+            ));
+    }
+    host.editor_state_mut().chat.panel_height = AI_CHAT_MIN_HEIGHT;
+    host.editor_state_mut().editor_ui.chat_model_picker.open = true;
+    let chat = host
+        .ai_chat_rect(VIEWPORT_W, VIEWPORT_H)
+        .expect("chat rect");
+    let picker = AIChatPlaceholder::from_editor(host.editor_state())
+        .model_picker_bounds(chat)
+        .expect("model picker rect");
+    Point2D::new(
+        picker.origin.x + picker.size.x / 2.0,
+        picker.origin.y + picker.size.y / 2.0,
+    )
+}
+
+#[test]
+fn model_picker_mouse_wheel_scrolls_without_zooming_canvas() {
+    let mut host = WidgetHost::new();
+    let point = open_populated_model_picker(&mut host);
+    let zoom = host.editor_state().viewport.zoom;
+
+    assert!(host.apply_wheel(point.x, point.y, -120.0, VIEWPORT_W, VIEWPORT_H));
+
+    assert!(
+        host.editor_state()
+            .editor_ui
+            .chat_model_picker
+            .scroll
+            .offset
+            > 0.0
+    );
+    assert_eq!(host.editor_state().viewport.zoom, zoom);
+}
+
+#[test]
+fn model_picker_trackpad_pan_scrolls_without_panning_canvas() {
+    let mut host = WidgetHost::new();
+    let point = open_populated_model_picker(&mut host);
+    let pan = (
+        host.editor_state().viewport.pan_x,
+        host.editor_state().viewport.pan_y,
+    );
+
+    assert!(host.apply_pan_gesture(point.x, point.y, 0.0, -120.0, VIEWPORT_W, VIEWPORT_H,));
+
+    assert!(
+        host.editor_state()
+            .editor_ui
+            .chat_model_picker
+            .scroll
+            .offset
+            > 0.0
+    );
+    assert_eq!(
+        (
+            host.editor_state().viewport.pan_x,
+            host.editor_state().viewport.pan_y
+        ),
+        pan
+    );
 }
 
 #[test]

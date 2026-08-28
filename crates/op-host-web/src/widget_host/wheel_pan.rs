@@ -7,6 +7,51 @@
 use super::*;
 
 impl WidgetHost {
+    /// Scroll the open chat model picker before the event can reach the chat
+    /// input, side rails, or canvas. Browser mouse wheels enter `apply_wheel`
+    /// while trackpad gestures enter `apply_pan_gesture`, so both ladders must
+    /// call this owner check (the native host already does the same).
+    fn try_scroll_chat_model_picker(
+        &mut self,
+        x: f32,
+        y: f32,
+        delta: f32,
+        viewport_width: f32,
+        viewport_height: f32,
+    ) -> bool {
+        if !self.editor_state.editor_ui.chat_model_picker.open {
+            return false;
+        }
+        let Some(picker) =
+            self.ai_chat_rect(viewport_width, viewport_height)
+                .and_then(|chat_rect| {
+                    op_editor_ui::widgets::AIChatPlaceholder::from_editor_at(
+                        &self.editor_state,
+                        self.now_ms,
+                    )
+                    .model_picker_bounds(chat_rect)
+                })
+        else {
+            return false;
+        };
+        if !picker.contains(Point2D::new(x, y)) {
+            return false;
+        }
+
+        let max = op_editor_ui::widgets::ai_chat_model_picker::max_picker_scroll(
+            &self.editor_state.chat.available_models,
+            self.editor_state.editor_ui.chat_model_picker_input.text(),
+        );
+        let picker = &mut self.editor_state.editor_ui.chat_model_picker;
+        let next = (picker.scroll.offset - delta).clamp(0.0, max);
+        if next != picker.scroll.offset {
+            picker.scroll.offset = next;
+            picker.hover = None;
+            self.mark_dirty();
+        }
+        true
+    }
+
     /// Scroll the chat transcript message list when a wheel / trackpad
     /// pan lands over the panel body — pinned-to-bottom auto-follow
     /// resumes once the user scrolls back to the bottom. Mirrors the
@@ -161,6 +206,9 @@ impl WidgetHost {
         if self.try_scroll_prompt_center(x, y, delta_y, viewport_width, viewport_height) {
             return true;
         }
+        if self.try_scroll_chat_model_picker(x, y, delta_y, viewport_width, viewport_height) {
+            return true;
+        }
         if self.try_scroll_chat_input(x, y, delta_y, viewport_width, viewport_height) {
             return true;
         }
@@ -238,6 +286,9 @@ impl WidgetHost {
             return true;
         }
         if self.try_scroll_prompt_center(x, y, dy, viewport_width, viewport_height) {
+            return true;
+        }
+        if self.try_scroll_chat_model_picker(x, y, dy, viewport_width, viewport_height) {
             return true;
         }
         if self.try_scroll_chat_input(x, y, dy, viewport_width, viewport_height) {
