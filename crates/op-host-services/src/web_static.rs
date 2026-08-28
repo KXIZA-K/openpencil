@@ -29,6 +29,8 @@ use crate::web_canvas_server_error::WebCanvasError;
 
 /// Host page served at `/` (embedded so the daemon serves it from any cwd).
 const INDEX_HTML: &str = include_str!("web_static/index.html");
+const WEB_ASSET_VERSION_FILE: &str = ".openpencil-version";
+const WEB_ASSET_VERSION_PLACEHOLDER: &str = "__OPENPENCIL_WEB_ASSET_VERSION__";
 
 /// 404 help page served when the wasm bundle cannot be found.
 const MISSING_BUNDLE_HTML: &str = include_str!("web_static/missing_bundle.html");
@@ -191,10 +193,12 @@ fn safe_relative_path(file: &str) -> Option<PathBuf> {
 pub fn handle_static_request(path: &str, bundle_dir: Option<&Path>) -> Option<StaticReply> {
     if path == "/" || path == "/index.html" {
         return Some(match bundle_dir {
-            Some(_) => StaticReply {
+            Some(dir) => StaticReply {
                 status: "200 OK",
                 content_type: "text/html; charset=utf-8",
-                body: INDEX_HTML.as_bytes().to_vec(),
+                body: INDEX_HTML
+                    .replace(WEB_ASSET_VERSION_PLACEHOLDER, &web_asset_version(dir))
+                    .into_bytes(),
             },
             None => missing_bundle_reply(),
         });
@@ -255,6 +259,20 @@ pub fn handle_static_request(path: &str, bundle_dir: Option<&Path>) -> Option<St
         });
     }
     None
+}
+
+fn web_asset_version(bundle_dir: &Path) -> String {
+    std::fs::read_to_string(bundle_dir.join(WEB_ASSET_VERSION_FILE))
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| {
+            !value.is_empty()
+                && value.len() <= 64
+                && value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_'))
+        })
+        .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string())
 }
 
 /// Plain 404 for a file missing from an otherwise-present bundle.
@@ -341,6 +359,7 @@ mod tests {
         std::fs::create_dir_all(&dir).expect("create stub bundle dir");
         std::fs::write(dir.join(BUNDLE_ENTRY_JS), "export default function(){}").expect("js stub");
         std::fs::write(dir.join("op_host_web_bg.wasm"), [0u8, 0x61, 0x73, 0x6d]).expect("wasm");
+        std::fs::write(dir.join(WEB_ASSET_VERSION_FILE), "0.8.11\n").expect("version");
         dir
     }
 
@@ -450,6 +469,16 @@ mod tests {
         // shell on the canvas, which handles sync-reset internally. The page
         // no longer issues sync-reset directly.
         assert!(body.contains("/pkg/op_host_web.js"), "{body}");
+        assert!(
+            body.contains("/pkg/op_host_web.js?v=${assetVersion}"),
+            "{body}"
+        );
+        assert!(
+            body.contains("/pkg/op_host_web_bg.wasm?v=${assetVersion}"),
+            "{body}"
+        );
+        assert!(body.contains("0.8.11"), "{body}");
+        assert!(!body.contains(WEB_ASSET_VERSION_PLACEHOLDER), "{body}");
         assert!(!body.contains("fetch('/api/mcp/sync-reset'"), "{body}");
         assert!(body.contains("await mod.mount_ck('op')"), "{body}");
         assert!(body.contains("data-op-smoke"), "{body}");

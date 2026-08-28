@@ -92,8 +92,12 @@
       markSmoke('booting');
       sizeCanvasForDisplay(BOOT_CANVAS_PIXEL_BUDGET);
       try {
-        const mod = await import('/pkg/op_host_web.js');
-        await mod.default();
+        // Keep the release identity in both cache keys. Older OpenPencil
+        // builds were cacheable at these stable paths, so `no-store` on a
+        // newer response alone cannot evict an already-cached JS/WASM pair.
+        const assetVersion = encodeURIComponent('__OPENPENCIL_WEB_ASSET_VERSION__');
+        const mod = await import(`/pkg/op_host_web.js?v=${assetVersion}`);
+        await mod.default(`/pkg/op_host_web_bg.wasm?v=${assetVersion}`);
         sizeCanvasForDisplay(STEADY_CANVAS_PIXEL_BUDGET);
         await mod.mount_ck('op');
         markSmoke('ok');
