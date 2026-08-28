@@ -598,20 +598,26 @@ mod tests {
     }
 
     #[test]
-    fn structured_catalog_keeps_builtin_identity_and_drops_cli_rows() {
+    fn structured_catalog_groups_managed_models_by_provider_and_drops_cli_rows() {
         let models = parse_models_json(
             r#"[
                 {"provider":"codex-cli","value":"builtin:server-1:gpt-5.4","displayName":"GPT-5.4","providerDisplayName":"Server OpenAI"},
+                {"provider":"codex-cli","value":"builtin:server-2:gpt-5.5","displayName":"GPT-5.5","providerDisplayName":"Server OpenAI"},
                 {"provider":"grok-build","value":"default","displayName":"Default"}
             ]"#,
         );
-        assert_eq!(models.len(), 1);
+        assert_eq!(models.len(), 2);
         assert_eq!(models[0].provider, AgentProvider::CodexCli);
         assert_eq!(models[0].value, "builtin:server-1:gpt-5.4");
         assert_eq!(
             models[0].builtin_provider_id.as_deref(),
-            Some("daemon-builtin:server-1")
+            Some("daemon-builtin:group:server openai")
         );
+        assert_eq!(
+            models[0].builtin_provider_id, models[1].builtin_provider_id,
+            "models rendered under one managed provider heading share its picker group id"
+        );
+        assert_ne!(models[0].value, models[1].value);
     }
 
     #[test]

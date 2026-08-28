@@ -73,7 +73,7 @@ fn parse_model_entry(value: &serde_json::Value) -> Option<ModelEntry> {
         .and_then(serde_json::Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())?;
-    let (builtin_id, _) = parse_builtin_model_key(value)?;
+    parse_builtin_model_key(value)?;
     let display_name = object
         .get("displayName")
         .and_then(serde_json::Value::as_str)
@@ -86,9 +86,14 @@ fn parse_model_entry(value: &serde_json::Value) -> Option<ModelEntry> {
         .map(str::trim)
         .filter(|label| !label.is_empty())
         .unwrap_or("Server API Key");
+    // The daemon value already carries the exact credential/model identity.
+    // Keep the picker identity at provider-section granularity so every
+    // managed model painted under the same heading remains one group even in
+    // hosts that still compare built-in ids when laying out model rows.
+    let provider_group_id = provider_name.to_lowercase();
     Some(ModelEntry::builtin_with_display_name(
         provider,
-        format!("{DAEMON_BUILTIN_PREFIX}{builtin_id}"),
+        format!("{DAEMON_BUILTIN_PREFIX}group:{provider_group_id}"),
         provider_name,
         value,
         display_name,
