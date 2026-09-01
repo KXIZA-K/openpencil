@@ -292,6 +292,7 @@ fn build_skeleton_root(
     if !root.contains_key("width") || !root.contains_key("height") {
         return Err(LayeredError::RootFrameMissingSize);
     }
+    reject_flattened_desktop_root(&root, &sections, canvas_width)?;
     root.insert("type".into(), Value::String("frame".into()));
     root.entry("id")
         .or_insert_with(|| Value::String(next_skeleton_id("root")));
@@ -359,6 +360,41 @@ fn build_skeleton_root(
     let root = serde_json::from_value(root_value)
         .map_err(|e| LayeredError::InvalidSkeletonNodes(e.to_string()))?;
     Ok((root, section_rows))
+}
+
+/// Reject the failure mode where a desktop dashboard root becomes one giant
+/// flex row of page sections. `design_skeleton` defaults omitted section
+/// widths to `fill_container`, so three or more such direct children divide
+/// the artboard into collapsed columns. Deliberate multi-zone shells remain
+/// possible by giving chrome/rail zones explicit widths.
+fn reject_flattened_desktop_root(
+    root: &serde_json::Map<String, Value>,
+    sections: &[Value],
+    canvas_width: i32,
+) -> Result<(), LayeredError> {
+    let horizontal = root.get("layout").and_then(Value::as_str) == Some("horizontal");
+    let desktop = root
+        .get("width")
+        .and_then(Value::as_f64)
+        .is_some_and(|width| width >= 900.0)
+        || canvas_width >= 900;
+    if !horizontal || !desktop || sections.len() < 3 {
+        return Ok(());
+    }
+
+    let fill_sections = sections
+        .iter()
+        .filter_map(Value::as_object)
+        .filter(|section| match section.get("width") {
+            None => true,
+            Some(Value::String(width)) => width == "fill_container",
+            Some(_) => false,
+        })
+        .count();
+    if fill_sections >= 3 {
+        return Err(LayeredError::FlattenedDesktopRoot);
+    }
+    Ok(())
 }
 
 fn horizontal_padding(section: &serde_json::Map<String, Value>) -> i32 {

@@ -225,6 +225,53 @@ fn design_skeleton_mobile_root_defaults_to_breathing_room() {
 }
 
 #[test]
+fn design_skeleton_rejects_flattened_desktop_horizontal_sections() {
+    let tool = design_skeleton_snapshot();
+    let mut args = BTreeMap::new();
+    args.insert(
+        "rootFrame".into(),
+        r#"{"name":"Dashboard","width":1200,"height":900,"layout":"horizontal"}"#.into(),
+    );
+    args.insert(
+        "sections".into(),
+        r#"[{"name":"Sidebar"},{"name":"Header"},{"name":"Metrics"},{"name":"Activity"}]"#.into(),
+    );
+    args.insert("canvasWidth".into(), "1200".into());
+
+    match tool.call(&args) {
+        ToolOutcome::Err(ToolErrorCode::InvalidArgument, message) => {
+            assert!(message.contains("fixed 240-280px Sidebar"), "{message}");
+            assert!(
+                message.contains("nest page sections inside Main"),
+                "{message}"
+            );
+        }
+        other => panic!("expected flattened desktop root rejection, got {other:?}"),
+    }
+}
+
+#[test]
+fn design_skeleton_allows_explicit_three_zone_desktop_shell() {
+    let tool = design_skeleton_snapshot();
+    let mut args = BTreeMap::new();
+    args.insert(
+        "rootFrame".into(),
+        r#"{"name":"Workspace","width":1200,"height":900,"layout":"horizontal"}"#.into(),
+    );
+    args.insert(
+        "sections".into(),
+        r#"[{"name":"Sidebar","width":260},{"name":"Main"},{"name":"Inspector","width":280}]"#
+            .into(),
+    );
+    args.insert("canvasWidth".into(), "1200".into());
+
+    match tool.call(&args) {
+        ToolOutcome::OkWithCommand(_, EditorCommand::InsertAuthoredSubtree { .. }) => {}
+        other => panic!("expected explicit desktop shell to be accepted, got {other:?}"),
+    }
+}
+
+#[test]
 fn design_refine_root_id_returns_ts_result_and_refine_command() {
     let mut state = EditorState::new();
     assert!(state.apply(EditorCommand::InsertNode {

@@ -122,6 +122,15 @@ EVERY frame with children MUST declare layout ("vertical" or "horizontal"; "none
 absolute stack). A section that holds a title and a card rail is layout:"vertical". Omitting
 layout is ambiguous and the current engine may place flow children in a row, so always choose it
 explicitly.
+For a DESKTOP APP/DASHBOARD canvas 900px or wider, a horizontal page root's direct children are
+structural zones, normally one fixed-width Sidebar (usually 240-280px) plus one fill-width vertical
+Main frame. Insert header, filters, metrics, charts, tables, and detail panels into Main. NEVER emit
+three or more fill-width page sections directly under the horizontal page root.
+When editing an existing design, modify or reparent the original artboard nodes. NEVER build a
+replacement top-level root for a screen that already exists, and never name a new root after an
+existing node id. Repeated table rows must share column count/order/width modes. If a fill-width
+cell precedes fixed-width cells, verify the resolved geometry or assign it an explicit width that
+reserves space for every later column.
 Example:
   const sec = I(null, {type:"frame", name:"Clients", layout:"vertical", width:"fill_container", gap:0});
   const tbl = I(sec, {type:"frame", layout:"vertical", width:"fill_container"});
@@ -152,7 +161,10 @@ PLANNING QUALITY GUARDRAILS:
 - Mobile top rhythm: planned header/title/search/primary-content sections should be compact; avoid allocating a huge empty band between the title and first useful module.
 - Plan one signature moment in the first viewport: a crafted hero/product composition, editorial crop, distinctive category rail, refined data module, or other domain-specific focal idea.
 - Bottom navigation is optional. If planned, it should be integrated with the page flow, not a detached floating pill, nested rounded capsule, or extra footer band.
-- Product-card favorite/heart controls must be inside their card/image; never plan them as protruding decorative badges."#;
+- Product-card favorite/heart controls must be inside their card/image; never plan them as protruding decorative badges.
+- Desktop app/dashboard plans (canvas width 900px or wider) must define an explicit shell: normally one fixed-width Sidebar plus one fill-width vertical Main container. Page sections belong inside Main, not as three or more direct fill-width children of a horizontal root.
+- Existing-design repair plans update and reparent original artboards; they do not create replacement top-level roots for screens that already exist. Table plans keep the same column contract across every repeated row and explicitly reserve space when a flexible cell precedes fixed columns.
+- A multi-artboard plan is not complete until every changed artboard is visually inspected for clipping, overlap, extreme blank space, collapsed columns, and out-of-frame content."#;
 
 fn planning_suffix(mode: PlanningMode) -> &'static str {
     match mode {

@@ -29,6 +29,8 @@ fn provider_planning_prompt_carries_quality_guardrails() {
     assert!(prompt.contains("Do not plan the same predictable mobile stack"));
     assert!(prompt.contains("Mobile top rhythm"));
     assert!(prompt.contains("signature moment"));
+    assert!(prompt.contains("explicit shell"));
+    assert!(prompt.contains("every changed artboard"));
 }
 
 #[test]
@@ -87,6 +89,10 @@ fn subagent_prompt_carries_subtask_and_script_format() {
         "full attempt must use SCRIPT_FORMAT by default:\n{}",
         cr.system_prompt
     );
+    assert!(cr.system_prompt.contains("fixed-width Sidebar"));
+    assert!(cr
+        .system_prompt
+        .contains("three or more fill-width page sections"));
 }
 
 #[test]

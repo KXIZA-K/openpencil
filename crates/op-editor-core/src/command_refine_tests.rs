@@ -106,3 +106,34 @@ fn refine_strips_emoji_from_text_content() {
     );
     assert!(fixes.iter().any(|f| f.fix.contains("emoji")));
 }
+
+#[test]
+fn refine_horizontal_root_uses_tallest_child_instead_of_summing_columns() {
+    let mut root = node_from(
+        r##"{"type":"frame","id":"dashboard","name":"Dashboard","width":1200,"height":900,"layout":"horizontal","children":[
+            {"type":"frame","id":"sidebar","width":260,"height":900,"layout":"vertical"},
+            {"type":"frame","id":"main","width":"fill_container","height":720,"layout":"vertical"},
+            {"type":"frame","id":"inspector","width":280,"height":640,"layout":"vertical"}
+        ]}"##,
+    );
+
+    let fixes = crate::command_refine::refine_subtree(&mut root);
+
+    assert_eq!(root.height_px(), Some(900.0));
+    assert!(!fixes.iter().any(|fix| fix.fix.contains("root height")));
+}
+
+#[test]
+fn refine_vertical_root_still_grows_to_stacked_content() {
+    let mut root = node_from(
+        r##"{"type":"frame","id":"page","name":"Page","width":1200,"height":100,"layout":"vertical","children":[
+            {"type":"frame","id":"header","width":"fill_container","height":200},
+            {"type":"frame","id":"body","width":"fill_container","height":300}
+        ]}"##,
+    );
+
+    let fixes = crate::command_refine::refine_subtree(&mut root);
+
+    assert_eq!(root.height_px(), Some(500.0));
+    assert!(fixes.iter().any(|fix| fix.fix.contains("root height")));
+}

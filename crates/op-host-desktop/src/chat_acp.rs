@@ -91,6 +91,20 @@ Only fall back to `batch_design` or `insert_node` when the user explicitly asks 
 - Call `snapshot_layout` first to see the current tree.
 - Use `update_node` for property changes, `move_node` for reparenting, `delete_node` to remove.
 - Prefer one `batch_design` over many individual calls when making multiple related changes.
+- When repairing an existing design, update, move, or delete the original nodes. Do not insert a
+  replacement top-level artboard for a screen that already exists, and never name a new root after
+  another node id. That leaves duplicate screens and stale originals on the canvas.
+- For a desktop dashboard/app shell, the horizontal artboard root must contain structural zones,
+  not every page section. Use exactly `Sidebar` (fixed 240-280px) + `Main`
+  (`width="fill_container"`, vertical) for the common two-zone shell, and put headers, metrics,
+  charts, tables, and other page sections inside `Main`. Never flatten three or more vertical
+  page sections as direct horizontal `fill_container` siblings.
+- Repeated table rows must use the same column count, order, and width strategy. When a flexible
+  content cell comes before fixed-width cells, inspect the resolved row: if the later cells overlap
+  or leave the row, give the flexible cell an explicit width that reserves their space.
+- Before reporting completion, call `snapshot_layout` again and inspect a screenshot of every
+  artboard changed. Continue fixing when sections overlap, text is clipped, columns collapse,
+  or a large accidental blank region remains. A successful tool call is not visual verification.
 
 ## Canonical Node Shapes (IMPORTANT)
 The canvas will render nothing useful if you use the wrong `type` or shape. Use these:
@@ -415,6 +429,11 @@ mod tests {
         assert!(ACP_SYSTEM_PROMPT.contains("Mobile top rhythm"));
         assert!(ACP_SYSTEM_PROMPT.contains("favorite/heart"));
         assert!(ACP_SYSTEM_PROMPT.contains("signature moment"));
+        assert!(ACP_SYSTEM_PROMPT.contains("fixed 240-280px"));
+        assert!(ACP_SYSTEM_PROMPT.contains("not every page section"));
+        assert!(ACP_SYSTEM_PROMPT.contains("replacement top-level artboard"));
+        assert!(ACP_SYSTEM_PROMPT.contains("Repeated table rows"));
+        assert!(ACP_SYSTEM_PROMPT.contains("A successful tool call is not visual verification"));
         assert!(ACP_SYSTEM_PROMPT.ends_with("Every key has a value; every value has a key."));
     }
 }

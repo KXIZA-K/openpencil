@@ -37,7 +37,11 @@ const AI_CHAT_DESIGN_QUALITY: &str = r#"AI CHAT DESIGN QUALITY:
 - Product card favorite/heart controls are functional icon-buttons. Keep every favorite/heart fully inside its card or image with an 8-12px inset; do not straddle card borders or float into section headings.
 - Do not repeat the same predictable mobile stack of search + categories + orange promo + two cards. Pick a distinct visual concept for the domain before composing the screen.
 - Give the first viewport one signature moment: a crafted hero/product composition, editorial crop, distinctive category rail, refined data module, or other domain-specific focal idea.
-- Bottom navigation is optional and should be integrated with the page flow, not a detached floating pill or extra footer band."#;
+- Bottom navigation is optional and should be integrated with the page flow, not a detached floating pill or extra footer band.
+- Desktop app/dashboard shells (canvas width 900px or wider) must have explicit structural hierarchy. A horizontal page root should normally have exactly two direct zones: one fixed-width Sidebar (usually 240-280px) and one fill-width vertical Main frame. Put header, filters, metrics, charts, tables, and detail panels inside Main; never place three or more fill-width page sections directly under the horizontal root.
+- In an existing-design repair, mutate and reparent the original nodes. Never create a replacement top-level artboard for a screen that already exists or name a new root after an existing node id.
+- Repeated table rows must share column count, order, and width modes. If a fill-width content cell precedes fixed-width cells, verify the resolved row keeps every later cell inside its bounds; assign the content cell an explicit width when the flex result overlaps.
+- Before finishing a multi-artboard turn, render or inspect every changed artboard. Do not claim completion while any screen has clipping, overlap, extreme blank space, collapsed columns, or content outside its frame."#;
 
 /// TS `AGENT_TOOL_INSTRUCTIONS_CRUD` — verbatim port. The system
 /// prompt for tool-executing chat turns (builtin agent loop).
@@ -48,6 +52,13 @@ WORKFLOW:
 2. Use the appropriate tool: insert_node to add, update_node to modify, delete_node to remove, move_node to reparent.
 3. When inserting, use "after" parameter with a sibling ID to place the new node in the correct position.
 4. After each operation, write 1-2 sentences summarizing what changed.
+
+DESKTOP APP SHELLS:
+- For a desktop app/dashboard root 900px or wider, keep direct root children structural: normally a fixed 240-280px Sidebar plus one fill-width vertical Main frame.
+- Nest page sections such as headers, filters, metrics, charts, tables, and details inside Main. Never leave three or more fill-width page sections as direct children of a horizontal root; that collapses them into narrow columns.
+- Repair existing artboards in place. Do not insert replacement top-level roots for screens that already exist, and never name a new root after another node id.
+- Keep repeated table-row column contracts identical. A fill-width cell before fixed-width cells must be visually verified; if later cells overlap or escape the row, set the flexible cell to an explicit width that reserves their space.
+- After editing a multi-artboard document, use screenshots or equivalent visual inspection on every changed artboard. Fix clipping, overlap, extreme blank space, collapsed columns, and content outside its frame before reporting completion.
 
 DIAGNOSING OVERLAP / STACKING BUGS — read this before "fixing" any visual overlap:
 - When snapshot_layout.overlaps is non-empty, two or more siblings share screen area. Do NOT blindly enlarge heights, shrink fonts, or tweak padding — those are surface patches.
@@ -260,6 +271,10 @@ mod tests {
         assert!(prompt.contains("favorite/heart"));
         assert!(prompt.contains("Do not repeat the same predictable mobile stack"));
         assert!(prompt.contains("signature moment"));
+        assert!(prompt.contains("exactly two direct zones"));
+        assert!(prompt.contains("inspect every changed artboard"));
+        assert!(prompt.contains("replacement top-level artboard"));
+        assert!(prompt.contains("Repeated table rows"));
     }
 
     #[test]
@@ -289,6 +304,11 @@ mod tests {
         let prompt = build_agent_system_prompt(&state);
         assert!(prompt.starts_with("You are a design editor."));
         assert!(prompt.contains("[Canvas context: Document has 1 nodes: rectangle:Hero]"));
+        assert!(prompt.contains("fixed 240-280px Sidebar"));
+        assert!(prompt.contains("three or more fill-width page sections"));
+        assert!(prompt.contains("every changed artboard"));
+        assert!(prompt.contains("Repair existing artboards in place"));
+        assert!(prompt.contains("table-row column contracts"));
     }
 
     #[test]

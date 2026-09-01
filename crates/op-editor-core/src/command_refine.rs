@@ -382,24 +382,47 @@ fn sanitize_auto_layout_child_positions(node: &mut PenNode, fixes: &mut Vec<Refi
 }
 
 fn adjust_root_height_to_content(root: &mut PenNode, fixes: &mut Vec<RefineFix>) {
-    let total: f64 = match root.children() {
-        Some(children) if !children.is_empty() => {
-            children.iter().filter_map(PenNodeExt::height_px).sum()
-        }
+    use jian_ops_schema::node::container::LayoutMode;
+
+    let required: f64 = match root.children() {
+        Some(children) if !children.is_empty() => match root_layout(root) {
+            Some(LayoutMode::Horizontal) => children
+                .iter()
+                .filter_map(PenNodeExt::height_px)
+                .fold(0.0, f64::max),
+            Some(LayoutMode::Vertical) => children.iter().filter_map(PenNodeExt::height_px).sum(),
+            _ => children
+                .iter()
+                .filter_map(|child| {
+                    child
+                        .height_px()
+                        .map(|height| child.base().y.unwrap_or(0.0).max(0.0) + height)
+                })
+                .fold(0.0, f64::max),
+        },
         _ => return,
     };
-    if total <= 0.0 {
+    if required <= 0.0 {
         return;
     }
-    if root.height_px().is_some_and(|current| current >= total) {
+    if root.height_px().is_some_and(|current| current >= required) {
         return;
     }
     let id = root.base().id.clone();
     let name = root.base().name.clone();
-    root.set_height_px(total);
+    root.set_height_px(required);
     fixes.push(RefineFix {
         node_id: id,
         node_name: name,
         fix: "Adjusted root height to fit content".into(),
     });
+}
+
+fn root_layout(node: &PenNode) -> Option<jian_ops_schema::node::container::LayoutMode> {
+    match node {
+        PenNode::Frame(frame) => frame.container.layout.clone(),
+        PenNode::Group(group) => group.container.layout.clone(),
+        PenNode::Rectangle(rectangle) => rectangle.container.layout.clone(),
+        _ => None,
+    }
 }

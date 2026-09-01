@@ -59,6 +59,25 @@ fn get_design_prompt_full_includes_mobile_quality_guardrails() {
 }
 
 #[test]
+fn get_design_prompt_full_includes_desktop_shell_guardrails() {
+    let state = op_editor_core::EditorState::new();
+
+    match get_design_prompt_snapshot(&state).call(&BTreeMap::new()) {
+        ToolOutcome::Ok(out) => {
+            let prompt = out.get("designPrompt").expect("prompt");
+            assert!(prompt.contains("DASHBOARD / ADMIN / DATA-TABLE DEPTH"));
+            assert!(prompt.contains("exactly Sidebar + Main"));
+            assert!(prompt.contains("broken flattened hierarchy"));
+            assert!(prompt.contains("FINAL LAYOUT GATE"));
+            assert!(out
+                .get("availableSections")
+                .is_some_and(|sections| sections.contains("\"dashboard\"")));
+        }
+        other => panic!("expected prompt ok, got {other:?}"),
+    }
+}
+
+#[test]
 fn get_design_prompt_elements_section_points_to_batch_design_operations() {
     let state = op_editor_core::EditorState::new();
     let mut args = BTreeMap::new();

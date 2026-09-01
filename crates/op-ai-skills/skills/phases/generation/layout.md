@@ -23,6 +23,8 @@ LAYOUT ENGINE (flexbox-based):
 - WIDTH CONSISTENCY: siblings must use same width strategy. Don't mix fixed-px and fill_container.
 - Never create a main-axis circular dependency by making a child Full Height solely under a Hug Height vertical parent.
 - Two-column: horizontal frame - two child frames each "fill_container" width.
+- DESKTOP ROOT HIERARCHY: a horizontal app/dashboard artboard is a shell of structural zones, normally a fixed-width Sidebar plus one vertical `fill_container` Main. Put page sections inside Main. Never attach three or more ordinary page sections directly to a horizontal root with `fill_container` widths; that flattens the page and collapses each section into a narrow column.
+- TABLE ROW CONTRACT: repeated table rows must share the same column count, order, and width modes. A `fill_container` cell before later fixed-width cells is unsafe unless the resolved layout proves those later cells remain inside the row; use an explicit width for the flexible cell when needed.
 - Keep hierarchy shallow: no pointless wrappers. Only use wrappers with visual purpose (fill, padding).
 - Section root: width="fill_container", height="fit_content", layout="vertical".
 - TRANSPARENT INNER SECTIONS — interior wrappers (Header, Search Section, Categories, etc.) MUST have `fill: []` (inherit page bg); an explicit fill like #FFFFFF creates an unwanted white card against a colored page. Only opt into a fill when the section IS intentionally a card with its own surface (a promo banner, inset card).

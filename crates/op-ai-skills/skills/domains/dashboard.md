@@ -15,9 +15,10 @@ A data-dense product surface. The always-on principles (purpose-first, dominant 
 
 ZONE STRUCTURE (adapt — do not force sidebar+table when the purpose differs):
 
-- Root: width=1200-1440, layout="horizontal" — Sidebar + Main.
+- Root: width=1200-1440, layout="horizontal" — exactly Sidebar + Main for the common two-zone shell. Headers, metrics, charts, tables, activity, and page sections are children of the vertical Main frame, NEVER additional root siblings. A horizontal desktop root with 3+ `fill_container` page-section siblings is a broken flattened hierarchy: it squeezes every section into a narrow column.
 - Sidebar: width=240-280, height="fill_container", layout="vertical", justifyContent="space_between". HARD ARCHETYPE RULE: a sidebar is a VERTICAL rail (brand block, stacked nav items, footer profile) — NEVER a horizontal navbar, NEVER a hero headline or marketing copy. FOOTER-SINK CONTRACT (pins the user/account card to the BOTTOM): the sidebar column MUST be height="fill_container" ("fit_content" hugs content so space_between has nothing to distribute) AND have EXACTLY TWO children: TOP group {brand, nav groups}, BOTTOM group {user/account/settings}. NEVER flat brand+nav+footer siblings under space_between — spreads them evenly, nav floats mid-rail. Brand top (padding=[24,16]); nav groups with section labels (12px uppercase, muted, letterSpacing≈1). Nav item: frame(horizontal, gap=12, alignItems="center", padding=[10,16]) > icon_font(18-20) + text(14). Active: accent surface tint OR a left accent bar — never both. Icon + label always (never icon-only). ONE rhythm between brand and nav: single TOP-group gap 32-48 — never stack brand padding-bottom + divider row + group gap (each interval re-applies the gap, ballooning dead rail). A divider between brand and nav → drop the group gap to 12-16.
 - Main: width="fill_container", height="fill_container", layout="vertical", padding=[24,32], gap=24-28 — the deliberate page-level work-surface exception inside a definite-height horizontal dashboard shell; sections inside Main still Hug Height.
+- Data tables: every repeated row uses the same column count, order, and width contract. Prefer explicit numeric widths for rigid columns. If a flexible content column is followed by fixed columns, verify its resolved width leaves those later columns inside the row; do not trust `fill_container` to shrink correctly without a screenshot/layout check.
 - Top bar: height=56-64, padding=[0,24], horizontal, justifyContent="space_between". Left: page title / breadcrumbs. Right: search + bell + avatar.
 
 METRIC ROW:
@@ -63,5 +64,9 @@ SPACING (reference-measured constants — copy these, do not improvise):
 - Cards cornerRadius 8-12 consistently; align everything to an 8px rhythm.
 
 COMPLETENESS (hard bar): a data table / client list carries at least **6 realistic rows** with VARIED data (distinct names, dates, values, statuses) — 2-3 sample rows read as an unfinished skeleton. A dashboard ships its full section set: KPI row + the primary table/list + at least one secondary section (activity feed, upcoming items, or quick actions).
+
+FINAL LAYOUT GATE (hard bar): inspect the computed layout and a screenshot of every desktop artboard before finishing. No overlapping sections, clipped text, collapsed/ultra-narrow page columns, or large accidental blank regions. Tool success alone is not completion.
+
+EXISTING-DESIGN REPAIR: mutate and reparent the existing artboard nodes. Do not create replacement top-level artboards for screens that already exist, and never name a new root after another node id. Rebuilding beside or on top of the originals creates duplicate screens and stale revisions.
 
 Apply silently through node structure; never emit these as visible text.

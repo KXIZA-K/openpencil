@@ -21,6 +21,9 @@ pub(crate) enum LayeredError {
     RootFrameNotObject,
     /// `rootFrame` omits `width` / `height`.
     RootFrameMissingSize,
+    /// A desktop horizontal root flattens ordinary page sections into
+    /// several equal-width columns instead of nesting them in a Main frame.
+    FlattenedDesktopRoot,
     /// A `sections[i]` entry is not a JSON object.
     SectionNotObject { index: usize },
     /// A `sections[i]` entry has no non-blank `name`.
@@ -42,6 +45,9 @@ impl fmt::Display for LayeredError {
             LayeredError::RootFrameMissingSize => {
                 f.write_str("rootFrame must contain width and height")
             }
+            LayeredError::FlattenedDesktopRoot => f.write_str(
+                "desktop horizontal root has three or more fill_container sections. Use structural shell zones instead: normally a fixed 240-280px Sidebar plus one vertical fill_container Main, then nest page sections inside Main",
+            ),
             LayeredError::SectionNotObject { index } => {
                 write!(f, "sections[{index}] must be a JSON object")
             }
