@@ -46,7 +46,7 @@ impl fmt::Display for LayeredError {
                 f.write_str("rootFrame must contain width and height")
             }
             LayeredError::FlattenedDesktopRoot => f.write_str(
-                "desktop horizontal root has three or more fill_container sections. Use structural shell zones instead: normally a fixed 240-280px Sidebar plus one vertical fill_container Main, then nest page sections inside Main",
+                "desktop horizontal root has multiple fill_container sections. Use structural shell zones instead: normally a fixed 240-280px Sidebar plus one vertical fill_container Main, then nest page sections inside Main",
             ),
             LayeredError::SectionNotObject { index } => {
                 write!(f, "sections[{index}] must be a JSON object")

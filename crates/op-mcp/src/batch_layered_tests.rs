@@ -251,6 +251,30 @@ fn design_skeleton_rejects_flattened_desktop_horizontal_sections() {
 }
 
 #[test]
+fn design_skeleton_rejects_sidebar_main_and_flattened_page_section() {
+    let tool = design_skeleton_snapshot();
+    let mut args = BTreeMap::new();
+    args.insert(
+        "rootFrame".into(),
+        r#"{"name":"Registry","width":1200,"height":900,"layout":"horizontal"}"#.into(),
+    );
+    args.insert(
+        "sections".into(),
+        r#"[{"name":"Sidebar","width":260},{"name":"Main Content"},{"name":"Registry Content"}]"#
+            .into(),
+    );
+    args.insert("canvasWidth".into(), "1200".into());
+
+    match tool.call(&args) {
+        ToolOutcome::Err(ToolErrorCode::InvalidArgument, message) => {
+            assert!(message.contains("multiple fill_container sections"), "{message}");
+            assert!(message.contains("page sections inside Main"), "{message}");
+        }
+        other => panic!("expected Sidebar + Main + page section rejection, got {other:?}"),
+    }
+}
+
+#[test]
 fn design_skeleton_allows_explicit_three_zone_desktop_shell() {
     let tool = design_skeleton_snapshot();
     let mut args = BTreeMap::new();

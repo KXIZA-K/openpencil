@@ -364,9 +364,10 @@ fn build_skeleton_root(
 
 /// Reject the failure mode where a desktop dashboard root becomes one giant
 /// flex row of page sections. `design_skeleton` defaults omitted section
-/// widths to `fill_container`, so three or more such direct children divide
-/// the artboard into collapsed columns. Deliberate multi-zone shells remain
-/// possible by giving chrome/rail zones explicit widths.
+/// widths to `fill_container`, so a Sidebar + Main + one additional page
+/// section already leaves two flexible direct children competing for the
+/// remaining width and collapses the content. Deliberate multi-zone shells
+/// remain possible when every zone except Main has an explicit width.
 fn reject_flattened_desktop_root(
     root: &serde_json::Map<String, Value>,
     sections: &[Value],
@@ -391,7 +392,7 @@ fn reject_flattened_desktop_root(
             Some(_) => false,
         })
         .count();
-    if fill_sections >= 3 {
+    if fill_sections >= 2 {
         return Err(LayeredError::FlattenedDesktopRoot);
     }
     Ok(())
