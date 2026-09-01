@@ -2,9 +2,8 @@
 //!
 //! Painted as the top-most layer (above every panel / modal) so the
 //! user sees an unambiguous drop target. Driven by
-//! `EditorState.editor_ui.file_drop_active`, which the desktop runner
-//! toggles on the platform's `HoveredFile` / `HoveredFileCancelled`
-//! drag events.
+//! `EditorState.editor_ui.file_drop_active`. The managed web host raises it
+//! only for PDF files that will be attached to the Agent draft.
 
 use crate::theme::Theme;
 use crate::widgets::icons::{draw_icon, Icon};
@@ -22,7 +21,7 @@ use crate::{Color, Point2D, Rect, RenderBackend, TextLayout};
 pub fn paint_file_drop_overlay(
     backend: &mut dyn RenderBackend,
     theme: &Theme,
-    locale: op_editor_core::Locale,
+    _locale: op_editor_core::Locale,
     canvas_rect: Rect,
     target: Option<Rect>,
 ) {
@@ -67,7 +66,7 @@ pub fn paint_file_drop_overlay(
     }
 
     // 4. Otherwise a centred card: download icon + label.
-    let label_text = op_i18n::translate(locale, "dialog.dropToOpen");
+    let label_text = "Drop PDF to attach to Agent";
     let label_w = text_metrics::measure_chrome(backend, label_text, 14.0);
     let card_w = (label_w + 56.0).max(220.0);
     let card_h = 104.0;

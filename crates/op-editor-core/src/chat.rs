@@ -46,9 +46,10 @@ use jian_core::text_input::{prev_char_boundary, Selection, TextInputState};
 /// (TS parity — the web chat input caps at four attachments).
 pub const MAX_ATTACHMENTS: usize = 4;
 
-/// Maximum size of a single staged attachment, in bytes (TS parity —
-/// the web chat input rejects files over 5 MiB).
-pub const MAX_ATTACHMENT_BYTES: usize = 5 * 1024 * 1024;
+/// Maximum size of a single staged attachment, in bytes. Ten MiB keeps
+/// reference PDFs useful while bounding the browser's base64 request and the
+/// daemon's per-turn temporary-file footprint.
+pub const MAX_ATTACHMENT_BYTES: usize = 10 * 1024 * 1024;
 
 /// Which corner of the canvas region the floating AI chat panel sits
 /// in. Ported verbatim from shell-core's `ChatAnchor`.

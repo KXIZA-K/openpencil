@@ -161,6 +161,11 @@ fn parse_standard_turn_body_reads_canvas_snapshot_fields() {
                 "data_base64": "AQID"
             },
             {
+                "name": "brief.pdf",
+                "media_type": "application/pdf",
+                "data_base64": "JVBERg=="
+            },
+            {
                 "name": "bad.txt",
                 "media_type": "text/plain",
                 "data_base64": "not base64"
@@ -199,10 +204,13 @@ fn parse_standard_turn_body_reads_canvas_snapshot_fields() {
             ),
         ]
     );
-    assert_eq!(req.attachments.len(), 1);
+    assert_eq!(req.attachments.len(), 2);
     assert_eq!(req.attachments[0].name, "a.png");
     assert_eq!(req.attachments[0].media_type, "image/png");
     assert_eq!(req.attachments[0].data, vec![1, 2, 3]);
+    assert_eq!(req.attachments[1].name, "brief.pdf");
+    assert_eq!(req.attachments[1].media_type, "application/pdf");
+    assert_eq!(req.attachments[1].data, b"%PDF");
 }
 
 #[test]

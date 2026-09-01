@@ -77,6 +77,9 @@ fn same_group(a: &ModelEntry, b: &ModelEntry) -> bool {
         if !is_builtin(a) || !is_builtin(b) {
             return false;
         }
+        if a.builtin_provider_id == b.builtin_provider_id {
+            return true;
+        }
         let a_label = a
             .builtin_provider_display_name
             .as_deref()

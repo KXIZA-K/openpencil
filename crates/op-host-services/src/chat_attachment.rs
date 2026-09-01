@@ -44,6 +44,7 @@ pub fn media_type_for_path(path: &Path) -> String {
         Some("gif") => "image/gif",
         Some("webp") => "image/webp",
         Some("svg") => "image/svg+xml",
+        Some("pdf") => "application/pdf",
         _ => "application/octet-stream",
     }
     .to_string()
@@ -262,6 +263,10 @@ mod tests {
         assert_eq!(media_type_for_path(Path::new("x.png")), "image/png");
         assert_eq!(media_type_for_path(Path::new("x.JPG")), "image/jpeg");
         assert_eq!(media_type_for_path(Path::new("x.webp")), "image/webp");
+        assert_eq!(
+            media_type_for_path(Path::new("brief.PDF")),
+            "application/pdf"
+        );
         assert_eq!(
             media_type_for_path(Path::new("x.bin")),
             "application/octet-stream"

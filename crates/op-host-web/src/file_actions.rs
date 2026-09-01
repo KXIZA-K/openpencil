@@ -411,6 +411,7 @@ pub fn attachment_media_type_for_name(name: &str) -> String {
         Some("gif") => "image/gif",
         Some("webp") => "image/webp",
         Some("svg") => "image/svg+xml",
+        Some("pdf") => "application/pdf",
         _ => "application/octet-stream",
     }
     .to_string()

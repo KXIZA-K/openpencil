@@ -9,6 +9,7 @@ pub enum DropKind {
     Zip,
     Svg,
     Image,
+    Pdf,
     Unsupported,
 }
 
@@ -46,6 +47,8 @@ pub fn drop_kind(name: &str) -> DropKind {
         DropKind::Zip
     } else if lower.ends_with(".svg") {
         DropKind::Svg
+    } else if lower.ends_with(".pdf") {
+        DropKind::Pdf
     } else if [
         ".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".ico", ".bmp",
     ]

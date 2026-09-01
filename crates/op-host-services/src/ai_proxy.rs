@@ -318,19 +318,21 @@ pub fn models_json(editor: &EditorState) -> String {
             if !local_id.starts_with("ids-") {
                 return Value::String(agent.model.trim().to_owned());
             }
-            let provider_display_name = if local_id.starts_with("ids-openai-codex-") {
-                "Coco Host · Codex"
-            } else if local_id.starts_with("ids-xai-") {
-                "Coco Host · xAI"
-            } else if local_id.starts_with("ids-ids-") {
-                "Coco Host · System"
-            } else {
-                "Server API Key"
-            };
+            let (provider_group, provider_display_name) =
+                if local_id.starts_with("ids-openai-codex-") {
+                    ("codex", "Coco Host · Codex")
+                } else if local_id.starts_with("ids-xai-") {
+                    ("xai", "Coco Host · xAI")
+                } else if local_id.starts_with("ids-ids-") {
+                    ("system", "Coco Host · System")
+                } else {
+                    ("server-api-key", "Server API Key")
+                };
             json!({
                 "provider": agent.kind.model_provider().wire_id(),
                 "value": format!("builtin:{local_id}:{}", agent.model.trim()),
                 "displayName": agent.display_name.trim(),
+                "providerGroup": provider_group,
                 "providerDisplayName": provider_display_name,
             })
         })

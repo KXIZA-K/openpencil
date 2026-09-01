@@ -350,6 +350,7 @@ fn models_json_labels_coco_host_catalog_entries() {
         "builtin:ids-openai-codex-catalog:gpt-5.6-sol"
     );
     assert_eq!(parsed[0]["displayName"], "GPT-5.6 Sol");
+    assert_eq!(parsed[0]["providerGroup"], "codex");
     assert_eq!(parsed[0]["providerDisplayName"], "Coco Host · Codex");
 }
 

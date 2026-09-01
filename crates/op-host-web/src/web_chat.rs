@@ -493,8 +493,8 @@ mod tests {
             .chat
             .pending_attachments
             .push(op_editor_core::chat::ChatAttachment {
-                name: "a.png".into(),
-                media_type: "image/png".into(),
+                name: "brief.pdf".into(),
+                media_type: "application/pdf".into(),
                 data: vec![1, 2, 3],
             });
         assert!(state.chat.begin_send());
@@ -510,8 +510,8 @@ mod tests {
             .chat
             .pending_attachments
             .push(op_editor_core::chat::ChatAttachment {
-                name: "a.png".into(),
-                media_type: "image/png".into(),
+                name: "brief.pdf".into(),
+                media_type: "application/pdf".into(),
                 data: vec![1, 2, 3],
             });
         assert!(state.chat.begin_send());
@@ -522,8 +522,8 @@ mod tests {
         let attachments = body["attachments"].as_array().expect("attachments array");
 
         assert_eq!(attachments.len(), 1, "{attachments:?}");
-        assert_eq!(attachments[0]["name"], "a.png");
-        assert_eq!(attachments[0]["media_type"], "image/png");
+        assert_eq!(attachments[0]["name"], "brief.pdf");
+        assert_eq!(attachments[0]["media_type"], "application/pdf");
         assert_eq!(attachments[0]["data_base64"], "AQID");
         assert!(state.chat.pending_attachments.is_empty());
     }
@@ -601,8 +601,8 @@ mod tests {
     fn structured_catalog_groups_managed_models_by_provider_and_drops_cli_rows() {
         let models = parse_models_json(
             r#"[
-                {"provider":"codex-cli","value":"builtin:server-1:gpt-5.4","displayName":"GPT-5.4","providerDisplayName":"Server OpenAI"},
-                {"provider":"codex-cli","value":"builtin:server-2:gpt-5.5","displayName":"GPT-5.5","providerDisplayName":"Server OpenAI"},
+                {"provider":"codex-cli","value":"builtin:server-1:gpt-5.4","displayName":"GPT-5.4","providerGroup":"codex","providerDisplayName":"Server OpenAI"},
+                {"provider":"codex-cli","value":"builtin:server-2:gpt-5.5","displayName":"GPT-5.5","providerGroup":"codex","providerDisplayName":"Server OpenAI"},
                 {"provider":"grok-build","value":"default","displayName":"Default"}
             ]"#,
         );
@@ -611,7 +611,7 @@ mod tests {
         assert_eq!(models[0].value, "builtin:server-1:gpt-5.4");
         assert_eq!(
             models[0].builtin_provider_id.as_deref(),
-            Some("daemon-builtin:group:server openai")
+            Some("daemon-builtin:group:codex")
         );
         assert_eq!(
             models[0].builtin_provider_id, models[1].builtin_provider_id,

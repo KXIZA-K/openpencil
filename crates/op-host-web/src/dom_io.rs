@@ -39,8 +39,7 @@ mod import_generation;
 use browser_files::{html_project_file_path, open_html_project_picker};
 pub(crate) use browser_files::{js_bytes, open_file_picker, read_file, ReadMode};
 pub(crate) use document_io::drain_pending_file_action;
-use document_io::read_open_document_file;
-use figma_import::{import_figma, ingest_figma_file};
+use figma_import::import_figma;
 use import_generation::{
     begin_document_import, clear_document_import_if_owned, document_import_activity,
     document_import_is_current,
@@ -58,7 +57,7 @@ fn console_warn(msg: &str) {
 
 /// Consume a chat attachment-pick request raised by the chat footer.
 /// Browser parity for desktop `chat_attachment::drain_attachment_pick`:
-/// open an image picker, read the file bytes, then stage a
+/// open an image/PDF picker, read the file bytes, then stage a
 /// `ChatAttachment` on the current chat draft.
 pub(crate) fn drain_pending_attachment_pick<C: RepaintContext + 'static>(inner: &InnerRc<C>) {
     let pending = std::mem::take(
@@ -74,44 +73,53 @@ pub(crate) fn drain_pending_attachment_pick<C: RepaintContext + 'static>(inner: 
     }
     let inner = inner.clone();
     open_file_picker(
-        ".png,.jpg,.jpeg,.gif,.webp,.svg",
-        Box::new(move |file| {
-            let raw_name = file.name();
-            if file.size() > MAX_ATTACHMENT_BYTES as f64 {
-                console_warn(&format!(
-                    "[chat-attachment] {raw_name}: file exceeds 5 MiB limit"
-                ));
+        ".png,.jpg,.jpeg,.gif,.webp,.svg,.pdf,application/pdf",
+        Box::new(move |file| stage_chat_attachment_file(&inner, file)),
+    );
+}
+
+/// Read one browser file and stage it for the next Agent turn. Shared by the
+/// paperclip picker and PDF drag/drop so both paths enforce identical limits
+/// and produce the same removable attachment chip.
+fn stage_chat_attachment_file<C: RepaintContext + 'static>(
+    inner: &InnerRc<C>,
+    file: web_sys::File,
+) {
+    let raw_name = file.name();
+    if file.size() > MAX_ATTACHMENT_BYTES as f64 {
+        let limit_mib = MAX_ATTACHMENT_BYTES / (1024 * 1024);
+        console_warn(&format!(
+            "[chat-attachment] {raw_name}: file exceeds {limit_mib} MiB limit"
+        ));
+        return;
+    }
+    let name = file_actions::attachment_file_name(&raw_name);
+    let media_type = file_actions::attachment_media_type_for_name(&name);
+    let inner = inner.clone();
+    read_file(
+        file,
+        ReadMode::Bytes,
+        Box::new(move |value| {
+            let Some(data) = js_bytes(&value) else {
+                console_error("[chat-attachment] file read produced no bytes");
                 return;
+            };
+            let mut b = inner.borrow_mut();
+            let added = b
+                .host_mut()
+                .editor_state_mut()
+                .chat
+                .add_attachment(ChatAttachment {
+                    name,
+                    media_type,
+                    data,
+                });
+            if added {
+                b.host_mut().mark_editor_state_dirty();
+                let _ = b.repaint();
+            } else {
+                console_warn("[chat-attachment] attachment rejected by chat state");
             }
-            let name = file_actions::attachment_file_name(&raw_name);
-            let media_type = file_actions::attachment_media_type_for_name(&name);
-            let inner2 = inner.clone();
-            read_file(
-                file,
-                ReadMode::Bytes,
-                Box::new(move |value| {
-                    let Some(data) = js_bytes(&value) else {
-                        console_error("[chat-attachment] file read produced no bytes");
-                        return;
-                    };
-                    let mut b = inner2.borrow_mut();
-                    let added =
-                        b.host_mut()
-                            .editor_state_mut()
-                            .chat
-                            .add_attachment(ChatAttachment {
-                                name,
-                                media_type,
-                                data,
-                            });
-                    if added {
-                        b.host_mut().mark_editor_state_dirty();
-                        let _ = b.repaint();
-                    } else {
-                        console_warn("[chat-attachment] attachment rejected by chat state");
-                    }
-                }),
-            );
         }),
     );
 }
@@ -494,9 +502,10 @@ pub(crate) fn register_io_listeners<C: RepaintContext + 'static>(
         )?;
     }
     let canvas_target: web_sys::EventTarget = canvas.clone().into();
-    // dragover fires continuously while a file hovers the canvas;
-    // preventDefault marks the canvas a valid drop target (without it
-    // the browser never fires `drop`).
+    // dragover fires continuously while a file hovers the canvas. Keep the
+    // browser from navigating to a dropped file, but show the full-canvas
+    // affordance only for PDFs that will become Agent attachments. Project
+    // drag/import is intentionally disabled; File -> Open remains available.
     {
         let inner_d = inner.clone();
         add_listener::<web_sys::DragEvent, _, _>(
@@ -505,7 +514,7 @@ pub(crate) fn register_io_listeners<C: RepaintContext + 'static>(
             listeners,
             move |evt: web_sys::DragEvent| {
                 evt.prevent_default();
-                set_file_drop_active(&inner_d, true);
+                set_file_drop_active(&inner_d, drag_event_has_pdf(&evt));
             },
         )?;
     }
@@ -534,6 +543,27 @@ pub(crate) fn register_io_listeners<C: RepaintContext + 'static>(
         )?;
     }
     Ok(())
+}
+
+fn drag_event_has_pdf(evt: &web_sys::DragEvent) -> bool {
+    let Some(transfer) = evt.data_transfer() else {
+        return false;
+    };
+    let items = transfer.items();
+    (0..items.length()).any(|index| {
+        let Some(item) = items.get(index) else {
+            return false;
+        };
+        if item.kind() != "file" {
+            return false;
+        }
+        item.type_().eq_ignore_ascii_case("application/pdf")
+            || item
+                .get_as_file()
+                .ok()
+                .flatten()
+                .is_some_and(|file| file.name().to_ascii_lowercase().ends_with(".pdf"))
+    })
 }
 
 /// Flip the painted file-drop overlay (`paint.rs` already renders it
@@ -650,83 +680,34 @@ fn handle_paste_event<C: RepaintContext + 'static>(
     }
 }
 
-/// Route every dropped file through the same ingestion the file menu
-/// / shape picker use.
+/// Route dropped PDFs into the Agent draft and keep image/SVG canvas drops.
+/// Document/project drops are deliberately ignored; opening a project is an
+/// explicit File-menu action and must not replace the current design by drag.
 fn handle_drop_event<C: RepaintContext + 'static>(inner: &InnerRc<C>, evt: &web_sys::DragEvent) {
     let Some(dt) = evt.data_transfer() else {
         return;
     };
-    let inner_for_directory = inner.clone();
-    let directory_generation = Rc::new(std::cell::Cell::new(0));
-    let directory_generation_cb = directory_generation.clone();
-    if drop_entries::read_dropped_directory_project(
-        &dt,
-        Box::new(move |result| {
-            let generation = directory_generation_cb.get();
-            match result {
-                Ok(files) => {
-                    let inner_for_finish = inner_for_directory.clone();
-                    html_directory_session::start(
-                        files,
-                        document_import_activity(
-                            &inner_for_directory,
-                            generation,
-                            ImportSource::Html,
-                        ),
-                        Box::new(move |result| {
-                            finish_html_import(&inner_for_finish, generation, result);
-                        }),
-                    );
-                }
-                Err(error) => {
-                    finish_html_import(&inner_for_directory, generation, Err(error));
-                }
-            }
-        }),
-    ) {
-        directory_generation.set(begin_html_document_import(inner));
-        return;
-    }
     let Some(files) = dt.files() else {
         return;
     };
-    let mut dropped = Vec::with_capacity(files.length() as usize);
     for index in 0..files.length() {
         if let Some(file) = files.get(index) {
-            dropped.push(file);
+            route_dropped_file(inner, file);
         }
-    }
-    if dropped.is_empty() {
-        return;
-    }
-    let kinds: Vec<_> = dropped
-        .iter()
-        .map(|file| file_actions::drop_kind(&file.name()))
-        .collect();
-    match file_actions::drop_batch_plan(&kinds) {
-        DropBatchPlan::Individual => {
-            for file in dropped {
-                route_dropped_file(inner, file);
-            }
-        }
-        DropBatchPlan::HtmlProject
-        | DropBatchPlan::HtmlZip
-        | DropBatchPlan::InvalidHtmlMix
-        | DropBatchPlan::InvalidZipMix => import_html_batch(inner, dropped),
     }
 }
 
 fn route_dropped_file<C: RepaintContext + 'static>(inner: &InnerRc<C>, file: web_sys::File) {
     let name = file.name();
     match file_actions::drop_kind(&name) {
-        DropKind::Document => {
-            read_open_document_file(inner, file);
-        }
-        DropKind::Figma => ingest_figma_file(inner, file),
-        DropKind::Html | DropKind::Zip => import_html_batch(inner, vec![file]),
-        DropKind::HtmlResource => {
+        DropKind::Pdf => stage_chat_attachment_file(inner, file),
+        DropKind::Document
+        | DropKind::Figma
+        | DropKind::Html
+        | DropKind::HtmlResource
+        | DropKind::Zip => {
             console_warn(&format!(
-                "[drop] HTML resource must be dropped together with an HTML page: {name}"
+                "[drop] project import is disabled; use File -> Open: {name}"
             ));
         }
         DropKind::Svg => {

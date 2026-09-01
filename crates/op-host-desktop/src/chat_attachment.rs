@@ -3,7 +3,7 @@
 //! The headless attachment helpers (base64, temp-file spill, prompt
 //! building, the Claude image-Read flow) live in
 //! [`op_host_services::chat_attachment`]; this module keeps only the
-//! native file picker that stages a chosen image on the chat state.
+//! native file picker that stages a chosen image or PDF on the chat state.
 
 use std::fs;
 
@@ -12,7 +12,7 @@ use op_host_native::WidgetHostNative;
 use op_host_services::chat_attachment::media_type_for_path;
 
 /// Drain `chat.pending_attachment_pick` (raised by the attach
-/// button): open a native image picker and stage the chosen file on
+/// button): open a native attachment picker and stage the chosen file on
 /// `chat.pending_attachments`. Returns true when an attachment was
 /// added (the caller redraws).
 pub fn drain_attachment_pick(host: &mut WidgetHostNative) -> bool {
@@ -20,7 +20,10 @@ pub fn drain_attachment_pick(host: &mut WidgetHostNative) -> bool {
         return false;
     }
     let Some(path) = rfd::FileDialog::new()
-        .add_filter("Images", &["png", "jpg", "jpeg", "gif", "webp", "svg"])
+        .add_filter(
+            "Images and PDF",
+            &["png", "jpg", "jpeg", "gif", "webp", "svg", "pdf"],
+        )
         .pick_file()
     else {
         return false;

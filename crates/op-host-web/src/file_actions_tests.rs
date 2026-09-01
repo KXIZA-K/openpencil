@@ -69,6 +69,10 @@ fn attachment_media_type_matches_desktop_image_extensions() {
     assert_eq!(attachment_media_type_for_name("a.webp"), "image/webp");
     assert_eq!(attachment_media_type_for_name("a.svg"), "image/svg+xml");
     assert_eq!(
+        attachment_media_type_for_name("brief.PDF"),
+        "application/pdf"
+    );
+    assert_eq!(
         attachment_media_type_for_name("notes.txt"),
         "application/octet-stream"
     );
@@ -305,6 +309,7 @@ fn drop_kind_recognizes_html_and_zip() {
     assert!(matches!(drop_kind("photo.avif"), DropKind::Image));
     assert!(matches!(drop_kind("saved-page.ZIP"), DropKind::Zip));
     assert!(matches!(drop_kind("a.svg"), DropKind::Svg));
+    assert!(matches!(drop_kind("brief.PDF"), DropKind::Pdf));
 }
 
 #[test]
@@ -326,7 +331,12 @@ fn drop_batch_plan_groups_html_with_explicit_resources() {
 
 #[test]
 fn drop_batch_plan_rejects_html_document_figma_and_unknown_mixes() {
-    for conflict in [DropKind::Document, DropKind::Figma, DropKind::Unsupported] {
+    for conflict in [
+        DropKind::Document,
+        DropKind::Figma,
+        DropKind::Pdf,
+        DropKind::Unsupported,
+    ] {
         assert_eq!(
             drop_batch_plan(&[DropKind::Html, conflict]),
             DropBatchPlan::InvalidHtmlMix
