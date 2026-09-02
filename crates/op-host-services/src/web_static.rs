@@ -470,13 +470,15 @@ mod tests {
         // no longer issues sync-reset directly.
         assert!(body.contains("/pkg/op_host_web.js"), "{body}");
         assert!(
-            body.contains("/pkg/op_host_web.js?v=${assetVersion}"),
+            body.contains("/pkg/op_host_web.js?v=${assetVersion}${retryKey}"),
             "{body}"
         );
         assert!(
-            body.contains("/pkg/op_host_web_bg.wasm?v=${assetVersion}"),
+            body.contains("/pkg/op_host_web_bg.wasm?v=${assetVersion}${retryKey}"),
             "{body}"
         );
+        assert!(body.contains("WEB_SHELL_LOAD_ATTEMPTS = 4"), "{body}");
+        assert!(body.contains("retrying-${attempt}"), "{body}");
         assert!(body.contains("0.8.11"), "{body}");
         assert!(!body.contains(WEB_ASSET_VERSION_PLACEHOLDER), "{body}");
         assert!(!body.contains("fetch('/api/mcp/sync-reset'"), "{body}");

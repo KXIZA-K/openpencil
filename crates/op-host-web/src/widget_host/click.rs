@@ -125,7 +125,12 @@ impl WidgetHost {
 
     /// Platform tail for the shared chat-panel click dispatch.
     fn dispatch_chat_click(&mut self, hit: AIChatHit) -> bool {
-        match chat_click_flow::apply_chat_hit(&mut self.editor_state, hit, self.now_ms) {
+        let selected_model = matches!(&hit, AIChatHit::SelectModel(_));
+        let step = chat_click_flow::apply_chat_hit(&mut self.editor_state, hit, self.now_ms);
+        if selected_model {
+            crate::web_model_catalog::post_selected_model_to_parent(&self.editor_state);
+        }
+        match step {
             // Drag handle / resize handles are press-drag only.
             ChatClickStep::Unhandled => false,
             ChatClickStep::Clean => true,

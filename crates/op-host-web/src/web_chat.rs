@@ -33,6 +33,8 @@ use op_ai::chat_history::{trim_chat_history, DEFAULT_MAX_CHARS, DEFAULT_MAX_MESS
 use op_editor_core::chat::ChatState;
 use op_editor_core::EditorState;
 use op_editor_host_core::chat::chat_history_from_transcript;
+use wasm_bindgen::closure::Closure;
+use wasm_bindgen::JsCast;
 
 use crate::repaint_ctx::RepaintContext;
 use crate::web_ai_transport::{post_ai_stream_to, AiEvent, AiStreamHandle};
@@ -42,6 +44,9 @@ use crate::web_model_catalog::{apply_models, parse_models_json, provider_for_mod
 pub(crate) use crate::web_model_catalog::{fetch_models, reconcile_models};
 
 type EventQueue = Rc<RefCell<VecDeque<AiEvent>>>;
+
+const MAX_TRANSIENT_TURN_RETRIES: u8 = 2;
+const TRANSIENT_TURN_RETRY_DELAYS_MS: [i32; 2] = [750, 2_000];
 
 /// The in-flight chat turn: the XHR abort handle plus its generation. wasm is
 /// single-threaded, so a thread_local slot is the natural owner — every drain
@@ -159,7 +164,20 @@ fn close_chat_tab(state: &mut EditorState, idx: usize) {
 /// replaces it — desktop parity), POST the prepared body, and start the rAF
 /// pump that folds streamed events into the transcript.
 fn launch_turn<C: RepaintContext + 'static>(inner: &Rc<RefCell<C>>, prepared: PreparedTurn) {
+    launch_turn_attempt(inner, prepared, running_tab(), 0);
+}
+
+/// Launch one attempt while preserving the original tab and exact prepared
+/// request. A retry never re-runs request preparation, so changing the picker
+/// elsewhere cannot silently switch the model under an in-flight turn.
+fn launch_turn_attempt<C: RepaintContext + 'static>(
+    inner: &Rc<RefCell<C>>,
+    prepared: PreparedTurn,
+    tab: Option<usize>,
+    attempt: u8,
+) {
     abort_active_turn();
+    RUNNING_TAB.with(|running| running.set(tab));
     let generation = NEXT_GENERATION.with(|g| {
         let v = g.get();
         g.set(v + 1);
@@ -173,12 +191,17 @@ fn launch_turn<C: RepaintContext + 'static>(inner: &Rc<RefCell<C>>, prepared: Pr
         queue_cb.borrow_mut().push_back(evt);
     });
     let base = crate::daemon_base::daemon_base();
-    match post_ai_stream_to(&base, prepared.endpoint, prepared.body_json, on_event) {
+    match post_ai_stream_to(
+        &base,
+        prepared.endpoint,
+        prepared.body_json.clone(),
+        on_event,
+    ) {
         Ok(handle) => {
             ACTIVE_TURN.with(|slot| {
                 *slot.borrow_mut() = Some(ActiveTurn { handle, generation });
             });
-            start_pump(inner.clone(), queue, generation);
+            start_pump(inner.clone(), queue, generation, prepared, tab, attempt);
         }
         Err(_e) => {
             // Transport refused to even start (XHR open/send failed) —
@@ -209,7 +232,11 @@ fn start_pump<C: RepaintContext + 'static>(
     inner: Rc<RefCell<C>>,
     queue: EventQueue,
     generation: u64,
+    prepared: PreparedTurn,
+    tab: Option<usize>,
+    attempt: u8,
 ) {
+    let saw_output = Rc::new(Cell::new(false));
     let tick: Rc<dyn Fn() -> bool> = Rc::new(move || {
         let still_active = ACTIVE_TURN.with(|slot| {
             slot.borrow()
@@ -221,6 +248,7 @@ fn start_pump<C: RepaintContext + 'static>(
         }
         let mut terminal = false;
         let mut changed = false;
+        let mut retry = false;
         let Ok(mut b) = inner.try_borrow_mut() else {
             return true;
         };
@@ -231,6 +259,16 @@ fn start_pump<C: RepaintContext + 'static>(
             let Some(evt) = evt else { break };
             // Write into the tab this run is bound to (MT.3 session-per-tab),
             // not whichever tab is active now.
+            if matches!(&evt, AiEvent::Delta(text) | AiEvent::Thinking(text) if !text.is_empty()) {
+                saw_output.set(true);
+            }
+            if matches!(&evt, AiEvent::Error(error) if !saw_output.get()
+                && attempt < MAX_TRANSIENT_TURN_RETRIES
+                && is_retryable_turn_error(error))
+            {
+                retry = true;
+                break;
+            }
             let target = b
                 .host_mut()
                 .editor_state_mut()
@@ -245,6 +283,10 @@ fn start_pump<C: RepaintContext + 'static>(
             let _ = b.repaint();
         }
         drop(b);
+        if retry {
+            schedule_turn_retry(inner.clone(), prepared.clone(), tab, generation, attempt);
+            return false;
+        }
         if terminal {
             let was_active = ACTIVE_TURN.with(|slot| {
                 let mut s = slot.borrow_mut();
@@ -268,7 +310,51 @@ fn start_pump<C: RepaintContext + 'static>(
     crate::raf_pump::start(tick);
 }
 
+/// Retry one pre-output transient failure after a short bounded backoff. The
+/// active generation remains installed during the wait, so Stop/New Chat can
+/// cancel the scheduled replacement before it starts.
+fn schedule_turn_retry<C: RepaintContext + 'static>(
+    inner: Rc<RefCell<C>>,
+    prepared: PreparedTurn,
+    tab: Option<usize>,
+    generation: u64,
+    attempt: u8,
+) {
+    let retry = Closure::<dyn FnMut()>::once_into_js(move || {
+        let still_active = ACTIVE_TURN.with(|slot| {
+            slot.borrow()
+                .as_ref()
+                .is_some_and(|turn| turn.generation == generation)
+        });
+        if still_active {
+            launch_turn_attempt(&inner, prepared, tab, attempt + 1);
+        }
+    });
+    let delay = TRANSIENT_TURN_RETRY_DELAYS_MS[usize::from(attempt)];
+    if let Some(window) = web_sys::window() {
+        if window
+            .set_timeout_with_callback_and_timeout_and_arguments_0(retry.unchecked_ref(), delay)
+            .is_ok()
+        {
+            return;
+        }
+    }
+    let _ = retry
+        .unchecked_ref::<js_sys::Function>()
+        .call0(&wasm_bindgen::JsValue::NULL);
+}
+
+/// Only gateway/transport failures are safe to replay automatically. Provider
+/// errors and any failure after visible output remain terminal so a retry can
+/// never duplicate an Agent's canvas mutations.
+fn is_retryable_turn_error(error: &str) -> bool {
+    [0u16, 429, 502, 503, 504]
+        .into_iter()
+        .any(|status| error.contains(&format!("status {status}")))
+}
+
 /// A prepared AI SSE request.
+#[derive(Clone)]
 pub(crate) struct PreparedTurn {
     pub(crate) endpoint: &'static str,
     pub(crate) body_json: String,
@@ -407,6 +493,19 @@ mod tests {
     // `&mut ChatState` that `apply_event_to_chat` expects.
     fn chat_with_queued_send(text: &str) -> op_editor_core::ChatSessions {
         state_with_queued_send(text).chat
+    }
+
+    #[test]
+    fn transient_gateway_stream_failures_are_retryable() {
+        for status in [0, 429, 502, 503, 504] {
+            assert!(is_retryable_turn_error(&format!(
+                "AI stream ended unexpectedly (status {status})"
+            )));
+        }
+        assert!(!is_retryable_turn_error(
+            "AI stream ended unexpectedly (status 400)"
+        ));
+        assert!(!is_retryable_turn_error("provider rejected the request"));
     }
 
     #[test]

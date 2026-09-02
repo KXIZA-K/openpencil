@@ -184,6 +184,36 @@ fn apply_model_entries(state: &mut EditorState, entries: &[ModelEntry]) {
     reconcile_models(state);
 }
 
+/// Tell an embedding product shell which managed model the user selected.
+///
+/// OpenPencil itself intentionally has no knowledge of the room database. The
+/// parent shell owns that durable shared preference, so the browser host emits
+/// a narrow postMessage after an explicit picker selection. Standalone opens
+/// harmlessly post to themselves; consumers must validate the source window
+/// and origin before accepting this message.
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn post_selected_model_to_parent(state: &EditorState) {
+    let Some(model) = state.chat.selected_model_entry() else {
+        return;
+    };
+    let Some(window) = web_sys::window() else {
+        return;
+    };
+    let Ok(Some(parent)) = window.parent() else {
+        return;
+    };
+    let message = serde_json::json!({
+        "type": "ids-agent:openpencil-model-selected",
+        "value": model.value,
+        "displayName": model.display_name,
+    })
+    .to_string();
+    let _ = parent.post_message(&wasm_bindgen::JsValue::from_str(&message), "*");
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn post_selected_model_to_parent(_state: &EditorState) {}
+
 /// Reconcile daemon and browser-local built-ins while hiding every CLI/ACP.
 pub(crate) fn reconcile_models(state: &mut EditorState) {
     let previous = state
