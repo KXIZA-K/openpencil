@@ -373,6 +373,7 @@ fn apply_document_response<C: RepaintContext + 'static>(
                 .sync_with_editor_meta(
                     body,
                     |doc, _version, active_page_index, preserve_authored_geometry| {
+                        let (viewport_w, viewport_h) = inner_ref.viewport_size();
                         let host = inner_ref.host_mut();
                         host.replace_document_from_sync(doc, undoable);
                         // The live-sync wire carries no scenario field, so
@@ -390,6 +391,15 @@ fn apply_document_response<C: RepaintContext + 'static>(
                                 pinned_style_guide,
                             },
                         );
+                        // A managed room starts from the shell's empty starter
+                        // document, whose identity viewport can leave a restored
+                        // project completely off-screen. Fit exactly once on the
+                        // bootstrap pull so the durable room content is visible;
+                        // later AI/collaboration pulls preserve the designer's
+                        // current pan and zoom.
+                        if !undoable {
+                            host.fit_content_to_viewport(viewport_w, viewport_h);
+                        }
                         inner_ref.repaint().is_ok()
                     },
                 )
@@ -654,6 +664,50 @@ fn push_selection_if_changed<C: RepaintContext + 'static>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::widget_host::WidgetHost;
+    use wasm_bindgen::JsValue;
+
+    struct TestContext {
+        host: WidgetHost,
+        repaints: usize,
+    }
+
+    impl RepaintContext for TestContext {
+        fn host(&self) -> &WidgetHost {
+            &self.host
+        }
+
+        fn host_mut(&mut self) -> &mut WidgetHost {
+            &mut self.host
+        }
+
+        fn viewport_size(&self) -> (f32, f32) {
+            (1440.0, 900.0)
+        }
+
+        fn register_system_font(&mut self, _family: &str, _bytes: &[u8]) -> bool {
+            false
+        }
+
+        fn register_imported_font(&mut self, _family: &str, _bytes: &[u8]) -> bool {
+            false
+        }
+
+        fn register_imported_font_from_bytes(&mut self, _bytes: &[u8]) -> Option<String> {
+            None
+        }
+
+        fn imported_family_list(&self) -> Vec<String> {
+            Vec::new()
+        }
+
+        fn remove_imported_font(&mut self, _family: &str) {}
+
+        fn repaint(&mut self) -> Result<(), JsValue> {
+            self.repaints += 1;
+            Ok(())
+        }
+    }
 
     fn minimal_document() -> op_editor_core::PenDocument {
         serde_json::from_str(r#"{"version":"1.0","children":[]}"#)
@@ -715,6 +769,47 @@ mod tests {
         assert!(
             !push_reasons(&sync, pair, 1, true).any(),
             "metadata pushes must still honor the conflict latch"
+        );
+    }
+
+    #[test]
+    fn bootstrap_pull_fits_restored_content_into_view() {
+        let inner = Rc::new(RefCell::new(TestContext {
+            host: WidgetHost::new(),
+            repaints: 0,
+        }));
+        let sync = Rc::new(RefCell::new(SyncController::new()));
+        let last_selection_key = Rc::new(RefCell::new(None));
+        let response = serde_json::json!({
+            "document": {
+                "version": "1.0",
+                "children": [{
+                    "type": "frame",
+                    "id": "restored",
+                    "name": "Restored screen",
+                    "x": 1_500,
+                    "y": 400,
+                    "width": 1_200,
+                    "height": 900,
+                    "children": []
+                }]
+            },
+            "version": 1
+        })
+        .to_string();
+
+        apply_document_response(&inner, &response, &sync, &last_selection_key);
+
+        let context = inner.borrow();
+        assert_eq!(context.repaints, 1);
+        assert_eq!(context.host.editor_state().doc.children.len(), 1);
+        assert!(
+            context.host.editor_state().viewport.pan_x < 0.0,
+            "off-screen restored content should be centered on the first pull"
+        );
+        assert!(
+            context.host.editor_state().viewport.zoom < 1.0,
+            "restored content should fit the available canvas"
         );
     }
 }
