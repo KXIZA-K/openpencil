@@ -1,28 +1,19 @@
-// Browser/daemon boundary: chat streams through /api/ai/standard on the desktop
-// daemon; this module keeps that web architecture instead of bypassing it.
 //! Web chat session — drives a real AI turn through the desktop daemon's
 //! `/api/ai/standard` route instead of the offline echo stub.
-//!
-//! Mirrors the desktop's `chat_session.rs` host-drain pattern with browser
-//! plumbing borrowed from `codegen_web.rs`:
 //!
 //! * The widget layer raises the flags (`ChatState::begin_send` →
 //!   `pending_send`; Stop / New Chat → `pending_stop_chat` /
 //!   `pending_new_chat`). [`drain_chat_flags`] consumes them from the DOM
-//!   listeners once the press/key borrow is released — the same drain points
-//!   as `dom_io::drain_pending_file_action`.
+//!   listeners once the press/key borrow is released.
 //! * A send POSTs the selected model + user message over
 //!   [`crate::web_ai_transport::post_ai_stream`]; streamed events land in a
 //!   `VecDeque` queue and a `requestAnimationFrame` pump folds them into the
-//!   trailing streaming assistant bubble each frame (the desktop winit loop
-//!   pumps `ChatSession::poll` the same way at ~30 fps).
+//!   trailing streaming assistant bubble each frame.
 //! * Stop / New Chat / a replacing send abort the in-flight XHR via the
 //!   transport's [`AiStreamHandle`]; a generation counter on the active-turn
 //!   slot makes the old pump (and any late events) die silently.
 //!
-//! Wire notes: sends go through `/api/ai/standard` with the selected model,
-//! current user message, trimmed prior text history, current-turn attachments,
-//! and the current document / selection snapshot.
+//! Sends carry the selected model, trimmed history, attachments, and document snapshot.
 
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
@@ -54,6 +45,7 @@ const TRANSIENT_TURN_RETRY_DELAYS_MS: [i32; 2] = [750, 2_000];
 struct ActiveTurn {
     handle: AiStreamHandle,
     generation: u64,
+    client_run_id: String,
 }
 
 thread_local! {
@@ -70,11 +62,15 @@ thread_local! {
 /// Abort and drop the in-flight turn, if any. The rAF pump notices the slot
 /// change (generation mismatch) on its next frame and stops. Also clears the
 /// run's tab binding — the aborted turn no longer targets any tab.
-fn abort_active_turn() {
+pub(crate) fn abort_active_turn(notify_platform: bool) {
+    crate::platform_chat_bridge::cancel_pending_turns();
     let turn = ACTIVE_TURN.with(|slot| slot.borrow_mut().take());
     RUNNING_TAB.with(|t| t.set(None));
     if let Some(turn) = turn {
         turn.handle.abort();
+        if notify_platform {
+            crate::platform_chat_bridge::interrupt_turn(&turn.client_run_id);
+        }
     }
 }
 
@@ -100,7 +96,7 @@ pub(crate) fn drain_chat_flags<C: RepaintContext + 'static>(inner: &Rc<RefCell<C
         )
     };
     if new_chat || stop {
-        abort_active_turn();
+        abort_active_turn(true);
     }
     // A pending close-tab (MT.3): abort the run if it's bound to the closed
     // tab, shift the binding otherwise, then remove the tab. Done before the
@@ -150,7 +146,7 @@ fn close_chat_tab(state: &mut EditorState, idx: usize) {
         return; // out of range — mirror ChatSessions::close_tab no-op
     }
     match running_tab() {
-        Some(running) if running == idx => abort_active_turn(),
+        Some(running) if running == idx => abort_active_turn(true),
         Some(running) => {
             RUNNING_TAB
                 .with(|t| t.set(op_editor_core::adjust_running_tab_after_close(running, idx)));
@@ -164,19 +160,19 @@ fn close_chat_tab(state: &mut EditorState, idx: usize) {
 /// replaces it — desktop parity), POST the prepared body, and start the rAF
 /// pump that folds streamed events into the transcript.
 fn launch_turn<C: RepaintContext + 'static>(inner: &Rc<RefCell<C>>, prepared: PreparedTurn) {
-    launch_turn_attempt(inner, prepared, running_tab(), 0);
+    crate::platform_chat_turn::launch(inner, prepared, running_tab());
 }
 
 /// Launch one attempt while preserving the original tab and exact prepared
 /// request. A retry never re-runs request preparation, so changing the picker
 /// elsewhere cannot silently switch the model under an in-flight turn.
-fn launch_turn_attempt<C: RepaintContext + 'static>(
+pub(crate) fn launch_turn_attempt<C: RepaintContext + 'static>(
     inner: &Rc<RefCell<C>>,
     prepared: PreparedTurn,
     tab: Option<usize>,
     attempt: u8,
 ) {
-    abort_active_turn();
+    abort_active_turn(false);
     RUNNING_TAB.with(|running| running.set(tab));
     let generation = NEXT_GENERATION.with(|g| {
         let v = g.get();
@@ -199,7 +195,11 @@ fn launch_turn_attempt<C: RepaintContext + 'static>(
     ) {
         Ok(handle) => {
             ACTIVE_TURN.with(|slot| {
-                *slot.borrow_mut() = Some(ActiveTurn { handle, generation });
+                *slot.borrow_mut() = Some(ActiveTurn {
+                    handle,
+                    generation,
+                    client_run_id: prepared.client_run_id.clone(),
+                });
             });
             start_pump(inner.clone(), queue, generation, prepared, tab, attempt);
         }
@@ -247,6 +247,7 @@ fn start_pump<C: RepaintContext + 'static>(
             return false; // aborted — drop queued late events silently
         }
         let mut terminal = false;
+        let mut terminal_payload: Option<(String, Option<String>)> = None;
         let mut changed = false;
         let mut retry = false;
         let Ok(mut b) = inner.try_borrow_mut() else {
@@ -274,7 +275,11 @@ fn start_pump<C: RepaintContext + 'static>(
                 .editor_state_mut()
                 .chat
                 .run_tab_mut(running_tab());
-            terminal |= apply_event_to_chat(target, &evt);
+            let event_terminal = apply_event_to_chat(target, &evt);
+            terminal_payload = event_terminal.then(|| {
+                crate::platform_chat_turn::terminal_payload(target, &evt, &prepared.client_run_id)
+            });
+            terminal |= event_terminal;
             changed = true;
         }
         if changed {
@@ -283,6 +288,13 @@ fn start_pump<C: RepaintContext + 'static>(
             let _ = b.repaint();
         }
         drop(b);
+        if let Some((content, error)) = terminal_payload {
+            crate::platform_chat_bridge::finish_turn(
+                &prepared.client_run_id,
+                &content,
+                error.as_deref(),
+            );
+        }
         if retry {
             schedule_turn_retry(inner.clone(), prepared.clone(), tab, generation, attempt);
             return false;
@@ -358,6 +370,9 @@ fn is_retryable_turn_error(error: &str) -> bool {
 pub(crate) struct PreparedTurn {
     pub(crate) endpoint: &'static str,
     pub(crate) body_json: String,
+    pub(crate) client_run_id: String,
+    pub(crate) user_text: String,
+    pub(crate) model: String,
 }
 
 /// Take `chat.pending_send` and build the standard-turn request body:
@@ -442,9 +457,13 @@ pub(crate) fn prepare_turn(state: &mut EditorState) -> Option<PreparedTurn> {
         "selectedIds": selected_ids,
         "activePageId": active_page_id,
     });
+    let client_run_id = crate::platform_chat_turn::stamp_messages(&mut state.chat);
     Some(PreparedTurn {
         endpoint: "/api/ai/standard",
         body_json: serde_json::to_string(&body).unwrap_or_else(|_| "{}".to_string()),
+        client_run_id,
+        user_text,
+        model,
     })
 }
 

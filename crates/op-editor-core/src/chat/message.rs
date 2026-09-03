@@ -47,6 +47,9 @@ pub struct ChatImage {
 /// bubble while its turn is still in flight.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChatMessage {
+    /// Stable embedding-host id used to merge a durable shared transcript.
+    /// Standalone/native chats leave this unset.
+    pub external_id: Option<String>,
     pub role: ChatRole,
     pub content: String,
     /// Display name of the agent that produced this assistant message.
@@ -108,6 +111,7 @@ impl ChatMessage {
     /// A plain user message — no thinking / tools, not streaming.
     pub fn user(content: impl Into<String>) -> Self {
         Self {
+            external_id: None,
             role: ChatRole::User,
             content: content.into(),
             agent_name: None,
@@ -134,6 +138,7 @@ impl ChatMessage {
     /// [`ChatMessage::assistant_streaming`] for an in-flight turn.
     pub fn assistant(content: impl Into<String>) -> Self {
         Self {
+            external_id: None,
             role: ChatRole::Assistant,
             content: content.into(),
             agent_name: None,

@@ -162,6 +162,9 @@ pub(super) async fn mount_ck(canvas_id: String) -> Result<(), JsValue> {
     // 1. Install the bridge listener + observer BEFORE any daemon request, so an
     //    Init / OpenDocument arriving during bootstrap is never missed.
     crate::vscode_bridge::install(&inner, sync_controller.clone());
+    // Prototype Studio owns durable shared chat and per-room Agent admission.
+    // Standalone/VS Code opens do not carry a Studio ticket and remain local.
+    crate::platform_chat_bridge::install(&inner);
     // 2. Inside a webview iframe, await the host's Init (token) with a 2s
     //    fallback (proceed as a direct open on timeout). A standalone browser
     //    tab is a direct open and continues immediately.

@@ -112,6 +112,10 @@ mod collab_avatar_fetch;
 // Web chat session — drains `chat.pending_send` / Stop / New Chat and streams
 // real standard-mode turns through the daemon's `/api/ai/standard` route.
 #[cfg(feature = "canvaskit")]
+mod platform_chat_bridge;
+#[cfg(feature = "canvaskit")]
+mod platform_chat_turn;
+#[cfg(feature = "canvaskit")]
 mod web_chat;
 #[cfg(feature = "canvaskit")]
 mod web_credential_sync;
