@@ -7,7 +7,8 @@ pub(crate) use crate::widgets::ai_chat_panel_controls::chat_neutral_hover_color;
 use crate::widgets::ai_chat_panel_controls::{paint_attachment_row, ATTACHMENT_ROW_HEIGHT};
 use crate::widgets::ai_chat_panel_footer::paint_bottom_toolbar;
 use crate::widgets::ai_chat_panel_header::{
-    paint_header_tabs, paint_new_chat_tooltip, MAXIMIZE_GAP, MAXIMIZE_W, NEW_CHAT_D,
+    paint_new_chat_tooltip, paint_thread_picker, paint_thread_selector, MAXIMIZE_GAP, MAXIMIZE_W,
+    NEW_CHAT_D,
 };
 use crate::widgets::ai_chat_panel_paint::{
     paint_examples, paint_panel_body_chrome, paint_panel_surface,
@@ -127,8 +128,10 @@ pub struct AIChatPlaceholder<'a> {
     pub(crate) tabs_snapshot: Vec<ChatTabInfo>,
     /// Active tab index (from `state.chat.active_index()`).
     pub(crate) active_tab_index: usize,
-    /// Managed Platform embeds persist every tab as a durable team thread.
-    pub(crate) managed_thread_mode: bool,
+    /// Whether the compact thread selector dropdown is open.
+    pub(crate) thread_picker_open: bool,
+    /// Vertical scroll offset of the thread selector dropdown.
+    pub(crate) thread_picker_scroll: f32,
     /// Which tab (if any) the cursor is over — drives × close glyph
     /// and hover wash on inactive tabs.
     pub(crate) tab_hover: Option<usize>,
@@ -175,7 +178,6 @@ impl<'a> AIChatPlaceholder<'a> {
             })
             .collect();
         let active_tab_index = state.chat.active_index();
-        let managed_thread_mode = state.chat.managed_thread_mode();
         Self {
             id: WidgetId::new(7000),
             theme: theme_for(ui),
@@ -211,7 +213,8 @@ impl<'a> AIChatPlaceholder<'a> {
             locale: ui.locale,
             tabs_snapshot,
             active_tab_index,
-            managed_thread_mode,
+            thread_picker_open: ui.chat_thread_picker_open,
+            thread_picker_scroll: ui.chat_thread_picker_scroll.offset,
             tab_hover: ui.chat_tab_hover,
             parallel_agents_picker_open: ui.parallel_agents_picker_open,
             parallel_agents_picker_hover: ui.parallel_agents_picker_hover,
@@ -455,6 +458,25 @@ impl<'a> AIChatPlaceholder<'a> {
         }
         let input_rect = self.input_rect(rect);
         Some(self.model_picker_rect(rect, input_rect))
+    }
+
+    /// Painted bounds of the header conversation dropdown.
+    pub fn thread_picker_bounds(&self, rect: Rect) -> Option<Rect> {
+        if self.state.is_minimized() || !self.thread_picker_open || self.tabs_snapshot.is_empty() {
+            return None;
+        }
+        Some(crate::widgets::ai_chat_panel_header::thread_picker_rect(
+            rect,
+            self.tabs_snapshot.len(),
+        ))
+    }
+
+    /// Largest valid vertical offset for the header conversation dropdown.
+    pub fn thread_picker_scroll_max(&self, rect: Rect) -> f32 {
+        crate::widgets::ai_chat_panel_header::thread_picker_max_scroll(
+            rect,
+            self.tabs_snapshot.len(),
+        )
     }
 
     /// Bounding rect of the Parallel Agents picker dropdown overlay.

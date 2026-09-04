@@ -14,6 +14,8 @@
 pub enum ChatHeaderButton {
     /// Chevron at the top-left — collapses the panel to a pill.
     ToggleCollapse,
+    /// Active conversation selector — opens the thread list.
+    ThreadPicker,
     /// Maximize / restore glyph in the header.
     ToggleMaximize,
     /// Plus glyph in the header — starts a new chat.

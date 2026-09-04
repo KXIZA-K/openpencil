@@ -140,6 +140,7 @@ impl WidgetHostNative {
         // (and every other text input): blur + commit through the
         // central helper so a panel-gap click can't strand a focused
         // input behind this block's early-consume return.
+        let thread_picker_closed = self.editor_state.editor_ui.close_chat_thread_picker();
         let was_focused = self.blur_text_inputs_on_blank_press();
         let toolbar_rect = self.toolbar_rect(viewport_width, viewport_height);
         let toolbar = Toolbar::for_editor(&self.editor_state);
@@ -211,7 +212,7 @@ impl WidgetHostNative {
             };
         }
         // Click hit no chrome — repaint if focus changed.
-        was_focused
+        was_focused || thread_picker_closed
     }
 
     /// Platform tail for the shared chat-panel click dispatch.

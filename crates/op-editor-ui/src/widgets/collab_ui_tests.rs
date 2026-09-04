@@ -20,8 +20,8 @@ fn home_offers_create_and_join_paths() {
         vec![CollabUiAction::OpenCreate, CollabUiAction::OpenJoin]
     );
     assert!(model.actions[0].primary);
-    assert_eq!(model.actions[0].label, "创建会话");
-    assert_eq!(model.actions[1].label, "加入会话");
+    assert_eq!(model.actions[0].label, "Create session");
+    assert_eq!(model.actions[1].label, "Join session");
 }
 
 #[test]
@@ -52,8 +52,8 @@ fn open_create_is_navigation_only_and_exposes_connection_choices() {
             CollabUiAction::Cancel,
         ]
     );
-    assert_eq!(create.actions[0].label, "公网中继");
-    assert_eq!(create.actions[1].label, "局域网");
+    assert_eq!(create.actions[0].label, "Public relay");
+    assert_eq!(create.actions[1].label, "Local network");
 
     assert!(apply_panel_hit(
         &mut ui,
@@ -176,7 +176,7 @@ fn owner_model_projects_redacted_invite_and_relay_region() {
     assert!(!format!("{model:?}").contains(raw_invite));
     assert_eq!(
         connection_path_label(&ui, connection.unwrap()),
-        "公网中继 · 中国"
+        "Public relay · China"
     );
 }
 

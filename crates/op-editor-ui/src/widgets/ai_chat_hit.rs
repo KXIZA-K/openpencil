@@ -29,6 +29,8 @@ pub enum AIChatHit {
     ToggleMaximize,
     /// Click on the plus affordance in the header.
     NewChat,
+    /// Click on the active conversation selector in the header.
+    ToggleThreadPicker,
     /// Click on the model chip (bottom-left of the input toolbar) —
     /// host toggles `ui.chat_model_picker.open` to open / close the
     /// model dropdown.

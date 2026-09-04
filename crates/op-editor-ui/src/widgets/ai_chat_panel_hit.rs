@@ -6,13 +6,34 @@ use super::ai_chat_panel::{AIChatPlaceholder, HEADER_HEIGHT, PAD, RESIZE_CORNER,
 use crate::widgets::ai_chat_hit::{AIChatHit, ChatCursorProbe, ChatResizeEdge};
 use crate::widgets::ai_chat_panel_controls::attachment_row_hit;
 use crate::widgets::ai_chat_panel_header::{
-    tab_hit_at, tab_row_rects, MAXIMIZE_GAP, MAXIMIZE_W, NEW_CHAT_D,
+    thread_picker_rect, thread_picker_row_at, thread_selector_rect, MAXIMIZE_GAP, MAXIMIZE_W,
+    NEW_CHAT_D,
 };
 use crate::widgets::ai_chat_panel_paint::example_card_rects;
 use crate::widgets::ai_chat_transcript_cache::CanonicalTranscript;
 use crate::{Point2D, Rect};
 
 impl<'a> AIChatPlaceholder<'a> {
+    fn open_thread_picker_hit(&self, rect: Rect, point: Point2D) -> Option<AIChatHit> {
+        if self.state.is_minimized() || !self.thread_picker_open {
+            return None;
+        }
+        let picker = thread_picker_rect(rect, self.tabs_snapshot.len());
+        if !picker.contains(point) {
+            return None;
+        }
+        Some(
+            thread_picker_row_at(
+                rect,
+                self.tabs_snapshot.len(),
+                self.thread_picker_scroll,
+                point,
+            )
+            .map(AIChatHit::SwitchTab)
+            .unwrap_or(AIChatHit::Inside),
+        )
+    }
+
     /// Resolve a hit owned by the open model-picker overlay.
     ///
     /// The picker grows upward and can extend beyond (or overlap the header
@@ -63,6 +84,9 @@ impl<'a> AIChatPlaceholder<'a> {
         point: Point2D,
         canonical: Option<&CanonicalTranscript>,
     ) -> Option<AIChatHit> {
+        if let Some(hit) = self.open_thread_picker_hit(rect, point) {
+            return Some(hit);
+        }
         if let Some(hit) = self.open_model_picker_hit(rect, point) {
             return Some(hit);
         }
@@ -111,18 +135,14 @@ impl<'a> AIChatPlaceholder<'a> {
         if (maximize_rect).contains(point) {
             return Some(AIChatHit::ToggleMaximize);
         }
-        // Tab row — between chevron and maximize button.
-        // Returns SwitchTab(i) for a tab body click; CloseTab(i) for the × glyph.
-        let tab_count = self.tabs_snapshot.len();
-        if tab_count > 0 {
-            if let Some((tab_idx, over_close)) = tab_hit_at(rect, tab_count, point, self.tab_hover)
-            {
-                return Some(if over_close && !self.managed_thread_mode {
-                    AIChatHit::CloseTab(tab_idx)
-                } else {
-                    AIChatHit::SwitchTab(tab_idx)
-                });
-            }
+        // One active-thread selector replaces the squeezed tab strip.
+        if !self.tabs_snapshot.is_empty() && thread_selector_rect(rect).contains(point) {
+            return Some(AIChatHit::ToggleThreadPicker);
+        }
+        // The picker is modal within the chat panel. A press elsewhere closes
+        // it without accidentally activating transcript or footer controls.
+        if self.thread_picker_open {
+            return Some(AIChatHit::ToggleThreadPicker);
         }
         // Must match `paint` exactly: paint draws the separator at
         // `bottom - input_h` and the input block one pixel below it
@@ -626,10 +646,12 @@ impl<'a> AIChatPlaceholder<'a> {
         if tab_count == 0 {
             return None;
         }
-        // Iterate tab rects and check containment — same layout as `tab_hit_at`
-        // but ignores the × sub-rect (hover is per-tab-body, not sub-element).
-        let rects = tab_row_rects(rect, tab_count);
-        rects.iter().position(|tr| tr.body.contains(point))
+        if self.thread_picker_open {
+            return thread_picker_row_at(rect, tab_count, self.thread_picker_scroll, point);
+        }
+        thread_selector_rect(rect)
+            .contains(point)
+            .then_some(self.active_tab_index)
     }
 
     /// Return which row (1–6) of the open Parallel Agents picker the cursor

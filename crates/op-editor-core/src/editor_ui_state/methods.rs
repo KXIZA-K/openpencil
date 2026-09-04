@@ -420,6 +420,7 @@ impl EditorUiState {
         let opening = !self.chat_model_picker.open;
         self.close_chat_model_picker();
         if opening {
+            self.close_chat_thread_picker();
             self.chat_model_picker.open = true;
             // Raised here rather than in the click flow so every path
             // that opens the picker asks for a fresh catalog — the
@@ -447,6 +448,29 @@ impl EditorUiState {
         self.chat_model_picker.pressed = None;
         self.chat_model_picker.scroll.offset = 0.0;
         self.chat_model_picker_input.set_text("");
+        changed
+    }
+
+    /// Toggle the compact conversation selector in the chat header.
+    pub fn toggle_chat_thread_picker(&mut self) -> bool {
+        let opening = !self.chat_thread_picker_open;
+        self.close_chat_thread_picker();
+        if opening {
+            self.close_chat_model_picker();
+            self.close_parallel_agents_picker();
+            self.chat_thread_picker_open = true;
+        }
+        opening
+    }
+
+    /// Close the conversation selector and reset its transient geometry.
+    pub fn close_chat_thread_picker(&mut self) -> bool {
+        let changed = self.chat_thread_picker_open
+            || self.chat_tab_hover.is_some()
+            || self.chat_thread_picker_scroll.offset != 0.0;
+        self.chat_thread_picker_open = false;
+        self.chat_tab_hover = None;
+        self.chat_thread_picker_scroll.offset = 0.0;
         changed
     }
 

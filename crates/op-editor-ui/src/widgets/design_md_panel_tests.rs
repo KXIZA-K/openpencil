@@ -199,7 +199,7 @@ fn empty_state_action_button_contents_are_centered() {
 
     panel.paint(&mut cx, rect);
 
-    for label in ["导入 design.md", "自动生成"] {
+    for label in ["Import design.md", "Auto-generate"] {
         let (text, text_origin) = backend
             .texts
             .iter()

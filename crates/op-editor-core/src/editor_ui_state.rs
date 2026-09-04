@@ -334,6 +334,12 @@ pub struct EditorUiState {
     /// Text filter, caret, selection, and blink state for the chat
     /// model-picker search box.
     pub chat_model_picker_input: jian_core::text_input::TextInputState,
+    /// Whether the conversation selector in the chat header is open.
+    /// The list itself is painted inside the chat panel and its scroll state
+    /// remains UI-only; durable thread contents live in `ChatSessions`.
+    pub chat_thread_picker_open: bool,
+    /// Vertical scroll offset for the conversation selector.
+    pub chat_thread_picker_scroll: jian_core::scroll::ScrollState,
     /// Request seam raised every time the model picker OPENS: a host
     /// with local CLI access re-discovers the external providers'
     /// catalogs so a CLI that shipped new models mid-session is listed
@@ -346,7 +352,7 @@ pub struct EditorUiState {
     pub chat_design_block_hover: Option<(usize, usize)>,
     /// Index of the empty-state quick action card under the cursor.
     pub chat_example_hover: Option<usize>,
-    /// Which bare chat header button (chevron / maximize / new-chat)
+    /// Which chat header control (chevron / thread selector / maximize / new-chat)
     /// the cursor is over — drives their `theme.button_hover` wash.
     pub chat_header_hover: Option<crate::chat_button_state::ChatHeaderButton>,
     /// Which bottom-toolbar chat control the cursor is over.

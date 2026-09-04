@@ -248,7 +248,7 @@ pub fn git_button_hover(
 }
 
 /// Map a widget-layer `AIChatHit` onto the canonical
-/// `op_editor_core::ChatHeaderButton` — `Some` only for the three bare
+/// `op_editor_core::ChatHeaderButton` — `Some` only for header controls
 /// header buttons that need a hover wash, `None` for every other chat
 /// hit (input, send, chips, rows, drag handle, resize). Stored on
 /// `EditorUiState.chat_header_hover`.
@@ -259,6 +259,7 @@ pub fn chat_header_hover(
     use op_editor_core::ChatHeaderButton as O;
     match hit {
         W::ToggleCollapse => Some(O::ToggleCollapse),
+        W::ToggleThreadPicker => Some(O::ThreadPicker),
         W::ToggleMaximize => Some(O::ToggleMaximize),
         W::NewChat => Some(O::NewChat),
         _ => None,

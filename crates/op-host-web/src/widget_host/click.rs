@@ -64,6 +64,7 @@ impl WidgetHost {
         // (and every other text input): blur + commit through the
         // central helper so a panel-gap click can't strand a focused
         // input behind this block's early-consume return.
+        let thread_picker_closed = self.editor_state.editor_ui.close_chat_thread_picker();
         let was_focused = self.blur_text_inputs_on_blank_press();
         self.mark_dirty();
 
@@ -120,7 +121,7 @@ impl WidgetHost {
         }
         // Defocusing the chat input itself is a visible change —
         // the caller should still repaint to drop the caret.
-        was_focused
+        was_focused || thread_picker_closed
     }
 
     /// Platform tail for the shared chat-panel click dispatch.

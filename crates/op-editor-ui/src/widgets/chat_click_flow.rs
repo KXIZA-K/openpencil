@@ -133,12 +133,18 @@ pub fn apply_chat_hit(state: &mut EditorState, hit: AIChatHit, now_ms: u64) -> C
                 state.chat.focus_input_at_end(now_ms);
             }
             state.editor_ui.close_chat_model_picker();
+            state.editor_ui.close_chat_thread_picker();
+            ChatClickStep::Dirty
+        }
+        AIChatHit::ToggleThreadPicker => {
+            state.editor_ui.toggle_chat_thread_picker();
             ChatClickStep::Dirty
         }
         AIChatHit::ToggleMaximize => {
             state.chat.maximized = !state.chat.maximized;
             state.chat.expand();
             state.editor_ui.close_chat_model_picker();
+            state.editor_ui.close_chat_thread_picker();
             ChatClickStep::Dirty
         }
         AIChatHit::NewChat => {
@@ -152,6 +158,7 @@ pub fn apply_chat_hit(state: &mut EditorState, hit: AIChatHit, now_ms: u64) -> C
             state.chat.new_tab();
             state.chat.pending_new_chat = true;
             state.editor_ui.close_chat_model_picker();
+            state.editor_ui.close_chat_thread_picker();
             // Session set mutated: the host rotates the transcript-cache
             // owner NOW so a pre-paint pointer move can't cross-pair the
             // old tab's geometry with the new tab's messages.
@@ -210,6 +217,7 @@ pub fn apply_chat_hit(state: &mut EditorState, hit: AIChatHit, now_ms: u64) -> C
             // Also closes the model picker when opening this one.
             if !state.editor_ui.parallel_agents_picker_open {
                 state.editor_ui.close_chat_model_picker();
+                state.editor_ui.close_chat_thread_picker();
             }
             state.editor_ui.toggle_parallel_agents_picker();
             ChatClickStep::Dirty
@@ -293,6 +301,7 @@ pub fn apply_chat_hit(state: &mut EditorState, hit: AIChatHit, now_ms: u64) -> C
             // binding (a run keeps streaming into its own bound tab).
             state.chat.switch_to(idx);
             state.editor_ui.close_chat_model_picker();
+            state.editor_ui.close_chat_thread_picker();
             // Active session changed: the host rotates the transcript-cache
             // owner synchronously so a pointer move arriving before the next
             // paint reads None instead of pairing the previous tab's cached

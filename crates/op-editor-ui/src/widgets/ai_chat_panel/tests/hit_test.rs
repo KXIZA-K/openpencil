@@ -369,23 +369,38 @@ fn hit_test_header_returns_drag_handle() {
     let rect = Rect::xywh(0.0, 0.0, AI_CHAT_WIDTH, AI_CHAT_HEIGHT);
     // old→new: the #27 header restyle fills most of the header with a pill
     // (chevron + pill covers x=PAD..right_edge-60) and right-side icons.
-    // The only drag-handle area is the narrow gap between the pill's right
-    // edge and the maximize button: approx x=284..292 for AI_CHAT_WIDTH=360.
-    // Pick x=288 (mid-gap between pill right ~284 and maximize left ~292).
-    let p = Point2D::new(288.0, 18.0);
+    // The only drag-handle area is the narrow gap between the selector's right
+    // edge and the maximize button. Pick its midpoint.
+    let selector = crate::widgets::ai_chat_panel_header::thread_selector_rect(rect);
+    let p = Point2D::new(selector.origin.x + selector.size.x + 4.0, 18.0);
     assert_eq!(panel.hit_test(rect, p), Some(AIChatHit::DragHandle));
 }
 
 #[test]
-fn hit_test_header_tab_body_returns_switch_tab() {
-    // old→new (MT.2 tab row): clicking inside the tab row now returns
-    // SwitchTab(0) for the single default tab, not ToggleCollapse.
-    // ToggleCollapse is now scoped to the chevron icon only.
+fn hit_test_header_selector_toggles_thread_picker() {
     let s = EditorState::new();
     let panel = AIChatPlaceholder::from_editor(&s);
     let rect = Rect::xywh(0.0, 0.0, AI_CHAT_WIDTH, AI_CHAT_HEIGHT);
     // Click at x=PAD+64 (well inside the tab zone, past the chevron).
     let p = Point2D::new(PAD + 64.0, 18.0);
+    assert_eq!(panel.hit_test(rect, p), Some(AIChatHit::ToggleThreadPicker));
+}
+
+#[test]
+fn open_thread_picker_row_switches_to_that_thread() {
+    let mut s = EditorState::new();
+    s.chat.new_tab();
+    s.editor_ui.chat_thread_picker_open = true;
+    let panel = AIChatPlaceholder::from_editor(&s);
+    let rect = Rect::xywh(0.0, 0.0, AI_CHAT_WIDTH, AI_CHAT_HEIGHT);
+    let picker = panel.thread_picker_bounds(rect).expect("thread picker");
+    let p = Point2D::new(
+        picker.origin.x + 20.0,
+        picker.origin.y
+            + crate::widgets::ai_chat_panel_header::THREAD_PICKER_HEADER_H
+            + 6.0
+            + crate::widgets::ai_chat_panel_header::THREAD_PICKER_ROW_H / 2.0,
+    );
     assert_eq!(panel.hit_test(rect, p), Some(AIChatHit::SwitchTab(0)));
 }
 

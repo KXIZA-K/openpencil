@@ -381,6 +381,41 @@ impl WidgetHostNative {
         true
     }
 
+    fn try_scroll_chat_thread_picker(
+        &mut self,
+        x: f32,
+        y: f32,
+        delta_y: f32,
+        viewport_width: f32,
+        viewport_height: f32,
+    ) -> bool {
+        if !self.editor_state.editor_ui.chat_thread_picker_open {
+            return false;
+        }
+        let Some(chat_rect) = self.ai_chat_rect(viewport_width, viewport_height) else {
+            return false;
+        };
+        let panel = op_editor_ui::widgets::AIChatPlaceholder::from_editor_at(
+            &self.editor_state,
+            self.now_ms,
+        );
+        let Some(picker) = panel.thread_picker_bounds(chat_rect) else {
+            return false;
+        };
+        if !picker.contains(Point2D::new(x, y)) {
+            return false;
+        }
+        let max = panel.thread_picker_scroll_max(chat_rect);
+        let scroll = &mut self.editor_state.editor_ui.chat_thread_picker_scroll;
+        let next = (scroll.offset - delta_y).clamp(0.0, max);
+        if next != scroll.offset {
+            scroll.offset = next;
+            self.editor_state.editor_ui.chat_tab_hover = None;
+            self.mark_dirty();
+        }
+        true
+    }
+
     pub fn apply_wheel(
         &mut self,
         x: f32,
@@ -448,6 +483,9 @@ impl WidgetHostNative {
             return true;
         }
         if self.try_scroll_prompt_center(x, y, delta_y, viewport_width, viewport_height) {
+            return true;
+        }
+        if self.try_scroll_chat_thread_picker(x, y, delta_y, viewport_width, viewport_height) {
             return true;
         }
         // Any top-most floating panel (Design-MD / Component-Browser)
@@ -649,6 +687,9 @@ impl WidgetHostNative {
             return true;
         }
         if self.try_scroll_prompt_center(x, y, dy, viewport_width, viewport_height) {
+            return true;
+        }
+        if self.try_scroll_chat_thread_picker(x, y, dy, viewport_width, viewport_height) {
             return true;
         }
         // Any top-most floating panel owns trackpad scroll first.

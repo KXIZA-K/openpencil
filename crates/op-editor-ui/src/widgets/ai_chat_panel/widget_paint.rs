@@ -38,8 +38,8 @@ impl<'a> Widget for AIChatPlaceholder<'a> {
         let sep_y = rect.origin.y + rect.size.y - input_h;
         paint_panel_body_chrome(cx, &self.theme, rect, sep_y);
 
-        // Expanded header (MT.2 tab-row restyle):
-        //   [chevron ⌄] [tab 0] [tab 1 (active + spinner)] … [maximize] [new-chat ⊕]
+        // Expanded header:
+        //   [chevron ⌄] [active conversation ▾] [count] [maximize] [new-chat ⊕]
         use op_editor_core::ChatHeaderButton;
         // Vertical center of all header icons (18px icons in 36px header).
         let header_icon_y = rect.origin.y + (HEADER_HEIGHT - 18.0) / 2.0;
@@ -124,19 +124,19 @@ impl<'a> Widget for AIChatPlaceholder<'a> {
             &tokens,
         );
 
-        // --- Tab row (between chevron and maximize) ---
-        // Replaces the single active-chat pill from 5.3.
+        // --- Conversation selector (between chevron and maximize) ---
+        // One readable active title replaces the compressed multi-tab strip.
         let is_running = self.state.agents_running.0 > 0;
-        paint_header_tabs(
+        paint_thread_selector(
             cx,
             &self.theme,
             rect,
             &self.tabs_snapshot,
             self.active_tab_index,
-            self.tab_hover,
+            self.tab_hover == Some(self.active_tab_index),
+            self.header_pressed == Some(ChatHeaderButton::ThreadPicker),
+            self.thread_picker_open,
             is_running,
-            !self.managed_thread_mode,
-            self.now_ms,
         );
 
         // Body — either messages or examples.
@@ -252,6 +252,20 @@ impl<'a> Widget for AIChatPlaceholder<'a> {
                 &footer,
                 self.state.agent_team_size,
                 self.parallel_agents_picker_hover,
+            );
+        }
+
+        // Conversation picker paints above the transcript and footer so every
+        // row remains legible and interactive without shrinking the canvas.
+        if self.thread_picker_open {
+            paint_thread_picker(
+                cx,
+                &self.theme,
+                rect,
+                &self.tabs_snapshot,
+                self.active_tab_index,
+                self.tab_hover,
+                self.thread_picker_scroll,
             );
         }
 
