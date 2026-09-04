@@ -98,6 +98,15 @@ pub(crate) fn drain_chat_flags<C: RepaintContext + 'static>(inner: &Rc<RefCell<C
     if new_chat || stop {
         abort_active_turn(true);
     }
+    if new_chat {
+        if let Some(thread_id) = crate::platform_chat_bridge::create_thread() {
+            if let Ok(mut b) = inner.try_borrow_mut() {
+                let chat = b.host_mut().editor_state_mut().chat.active_mut();
+                chat.thread_id = Some(thread_id);
+                chat.title = "New Chat".to_string();
+            }
+        }
+    }
     // A pending close-tab (MT.3): abort the run if it's bound to the closed
     // tab, shift the binding otherwise, then remove the tab. Done before the
     // launch below so a close + send in one drain pass resolves in order.

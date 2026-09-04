@@ -97,7 +97,7 @@ impl<'a> AIChatPlaceholder<'a> {
             ),
             size: Point2D::new(NEW_CHAT_D, NEW_CHAT_D),
         };
-        if !self.single_thread_mode && (new_chat_rect).contains(point) {
+        if (new_chat_rect).contains(point) {
             return Some(AIChatHit::NewChat);
         }
         // Maximize / minimize icon (just left of new-chat).
@@ -117,7 +117,7 @@ impl<'a> AIChatPlaceholder<'a> {
         if tab_count > 0 {
             if let Some((tab_idx, over_close)) = tab_hit_at(rect, tab_count, point, self.tab_hover)
             {
-                return Some(if over_close {
+                return Some(if over_close && !self.managed_thread_mode {
                     AIChatHit::CloseTab(tab_idx)
                 } else {
                     AIChatHit::SwitchTab(tab_idx)

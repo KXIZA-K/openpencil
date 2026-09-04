@@ -464,13 +464,13 @@ fn hit_test_resolves_header_new_chat_button() {
 }
 
 #[test]
-fn managed_single_thread_has_no_new_chat_target() {
+fn managed_threads_keep_new_chat_target() {
     let mut s = EditorState::new();
-    s.chat.enable_single_thread_mode("Team Chat");
+    s.chat.enable_managed_thread_mode("Team Chat");
     let panel = AIChatPlaceholder::from_editor(&s);
     let rect = Rect::xywh(0.0, 0.0, AI_CHAT_WIDTH, AI_CHAT_HEIGHT);
     let right_edge = AI_CHAT_WIDTH - PAD;
     let p = Point2D::new(right_edge - NEW_CHAT_D / 2.0, HEADER_HEIGHT / 2.0);
 
-    assert_ne!(panel.hit_test(rect, p), Some(AIChatHit::NewChat));
+    assert_eq!(panel.hit_test(rect, p), Some(AIChatHit::NewChat));
 }

@@ -70,8 +70,8 @@ impl<'a> Widget for AIChatPlaceholder<'a> {
         );
 
         // --- New-chat "+" circular button (far right, 28px circle) ---
-        // Managed Platform embeds have one durable room transcript. Hiding
-        // the local-tab affordance makes that ownership model explicit.
+        // New chat creates a local placeholder immediately; managed Platform
+        // embeds persist it as a durable team thread during the host drain.
         const NEW_CHAT_R: f32 = NEW_CHAT_D / 2.0;
         let new_chat_rect = Rect {
             origin: Point2D::new(
@@ -89,23 +89,21 @@ impl<'a> Widget for AIChatPlaceholder<'a> {
         } else {
             self.theme.secondary
         };
-        if !self.single_thread_mode {
-            cx.backend
-                .fill_round_rect(new_chat_rect, NEW_CHAT_R, new_chat_fill);
-            cx.backend
-                .stroke_round_rect(new_chat_rect, NEW_CHAT_R, self.theme.border, 1.0);
-            draw_icon(
-                cx.backend,
-                Icon::Plus,
-                Point2D::new(
-                    new_chat_rect.origin.x + (NEW_CHAT_D - 14.0) / 2.0,
-                    new_chat_rect.origin.y + (NEW_CHAT_D - 14.0) / 2.0,
-                ),
-                14.0,
-                self.theme.muted_foreground,
-                1.4,
-            );
-        }
+        cx.backend
+            .fill_round_rect(new_chat_rect, NEW_CHAT_R, new_chat_fill);
+        cx.backend
+            .stroke_round_rect(new_chat_rect, NEW_CHAT_R, self.theme.border, 1.0);
+        draw_icon(
+            cx.backend,
+            Icon::Plus,
+            Point2D::new(
+                new_chat_rect.origin.x + (NEW_CHAT_D - 14.0) / 2.0,
+                new_chat_rect.origin.y + (NEW_CHAT_D - 14.0) / 2.0,
+            ),
+            14.0,
+            self.theme.muted_foreground,
+            1.4,
+        );
         // --- Maximize / minimize icon (just left of new-chat) ---
         let maximize_x = right_edge - NEW_CHAT_D - MAXIMIZE_GAP - MAXIMIZE_W;
         jian_widgets::components::icon_button::IconButton {
@@ -137,6 +135,7 @@ impl<'a> Widget for AIChatPlaceholder<'a> {
             self.active_tab_index,
             self.tab_hover,
             is_running,
+            !self.managed_thread_mode,
             self.now_ms,
         );
 
@@ -258,7 +257,7 @@ impl<'a> Widget for AIChatPlaceholder<'a> {
 
         // "New Chat Cmd+T" tooltip paints after transcript and overlays so it
         // cannot be covered by message bubbles below the header.
-        if new_chat_hovered && !self.single_thread_mode {
+        if new_chat_hovered {
             paint_new_chat_tooltip(cx, &self.theme, rect);
         }
 

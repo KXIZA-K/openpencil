@@ -115,6 +115,9 @@ impl ChatTranscriptSelection {
 #[derive(Debug, Clone)]
 pub struct ChatState {
     pub messages: Vec<ChatMessage>,
+    /// Durable Platform thread id when this tab belongs to a managed Studio.
+    /// Standalone OpenPencil tabs leave it unset.
+    pub thread_id: Option<String>,
     /// Short label shown in the floating chat panel header.
     pub title: String,
     /// Text input state for the chat textarea draft.
@@ -253,6 +256,7 @@ impl Default for ChatState {
     fn default() -> Self {
         Self {
             messages: Vec::new(),
+            thread_id: None,
             title: DEFAULT_CHAT_TITLE.to_string(),
             input: TextInputState::default(),
             focused: false,

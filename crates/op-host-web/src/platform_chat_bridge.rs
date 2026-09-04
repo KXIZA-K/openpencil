@@ -34,6 +34,14 @@ struct DurableMessage {
     status: String,
 }
 
+#[derive(Deserialize)]
+struct DurableThread {
+    id: String,
+    title: String,
+    #[serde(default)]
+    messages: Vec<DurableMessage>,
+}
+
 fn studio_managed() -> bool {
     web_sys::window()
         .and_then(|window| window.location().search().ok())
@@ -71,7 +79,7 @@ pub(crate) fn install<C: RepaintContext + 'static>(inner: &Rc<RefCell<C>>) {
             .host_mut()
             .editor_state_mut()
             .chat
-            .enable_single_thread_mode("Team Chat");
+            .enable_managed_thread_mode("Team Chat");
         shell.host_mut().mark_editor_state_dirty();
     }
     let inner = inner.clone();
@@ -116,52 +124,73 @@ pub(crate) fn install<C: RepaintContext + 'static>(inner: &Rc<RefCell<C>>) {
                     }
                 }
                 Some("ids-agent:openpencil-chat-hydrate") => {
-                    let Some(messages) = value.get("messages") else {
+                    let Some(threads) = value.get("threads") else {
                         return;
                     };
-                    let Ok(messages) =
-                        serde_json::from_value::<Vec<DurableMessage>>(messages.clone())
+                    let Ok(threads) = serde_json::from_value::<Vec<DurableThread>>(threads.clone())
                     else {
                         return;
                     };
                     let Ok(mut shell) = inner.try_borrow_mut() else {
                         return;
                     };
+                    let hydrated = threads
+                        .into_iter()
+                        .map(|thread| {
+                            let messages = thread
+                                .messages
+                                .into_iter()
+                                .filter_map(|durable| {
+                                    if durable.role == "system" || durable.content.trim().is_empty()
+                                    {
+                                        return None;
+                                    }
+                                    let is_assistant = durable.role == "assistant";
+                                    let mut message = if is_assistant {
+                                        ChatMessage::assistant(durable.content)
+                                    } else {
+                                        ChatMessage::user(durable.content)
+                                    };
+                                    message.external_id = Some(durable.id);
+                                    message.agent_name = durable.agent_name;
+                                    message.streaming = is_assistant
+                                        && !matches!(
+                                            durable.status.as_str(),
+                                            "complete" | "failed" | "interrupted"
+                                        );
+                                    Some(message)
+                                })
+                                .collect();
+                            (thread.id, thread.title, messages)
+                        })
+                        .collect();
+                    shell
+                        .host_mut()
+                        .editor_state_mut()
+                        .chat
+                        .hydrate_managed_threads(hydrated);
+                    shell.host_mut().mark_editor_state_dirty();
+                    let _ = shell.repaint();
+                }
+                Some("ids-agent:openpencil-chat-thread-created") => {
+                    let Some(thread) = value.get("thread") else {
+                        return;
+                    };
+                    let Some(id) = thread.get("id").and_then(serde_json::Value::as_str) else {
+                        return;
+                    };
+                    let title = thread
+                        .get("title")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("New Chat");
+                    let Ok(mut shell) = inner.try_borrow_mut() else {
+                        return;
+                    };
                     let chat = shell.host_mut().editor_state_mut().chat.active_mut();
-                    // The Platform room is the canonical conversation. Keep
-                    // the title stable even after reconnects so the first
-                    // prompt cannot auto-title a local tab (for example
-                    // "hello") beside the shared transcript.
-                    chat.title = "Team Chat".to_string();
-                    for durable in messages {
-                        if durable.role == "system" || durable.content.trim().is_empty() {
-                            continue;
-                        }
-                        if let Some(existing) = chat.messages.iter_mut().find(|message| {
-                            message.external_id.as_deref() == Some(durable.id.as_str())
-                        }) {
-                            if !durable.content.is_empty() {
-                                existing.content = durable.content;
-                            }
-                            existing.agent_name = durable.agent_name;
-                            if matches!(
-                                durable.status.as_str(),
-                                "complete" | "failed" | "interrupted"
-                            ) {
-                                existing.streaming = false;
-                            }
-                            continue;
-                        }
-                        let mut message = if durable.role == "assistant" {
-                            ChatMessage::assistant(durable.content)
-                        } else {
-                            ChatMessage::user(durable.content)
-                        };
-                        message.external_id = Some(durable.id);
-                        message.agent_name = durable.agent_name;
-                        chat.messages.push(message);
+                    if chat.thread_id.is_none() {
+                        chat.thread_id = Some(id.to_string());
+                        chat.title = title.to_string();
                     }
-                    chat.transcript_pinned = true;
                     shell.host_mut().mark_editor_state_dirty();
                     let _ = shell.repaint();
                 }
@@ -175,6 +204,7 @@ pub(crate) fn install<C: RepaintContext + 'static>(inner: &Rc<RefCell<C>>) {
 
 pub(crate) fn request_turn(
     client_run_id: &str,
+    thread_id: Option<&str>,
     prompt: &str,
     model: &str,
     on_admitted: Admission,
@@ -190,10 +220,24 @@ pub(crate) fn request_turn(
     post(serde_json::json!({
         "type": "ids-agent:openpencil-chat-turn-request",
         "clientRunId": client_run_id,
+        "threadId": thread_id,
         "prompt": prompt,
         "model": model,
     }));
     true
+}
+
+pub(crate) fn create_thread() -> Option<String> {
+    if !studio_managed() {
+        return None;
+    }
+    let entropy = (js_sys::Math::random() * u32::MAX as f64) as u32;
+    let id = format!("pthr_op_{:x}_{entropy:08x}", js_sys::Date::now() as u64);
+    post(serde_json::json!({
+        "type": "ids-agent:openpencil-chat-thread-create",
+        "threadId": id,
+    }));
+    Some(id)
 }
 
 pub(crate) fn finish_turn(client_run_id: &str, assistant_content: &str, error: Option<&str>) {
@@ -253,6 +297,17 @@ mod tests {
         .expect("message parses");
         assert_eq!(parsed.id, "run:user");
         assert_eq!(parsed.role, "user");
+    }
+
+    #[test]
+    fn durable_threads_keep_each_transcript_separate() {
+        let parsed: Vec<DurableThread> = serde_json::from_str(
+            r#"[{"id":"pthr_general","title":"General","messages":[{"id":"run-a:user","role":"user","content":"hello","status":"complete"}]},{"id":"pthr_mobile","title":"Mobile","messages":[]}]"#,
+        )
+        .expect("threads parse");
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].messages.len(), 1);
+        assert_eq!(parsed[1].id, "pthr_mobile");
     }
 
     #[test]

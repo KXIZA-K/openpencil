@@ -181,6 +181,7 @@ pub(crate) fn paint_header_tabs(
     active_index: usize,
     tab_hover: Option<usize>,
     is_running: bool,
+    allow_close: bool,
     now_ms: u64,
 ) {
     let tab_count = tabs.len();
@@ -209,7 +210,7 @@ pub(crate) fn paint_header_tabs(
             // Rounded pill fill for the active tab.
             cx.backend
                 .fill_round_rect(tr.body, PILL_RADIUS, theme.secondary);
-        } else if is_hovered {
+        } else if is_hovered && allow_close {
             // Subtle hover tint for inactive hovered tab.
             cx.backend.fill_round_rect(
                 tr.body,

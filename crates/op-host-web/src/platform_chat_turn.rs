@@ -21,8 +21,15 @@ pub(crate) fn launch<C: RepaintContext + 'static>(
     crate::web_chat::abort_active_turn(true);
     let inner_for_admission = inner.clone();
     let prepared_for_admission = prepared.clone();
+    let thread_id = inner.try_borrow().ok().and_then(|shell| {
+        let chat = &shell.host().editor_state().chat;
+        chat.tabs()
+            .get(tab.unwrap_or_else(|| chat.active_index()))
+            .and_then(|session| session.thread_id.clone())
+    });
     let managed = crate::platform_chat_bridge::request_turn(
         &prepared.client_run_id,
+        thread_id.as_deref(),
         &prepared.user_text,
         &prepared.model,
         Box::new(move |outcome| match outcome {

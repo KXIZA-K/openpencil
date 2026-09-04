@@ -24,10 +24,8 @@ use crate::chat::ChatState;
 pub struct ChatSessions {
     tabs: Vec<ChatState>,
     active: usize,
-    /// Managed embeds can opt into one authoritative conversation. In this
-    /// mode the host owns history persistence, so local tab creation would
-    /// split the visible transcript from the durable room timeline.
-    single_thread_mode: bool,
+    /// Managed embeds bind every visible tab to a durable Platform thread.
+    managed_thread_mode: bool,
 }
 
 impl Default for ChatSessions {
@@ -35,7 +33,7 @@ impl Default for ChatSessions {
         Self {
             tabs: vec![ChatState::default()],
             active: 0,
-            single_thread_mode: false,
+            managed_thread_mode: false,
         }
     }
 }
@@ -66,22 +64,72 @@ impl DerefMut for ChatSessions {
 // --------------------------------------------------------------------------
 
 impl ChatSessions {
-    /// Whether this editor is bound to one host-managed conversation.
-    pub fn single_thread_mode(&self) -> bool {
-        self.single_thread_mode
+    /// Whether this editor's tabs are backed by durable Platform threads.
+    pub fn managed_thread_mode(&self) -> bool {
+        self.managed_thread_mode
     }
 
-    /// Replace every local tab with one empty, host-managed transcript while
-    /// preserving the active tab's model catalog and panel preferences.
-    /// Durable messages are hydrated by the host immediately afterwards.
-    pub fn enable_single_thread_mode(&mut self, title: impl Into<String>) {
+    /// Enter host-managed mode with one placeholder until durable threads are
+    /// hydrated by the Platform parent.
+    pub fn enable_managed_thread_mode(&mut self, title: impl Into<String>) {
         let mut session = self.tabs[self.active].clone();
         session.new_chat();
         session.pending_new_chat = false;
         session.title = title.into();
         self.tabs = vec![session];
         self.active = 0;
-        self.single_thread_mode = true;
+        self.managed_thread_mode = true;
+    }
+
+    /// Replace the managed tab list from durable Platform threads while
+    /// preserving the current tab, draft, model catalog and panel settings.
+    pub fn hydrate_managed_threads(
+        &mut self,
+        threads: Vec<(String, String, Vec<crate::chat::ChatMessage>)>,
+    ) {
+        if threads.is_empty() {
+            return;
+        }
+        let active_id = self.active().thread_id.clone();
+        let template = self.active().clone();
+        let mut hydrated = Vec::with_capacity(threads.len());
+        for (thread_id, title, messages) in threads {
+            let mut tab = self
+                .tabs
+                .iter()
+                .find(|tab| tab.thread_id.as_deref() == Some(thread_id.as_str()))
+                .cloned()
+                .unwrap_or_else(|| {
+                    let mut fresh = template.clone();
+                    fresh.new_chat();
+                    fresh
+                });
+            tab.thread_id = Some(thread_id);
+            tab.title = title;
+            let mut durable_messages = messages;
+            for local in &tab.messages {
+                let local_id = local.external_id.as_deref();
+                if local.streaming
+                    && !durable_messages
+                        .iter()
+                        .any(|message| message.external_id.as_deref() == local_id)
+                {
+                    durable_messages.push(local.clone());
+                }
+            }
+            tab.messages = durable_messages;
+            tab.transcript_pinned = true;
+            hydrated.push(tab);
+        }
+        self.active = active_id
+            .and_then(|id| {
+                hydrated
+                    .iter()
+                    .position(|tab| tab.thread_id.as_deref() == Some(id.as_str()))
+            })
+            .unwrap_or(hydrated.len() - 1);
+        self.tabs = hydrated;
+        self.managed_thread_mode = true;
     }
 
     /// Index of the currently active tab.
@@ -112,9 +160,6 @@ impl ChatSessions {
     /// parallel-agents count on "+" reads as the setting randomly
     /// forgetting itself mid-session.
     pub fn new_tab(&mut self) -> usize {
-        if self.single_thread_mode {
-            return self.active;
-        }
         let mut fresh = ChatState::default();
         let from = &self.tabs[self.active];
         fresh.discovered_models = from.discovered_models.clone();
@@ -140,7 +185,7 @@ impl ChatSessions {
     /// `ChatState::default()` so the collection is never empty. Out-of-range
     /// `i` is a no-op.
     pub fn close_tab(&mut self, i: usize) {
-        if self.single_thread_mode {
+        if self.managed_thread_mode {
             return;
         }
         if i >= self.tabs.len() {
@@ -247,29 +292,41 @@ mod tests {
     }
 
     #[test]
-    fn managed_single_thread_discards_local_tabs_and_locks_the_room_title() {
+    fn managed_threads_hydrate_and_keep_the_active_durable_thread() {
         let mut sessions = ChatSessions::default();
-        sessions
-            .active_mut()
-            .messages
-            .push(crate::chat::ChatMessage::user("local one"));
-        sessions.new_tab();
-        sessions
-            .active_mut()
-            .messages
-            .push(crate::chat::ChatMessage::user("local two"));
-
-        sessions.enable_single_thread_mode("Team Chat");
-
-        assert!(sessions.single_thread_mode());
-        assert_eq!(sessions.tab_count(), 1);
-        assert_eq!(sessions.active_index(), 0);
-        assert_eq!(sessions.title, "Team Chat");
-        assert!(sessions.messages.is_empty());
-        assert_eq!(sessions.new_tab(), 0);
-        sessions.close_tab(0);
-        assert_eq!(sessions.tab_count(), 1);
-        assert_eq!(sessions.title, "Team Chat");
+        sessions.enable_managed_thread_mode("Team Chat");
+        sessions.hydrate_managed_threads(vec![
+            (
+                "pthr_a".into(),
+                "General".into(),
+                vec![crate::chat::ChatMessage::user("one")],
+            ),
+            (
+                "pthr_b".into(),
+                "Mobile".into(),
+                vec![crate::chat::ChatMessage::user("two")],
+            ),
+        ]);
+        assert!(sessions.managed_thread_mode());
+        assert_eq!(sessions.tab_count(), 2);
+        sessions.switch_to(1);
+        sessions.hydrate_managed_threads(vec![
+            (
+                "pthr_a".into(),
+                "General".into(),
+                vec![crate::chat::ChatMessage::user("one")],
+            ),
+            (
+                "pthr_b".into(),
+                "Mobile app".into(),
+                vec![crate::chat::ChatMessage::user("two")],
+            ),
+        ]);
+        assert_eq!(sessions.active_index(), 1);
+        assert_eq!(sessions.title, "Mobile app");
+        assert_eq!(sessions.thread_id.as_deref(), Some("pthr_b"));
+        sessions.close_tab(1);
+        assert_eq!(sessions.tab_count(), 2);
     }
 
     #[test]
