@@ -67,7 +67,11 @@ pub(crate) fn install<C: RepaintContext + 'static>(inner: &Rc<RefCell<C>>) {
         return;
     };
     if let Ok(mut shell) = inner.try_borrow_mut() {
-        shell.host_mut().editor_state_mut().chat.active_mut().title = "Team Chat".to_string();
+        shell
+            .host_mut()
+            .editor_state_mut()
+            .chat
+            .enable_single_thread_mode("Team Chat");
         shell.host_mut().mark_editor_state_dirty();
     }
     let inner = inner.clone();
@@ -124,6 +128,11 @@ pub(crate) fn install<C: RepaintContext + 'static>(inner: &Rc<RefCell<C>>) {
                         return;
                     };
                     let chat = shell.host_mut().editor_state_mut().chat.active_mut();
+                    // The Platform room is the canonical conversation. Keep
+                    // the title stable even after reconnects so the first
+                    // prompt cannot auto-title a local tab (for example
+                    // "hello") beside the shared transcript.
+                    chat.title = "Team Chat".to_string();
                     for durable in messages {
                         if durable.role == "system" || durable.content.trim().is_empty() {
                             continue;

@@ -142,6 +142,12 @@ pub fn apply_chat_hit(state: &mut EditorState, hit: AIChatHit, now_ms: u64) -> C
             ChatClickStep::Dirty
         }
         AIChatHit::NewChat => {
+            // A managed embed has one durable room transcript. Local tabs
+            // would be overwritten on hydration and make one conversation
+            // look like several unrelated sessions.
+            if state.chat.single_thread_mode() {
+                return ChatClickStep::Clean;
+            }
             // "+" opens a fresh, PRESERVED tab — the old tab keeps its
             // transcript intact (MT.1-review regression fix: `new_chat()`
             // reset/wiped the active tab in place, and the host drain then
@@ -289,6 +295,9 @@ pub fn apply_chat_hit(state: &mut EditorState, hit: AIChatHit, now_ms: u64) -> C
             ChatClickStep::Dirty
         }
         AIChatHit::SwitchTab(idx) => {
+            if state.chat.single_thread_mode() {
+                return ChatClickStep::Clean;
+            }
             // Pure editor-state change — a switch does NOT touch the run
             // binding (a run keeps streaming into its own bound tab).
             state.chat.switch_to(idx);
@@ -300,6 +309,9 @@ pub fn apply_chat_hit(state: &mut EditorState, hit: AIChatHit, now_ms: u64) -> C
             ChatClickStep::RotateChatOwner
         }
         AIChatHit::CloseTab(idx) => {
+            if state.chat.single_thread_mode() {
+                return ChatClickStep::Clean;
+            }
             // Closing a tab can need to abort an in-flight run bound to it
             // (a session the widget layer can't reach), so defer to the
             // host runner: raise the request and let it do the close +

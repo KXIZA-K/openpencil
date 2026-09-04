@@ -24,6 +24,10 @@ use crate::chat::ChatState;
 pub struct ChatSessions {
     tabs: Vec<ChatState>,
     active: usize,
+    /// Managed embeds can opt into one authoritative conversation. In this
+    /// mode the host owns history persistence, so local tab creation would
+    /// split the visible transcript from the durable room timeline.
+    single_thread_mode: bool,
 }
 
 impl Default for ChatSessions {
@@ -31,6 +35,7 @@ impl Default for ChatSessions {
         Self {
             tabs: vec![ChatState::default()],
             active: 0,
+            single_thread_mode: false,
         }
     }
 }
@@ -61,6 +66,24 @@ impl DerefMut for ChatSessions {
 // --------------------------------------------------------------------------
 
 impl ChatSessions {
+    /// Whether this editor is bound to one host-managed conversation.
+    pub fn single_thread_mode(&self) -> bool {
+        self.single_thread_mode
+    }
+
+    /// Replace every local tab with one empty, host-managed transcript while
+    /// preserving the active tab's model catalog and panel preferences.
+    /// Durable messages are hydrated by the host immediately afterwards.
+    pub fn enable_single_thread_mode(&mut self, title: impl Into<String>) {
+        let mut session = self.tabs[self.active].clone();
+        session.new_chat();
+        session.pending_new_chat = false;
+        session.title = title.into();
+        self.tabs = vec![session];
+        self.active = 0;
+        self.single_thread_mode = true;
+    }
+
     /// Index of the currently active tab.
     pub fn active_index(&self) -> usize {
         self.active
@@ -89,6 +112,9 @@ impl ChatSessions {
     /// parallel-agents count on "+" reads as the setting randomly
     /// forgetting itself mid-session.
     pub fn new_tab(&mut self) -> usize {
+        if self.single_thread_mode {
+            return self.active;
+        }
         let mut fresh = ChatState::default();
         let from = &self.tabs[self.active];
         fresh.discovered_models = from.discovered_models.clone();
@@ -114,6 +140,9 @@ impl ChatSessions {
     /// `ChatState::default()` so the collection is never empty. Out-of-range
     /// `i` is a no-op.
     pub fn close_tab(&mut self, i: usize) {
+        if self.single_thread_mode {
+            return;
+        }
         if i >= self.tabs.len() {
             return; // out of range — no-op
         }
@@ -215,6 +244,32 @@ mod tests {
         let s = ChatSessions::default();
         assert_eq!(s.tab_count(), 1);
         assert_eq!(s.active_index(), 0);
+    }
+
+    #[test]
+    fn managed_single_thread_discards_local_tabs_and_locks_the_room_title() {
+        let mut sessions = ChatSessions::default();
+        sessions
+            .active_mut()
+            .messages
+            .push(crate::chat::ChatMessage::user("local one"));
+        sessions.new_tab();
+        sessions
+            .active_mut()
+            .messages
+            .push(crate::chat::ChatMessage::user("local two"));
+
+        sessions.enable_single_thread_mode("Team Chat");
+
+        assert!(sessions.single_thread_mode());
+        assert_eq!(sessions.tab_count(), 1);
+        assert_eq!(sessions.active_index(), 0);
+        assert_eq!(sessions.title, "Team Chat");
+        assert!(sessions.messages.is_empty());
+        assert_eq!(sessions.new_tab(), 0);
+        sessions.close_tab(0);
+        assert_eq!(sessions.tab_count(), 1);
+        assert_eq!(sessions.title, "Team Chat");
     }
 
     #[test]

@@ -127,6 +127,9 @@ pub struct AIChatPlaceholder<'a> {
     pub(crate) tabs_snapshot: Vec<ChatTabInfo>,
     /// Active tab index (from `state.chat.active_index()`).
     pub(crate) active_tab_index: usize,
+    /// Managed Platform embeds expose one durable room thread, so local tab
+    /// creation is intentionally unavailable in that mode.
+    pub(crate) single_thread_mode: bool,
     /// Which tab (if any) the cursor is over — drives × close glyph
     /// and hover wash on inactive tabs.
     pub(crate) tab_hover: Option<usize>,
@@ -173,6 +176,7 @@ impl<'a> AIChatPlaceholder<'a> {
             })
             .collect();
         let active_tab_index = state.chat.active_index();
+        let single_thread_mode = state.chat.single_thread_mode();
         Self {
             id: WidgetId::new(7000),
             theme: theme_for(ui),
@@ -208,6 +212,7 @@ impl<'a> AIChatPlaceholder<'a> {
             locale: ui.locale,
             tabs_snapshot,
             active_tab_index,
+            single_thread_mode,
             tab_hover: ui.chat_tab_hover,
             parallel_agents_picker_open: ui.parallel_agents_picker_open,
             parallel_agents_picker_hover: ui.parallel_agents_picker_hover,

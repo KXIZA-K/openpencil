@@ -97,7 +97,7 @@ impl<'a> AIChatPlaceholder<'a> {
             ),
             size: Point2D::new(NEW_CHAT_D, NEW_CHAT_D),
         };
-        if (new_chat_rect).contains(point) {
+        if !self.single_thread_mode && (new_chat_rect).contains(point) {
             return Some(AIChatHit::NewChat);
         }
         // Maximize / minimize icon (just left of new-chat).
