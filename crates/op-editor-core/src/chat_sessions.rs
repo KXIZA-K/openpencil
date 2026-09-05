@@ -106,6 +106,12 @@ impl ChatSessions {
                 });
             tab.thread_id = Some(thread_id);
             tab.title = title;
+            // `new_chat()` is used above only to reset the local transcript,
+            // but it also raises this host-command flag. Hydration is a
+            // read-only projection of durable Platform threads: leaving the
+            // flag set makes merely selecting a hydrated thread ask the host
+            // to create another room.
+            tab.pending_new_chat = false;
             let mut durable_messages = messages;
             for local in &tab.messages {
                 let local_id = local.external_id.as_deref();
@@ -325,7 +331,27 @@ mod tests {
         assert_eq!(sessions.active_index(), 1);
         assert_eq!(sessions.title, "Mobile app");
         assert_eq!(sessions.thread_id.as_deref(), Some("pthr_b"));
+        assert!(sessions
+            .tabs()
+            .iter()
+            .all(|tab| !tab.pending_new_chat));
         sessions.close_tab(1);
+        assert_eq!(sessions.tab_count(), 2);
+    }
+
+    #[test]
+    fn selecting_a_hydrated_managed_thread_does_not_request_a_new_thread() {
+        let mut sessions = ChatSessions::default();
+        sessions.enable_managed_thread_mode("Team Chat");
+        sessions.hydrate_managed_threads(vec![
+            ("pthr_team".into(), "Team Chat".into(), vec![]),
+            ("pthr_mobile".into(), "Mobile".into(), vec![]),
+        ]);
+
+        sessions.switch_to(0);
+        assert!(!sessions.pending_new_chat);
+        sessions.switch_to(1);
+        assert!(!sessions.pending_new_chat);
         assert_eq!(sessions.tab_count(), 2);
     }
 
