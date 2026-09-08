@@ -43,14 +43,14 @@ pub(super) async fn send(
     label: &str,
     build: &impl Fn() -> RequestBuilder,
 ) -> Result<Response, reqwest::Error> {
-    let builder = build();
-    let adapted = (label == "openai-compatible")
-        .then(|| sdk_body(&builder))
-        .flatten();
-    let mut response = builder.send().await?;
-    if response.status() != StatusCode::BAD_REQUEST || adapted.is_none() {
+    let mut response = build().send().await?;
+    if response.status() != StatusCode::BAD_REQUEST || label != "openai-compatible" {
         return Ok(response);
     }
+    // Avoid cloning/parsing potentially large successful requests.
+    let Some(adapted) = sdk_body(&build()) else {
+        return Ok(response);
+    };
     // Never surface the untrusted body: providers can echo credentials in it.
     // Reading is bounded, and a malformed/oversized error remains the original
     // HTTP 400. Callers use the status, not this consumed error response body.
@@ -64,7 +64,7 @@ pub(super) async fn send(
     if !thinking_validation_error(&bytes) {
         return Ok(response);
     }
-    build().json(&adapted.unwrap()).send().await
+    build().json(&adapted).send().await
 }
 
 #[cfg(test)]
