@@ -40,20 +40,20 @@
 //!   for recursive diff application, then falls back to
 //!   `op_orchestrator::parse::parse_nodes` for legacy flat JSON output.
 
-use std::sync::mpsc::{self, Sender};
 use std::sync::Arc;
+use std::sync::mpsc::{self, Sender};
 use std::time::{Duration, Instant};
 
 use op_ai::chat_provider::{
     ChatDelta, ChatHistoryRole, ChatProvider, ChatRequest, ChatToolExecutor, StopReason,
 };
-use op_editor_core::pen_node_ext::PenNodeExt;
 use op_editor_core::EditorState;
+use op_editor_core::pen_node_ext::PenNodeExt;
 use op_orchestrator::{AbortFlag, AppendContext, DesignRequest};
 
 use crate::chat_canvas_tools::UiChatToolExecutor;
 use crate::chat_provider_llm::ChatProviderLlmClient;
-use crate::design_session::{run_design_worker, DesignCmdReq, DesignDelta};
+use crate::design_session::{DesignCmdReq, DesignDelta, run_design_worker};
 
 #[path = "chat_intent_screen_sets.rs"]
 mod screen_sets;
@@ -141,6 +141,12 @@ const MODIFY_KEYWORDS: &[&str] = &[
     "taller",
 ];
 const MODIFY_CJK: &[&str] = &[
+    "แก้",
+    "ปรับ",
+    "แยก",
+    "เอาออก",
+    "ลบ",
+    "ย้าย",
     "修改",
     "改成",
     "改为",

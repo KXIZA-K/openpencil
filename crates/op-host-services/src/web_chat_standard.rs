@@ -281,7 +281,15 @@ pub fn stream_standard_turn<W: Write>(
     );
     let modify_plan = crate::chat_intent::build_modify_plan(&snapshot, &req.ai.user);
     let page_children_empty = snapshot.active_children().is_empty();
-    let intent = resolve_standard_route(classified, page_children_empty, modify_plan.is_some());
+    let Some(intent) =
+        resolve_standard_route(classified, page_children_empty, modify_plan.is_some())
+    else {
+        write_delta_event(
+            out,
+            "Please select the existing frame(s) you want to edit, then send your request again. No design changes were made. I will not create new screens instead of editing your existing design.",
+        )?;
+        return write_done_event(out);
+    };
 
     match intent {
         crate::chat_intent::DesignIntent::Chat => {
@@ -447,15 +455,10 @@ fn resolve_standard_route(
     classified: crate::chat_intent::DesignIntent,
     page_children_empty: bool,
     has_modify_plan: bool,
-) -> crate::chat_intent::DesignIntent {
+) -> Option<crate::chat_intent::DesignIntent> {
     match classified {
-        crate::chat_intent::DesignIntent::Modify if page_children_empty => {
-            crate::chat_intent::DesignIntent::New
-        }
-        crate::chat_intent::DesignIntent::Modify if !has_modify_plan => {
-            crate::chat_intent::DesignIntent::New
-        }
-        other => other,
+        crate::chat_intent::DesignIntent::Modify if page_children_empty || !has_modify_plan => None,
+        other => Some(other),
     }
 }
 
@@ -560,6 +563,11 @@ fn stream_modify_route<W: Write>(
         }
         if applied > 0 {
             write_delta_event(out, "\n\n<!-- APPLIED -->")?;
+        } else {
+            return write_error_event(
+                out,
+                "No changes were applied. The selected frames may have changed or the proposed edits were outside the selected scope. Select the intended frames and try again.",
+            );
         }
         return write_done_event(out);
     }
@@ -772,3 +780,7 @@ impl DocSink for WebDesignDocSink<'_> {
 #[cfg(test)]
 #[path = "web_chat_standard_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "web_chat_standard_routing_tests.rs"]
+mod routing_tests;

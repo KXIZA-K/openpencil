@@ -20,7 +20,7 @@ use crate::chat_modify_sanitize::sanitize_modify_replacement;
 use crate::chat_tool_result::{rolled_back_transaction_message, structured_error_result};
 use op_ai::chat_provider::{ChatToolDef, ChatToolResult};
 use op_editor_core::{EditorState, PenNodeExt};
-pub use op_editor_host_core::chat::{chat_tool_channel, ChatToolRequest, UiChatToolExecutor};
+pub use op_editor_host_core::chat::{ChatToolRequest, UiChatToolExecutor, chat_tool_channel};
 use op_mcp::{ToolRegistry, ToolResponse};
 use std::collections::HashSet;
 
@@ -244,6 +244,51 @@ pub fn apply_design_modification(
 ) -> (usize, bool) {
     if !valid_modify_scope(state, target_frame_ids) {
         return (0, false);
+    }
+    if nodes.iter().any(|(_, node)| node.get("op").is_some()) {
+        // Validate the entire compact batch before applying any operation.
+        let valid = nodes.iter().all(|(_, node)| {
+            let Some(id) = node.get("id").and_then(|v| v.as_str()) else {
+                return false;
+            };
+            if !node_is_in_modify_scope(state, target_frame_ids, id) {
+                return false;
+            }
+            match node.get("op").and_then(|v| v.as_str()) {
+                Some("delete") => true,
+                Some("update") => {
+                    node.get("data")
+                        .and_then(|v| v.as_object())
+                        .is_some_and(|data| {
+                            !data.is_empty()
+                                && !["id", "type", "children"]
+                                    .iter()
+                                    .any(|k| data.contains_key(*k))
+                        })
+                }
+                _ => false,
+            }
+        });
+        if !valid {
+            return (0, false);
+        }
+        let before = state.clone();
+        let mut changed = false;
+        for (_, node) in nodes {
+            let tool = if node["op"] == "delete" {
+                "delete_node"
+            } else {
+                "update_node"
+            };
+            let args = serde_json::json!({"nodeId":node["id"], "data":node.get("data")});
+            let (result, mutated) = execute_chat_tool(state, tool, &args.to_string());
+            if result.is_error {
+                *state = before;
+                return (0, false);
+            }
+            changed |= mutated;
+        }
+        return (if changed { nodes.len() } else { 0 }, changed);
     }
     let implicit_parent = (target_frame_ids.len() == 1).then(|| target_frame_ids[0].as_str());
     let mut count = 0usize;

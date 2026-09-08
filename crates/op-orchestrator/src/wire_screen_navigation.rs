@@ -69,6 +69,7 @@ const ENTRY_NAME_HINTS: [&str; 4] = ["home", "main", "dashboard", "index"];
 /// screen-shape detection to find the reference/target screens its
 /// cross-screen nav unification pass operates on, so "what counts as a
 /// screen" can never drift between the two passes.
+#[derive(Clone)]
 pub(crate) struct ScreenCandidate {
     pub(crate) id: String,
     /// Display name used for slugging + navbar label matching; falls back to

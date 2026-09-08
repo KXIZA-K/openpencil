@@ -12,14 +12,14 @@ use crate::plan::OrchestratorPlan;
 use crate::repair_summary::{CheckCategory, RepairCounter, RepairSummary};
 use crate::types::DocSink;
 use jian_ops_schema::node::{
-    container::{AlignItems, ContainerProps, JustifyContent, LayoutMode, Padding},
     PenNode,
+    container::{AlignItems, ContainerProps, JustifyContent, LayoutMode, Padding},
 };
 use jian_ops_schema::sizing::{SizingBehavior, SizingKeyword};
 use jian_ops_schema::style::PenEffect;
 use op_editor_core::{
-    fills::node_stroke_width, first_fill_type, first_solid_fill_hex, EditorCommand, EditorState,
-    FillType, LayoutPropValue, NodeId, PenNodeExt,
+    EditorCommand, EditorState, FillType, LayoutPropValue, NodeId, PenNodeExt,
+    fills::node_stroke_width, first_fill_type, first_solid_fill_hex,
 };
 
 #[path = "cleanup_desktop_dashboard.rs"]
@@ -695,7 +695,8 @@ fn run_cleanup_passes_with_summary_and_policy(
     // navigation` below so Track A's label↔screen tab-matching sees the
     // POST-unification tree (every screen sharing one tab-label set), not a
     // stale per-screen one.
-    crate::unify_shared_nav::unify_shared_nav(sink);
+    let nav_roots: Vec<&str> = effective_root_ids.iter().map(String::as_str).collect();
+    crate::unify_shared_nav::unify_shared_nav_scoped(sink, Some(&nav_roots));
 
     // Sibling pass to the above: screens missing the pinned status bar
     // entirely (measured: 0718-1-k3-1 — two of three screens had no

@@ -211,6 +211,31 @@ pub(super) struct ModifyNodeParse {
 }
 
 pub(super) fn parse_modify_response(full_response: &str) -> ModifyNodeParse {
+    let raw = full_response.trim();
+    let raw = raw
+        .strip_prefix("```json")
+        .or_else(|| raw.strip_prefix("```"))
+        .and_then(|s| s.trim().strip_suffix("```"))
+        .unwrap_or(raw)
+        .trim();
+    if let Ok(serde_json::Value::Array(ops)) = serde_json::from_str(raw) {
+        if !ops.is_empty()
+            && ops.iter().all(|op| {
+                matches!(
+                    op.get("op").and_then(|v| v.as_str()),
+                    Some("update" | "delete")
+                ) && op
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|id| !id.is_empty())
+            })
+        {
+            return ModifyNodeParse {
+                nodes: ops.into_iter().map(|op| ("null".into(), op)).collect(),
+                diagnostic: None,
+            };
+        }
+    }
     if full_response.trim().is_empty() {
         return ModifyNodeParse {
             nodes: Vec::new(),
@@ -340,6 +365,8 @@ pub fn build_modify_plan(state: &EditorState, instruction: &str) -> Option<Modif
         system_prompt.push_str("\n\n");
         system_prompt.push_str(&op_orchestrator::build_design_md_style_policy(spec));
     }
+
+    system_prompt.push_str("\n\nFor targeted property changes or removals, return ONLY a JSON array of compact operations instead of rewriting entire frames. Examples: [{\"op\":\"update\",\"id\":\"EXISTING_ID\",\"data\":{\"height\":844}},{\"op\":\"delete\",\"id\":\"DUPLICATE_ID\"}]. Use only IDs from CONTEXT NODES. Update preserves all unspecified fields and descendants; data must not contain id, type or children. Delete removes that node and its descendants: use only for elements the user explicitly asked to remove. Do not recreate unrelated content or invent IDs. If the task needs new nodes, use the existing design-node response format instead; do not mix formats.");
 
     Some(ModifyPlan {
         user_message,

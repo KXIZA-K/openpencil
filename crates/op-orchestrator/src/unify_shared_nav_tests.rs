@@ -8,6 +8,60 @@ use op_editor_core::EditorState;
 pub(super) const ACTIVE: &str = "#22C55E";
 pub(super) const INACTIVE: &str = "#9CA3AF";
 
+#[test]
+fn mixed_desktop_mobile_never_copy_navigation_across_device_types() {
+    for reversed in [false, true] {
+        let mut sidebar = nav_with_active_indices("desktop-nav", "d", &[]);
+        sidebar["name"] = serde_json::json!("Sidebar");
+        sidebar.as_object_mut().unwrap().remove("role");
+        sidebar["width"] = serde_json::json!(260);
+        sidebar["height"] = serde_json::json!(900);
+        sidebar["layout"] = serde_json::json!("vertical");
+        let mut desktop = screen_json("desktop", "Home", sidebar);
+        desktop["width"] = serde_json::json!(1200);
+        desktop["height"] = serde_json::json!(900);
+        let mobile = screen_json(
+            "mobile",
+            "Library",
+            nav_with_active_indices("mobile-nav", "m", &[]),
+        );
+        let mut children = vec![desktop, mobile, screen_json_no_nav("missing", "Search")];
+        if reversed {
+            children.reverse();
+        }
+        let mut state = state_from(serde_json::json!({"version":"1.0", "children":children}));
+        let desktop_before =
+            serde_json::to_value(find_by_id(state.active_children(), "desktop").unwrap()).unwrap();
+        run_pass(&mut state);
+        let mobile = find_by_id(state.active_children(), "mobile").unwrap();
+        let nav = serde_json::to_value(&mobile.children().unwrap()[0]).unwrap();
+        assert_eq!(nav["height"].as_f64(), Some(72.0));
+        assert_eq!(nav["layout"], "horizontal");
+        let desktop_after =
+            serde_json::to_value(find_by_id(state.active_children(), "desktop").unwrap()).unwrap();
+        assert_eq!(desktop_after, desktop_before);
+        let missing = find_by_id(state.active_children(), "missing").unwrap();
+        let mut navs = Vec::new();
+        collect_nav_containers(missing, &mut navs);
+        assert_eq!(navs.len(), 1);
+        let once = serde_json::to_value(state.active_children()).unwrap();
+        run_pass(&mut state);
+        assert_eq!(serde_json::to_value(state.active_children()).unwrap(), once);
+    }
+}
+
+#[test]
+fn scoped_navigation_does_not_mutate_preexisting_screens() {
+    let mut state = state_from(two_screen_drifted_doc());
+    let before = serde_json::to_value(state.active_children()).unwrap();
+    let mut sink = crate::loop_finalize::StateDocSink { state: &mut state };
+    unify_shared_nav_scoped(&mut sink, Some(&["unrelated-frame"]));
+    assert_eq!(
+        serde_json::to_value(state.active_children()).unwrap(),
+        before
+    );
+}
+
 fn tab_json(id_prefix: &str, label: &str, icon: &str, active: bool) -> serde_json::Value {
     let color = if active { ACTIVE } else { INACTIVE };
     let mut children = vec![

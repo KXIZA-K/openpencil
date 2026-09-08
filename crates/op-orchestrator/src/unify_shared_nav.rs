@@ -75,8 +75,8 @@ use crate::types::DocSink;
 #[cfg(test)]
 use crate::wire_screen_navigation::collect_nav_containers;
 use crate::wire_screen_navigation::{
-    collect_nav_parts, collect_screen_candidates, first_text_content, labels_match,
-    screen_has_back_control_in_header, NavParts, ScreenCandidate,
+    NavParts, ScreenCandidate, collect_nav_parts, collect_screen_candidates, first_text_content,
+    labels_match, screen_has_back_control_in_header,
 };
 
 /// What a non-reference screen needs, resolved read-only before any
@@ -115,8 +115,48 @@ struct ReferenceNav {
 /// exist (single-screen docs — zero regression surface, mirrors
 /// `wire_screen_navigation`'s own gate), or when NO screen carries a nav at
 /// all (nothing to unify around).
+#[cfg(test)]
 pub fn unify_shared_nav(sink: &mut dyn DocSink) {
+    unify_shared_nav_scoped(sink, None);
+}
+
+/// Existing screens may supply a reference, but only this run's roots may
+/// receive copied chrome. An empty scope authorizes no document mutations.
+pub(crate) fn unify_shared_nav_scoped(sink: &mut dyn DocSink, roots: Option<&[&str]>) {
     let screens = collect_screen_candidates(sink.state());
+    for mobile in [true, false] {
+        let cohort: Vec<_> = screens
+            .iter()
+            .filter(|screen| {
+                op_editor_core::walkers::find_node(
+                    sink.state().active_children(),
+                    &NodeId::new(&screen.id),
+                )
+                .and_then(PenNodeExt::width_px)
+                .is_some_and(|width| (width <= 480.0) == mobile)
+            })
+            .cloned()
+            .collect();
+        unify_cohort(sink, &cohort, mobile, roots);
+    }
+}
+
+fn is_sidebar(node: &PenNode) -> bool {
+    let base = node.base();
+    let named = base.name.as_deref().unwrap_or("").to_lowercase();
+    matches!(
+        base.role.as_deref(),
+        Some("sidebar" | "side-nav" | "nav-rail")
+    ) || named.contains("sidebar")
+        || named.contains("side nav")
+}
+
+fn unify_cohort(
+    sink: &mut dyn DocSink,
+    screens: &[ScreenCandidate],
+    mobile: bool,
+    roots: Option<&[&str]>,
+) {
     if screens.len() < 2 {
         return;
     }
@@ -125,11 +165,15 @@ pub fn unify_shared_nav(sink: &mut dyn DocSink) {
     // — "reuse, don't redraw": whichever screen the user (or an earlier
     // turn) already generated wins, and its tab set becomes the shared
     // truth every other screen adopts.
-    let Some((reference_screen_id, reference_nav)) = find_reference_nav(sink, &screens) else {
+    let Some((reference_screen_id, reference_nav)) = find_reference_nav(sink, screens, mobile)
+    else {
         return;
     };
 
-    for screen in &screens {
+    for screen in screens {
+        if roots.is_some_and(|allowed| !allowed.contains(&screen.id.as_str())) {
+            continue;
+        }
         if screen.id == reference_screen_id {
             continue; // the reference screen keeps its own (authoritative) nav.
         }
@@ -215,6 +259,11 @@ fn resolve_target(
     collect_nav_parts(root, &mut navs);
     match navs.into_iter().next() {
         Some(target_nav) => {
+            // A drawer/sidebar and a bottom bar are different surfaces, even
+            // when their destinations happen to have identical labels.
+            if is_sidebar(target_nav.surface) != is_sidebar(&reference_nav.surface) {
+                return None;
+            }
             if !navs_already_unified(&target_nav, reference_nav) {
                 Some(SyncTarget::Replace(target_nav.surface.id_str().to_string()))
             } else if active_tab_is_correct(target_nav.tab_row, &screen.name) {
@@ -262,6 +311,7 @@ fn resolve_target(
 fn find_reference_nav(
     sink: &dyn DocSink,
     screens: &[ScreenCandidate],
+    mobile: bool,
 ) -> Option<(String, ReferenceNav)> {
     for screen in screens {
         let root = op_editor_core::walkers::find_node(
@@ -270,7 +320,10 @@ fn find_reference_nav(
         )?;
         let mut navs = Vec::new();
         collect_nav_parts(root, &mut navs);
-        if let Some(nav) = navs.into_iter().next() {
+        if let Some(nav) = navs
+            .into_iter()
+            .find(|nav| !mobile || !is_sidebar(nav.surface))
+        {
             let canonical_label = nav
                 .tab_row
                 .children()
@@ -462,7 +515,14 @@ fn find_tab_index_for_screen(children: &[PenNode], screen_name: &str) -> Option<
 /// already whatever it authentically was).
 fn stamp_chrome_role(node: &mut PenNode) {
     if node.base().role.is_none() {
-        node.base_mut().role = Some("bottom-tab-bar".to_string());
+        node.base_mut().role = Some(
+            if is_sidebar(node) {
+                "sidebar"
+            } else {
+                "bottom-tab-bar"
+            }
+            .to_string(),
+        );
     }
 }
 
