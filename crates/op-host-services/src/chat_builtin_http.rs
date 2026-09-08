@@ -25,6 +25,9 @@ use crate::chat_runtime::{resolved_skill_preamble, shared_runtime, BlockingRecvI
 mod error;
 pub use error::BuiltinHttpError;
 
+#[path = "chat_builtin_http_compat.rs"]
+mod compat;
+
 pub(crate) use crate::chat_builtin_http_wire::{
     normalize_provider_base_url, parse_anthropic_sse_data, parse_openai_sse_data,
     provider_endpoint, pump_sse_response,
@@ -448,7 +451,7 @@ pub(crate) async fn send_with_backoff(
 ) -> Result<reqwest::Response, BuiltinHttpError> {
     for attempt in 0..=max_retries {
         throttle_builtin_http_request(min_gap).await;
-        match build().send().await {
+        match compat::send(label, &build).await {
             Ok(resp) if resp.status().is_success() => {
                 relax_adaptive_gap();
                 return Ok(resp);
