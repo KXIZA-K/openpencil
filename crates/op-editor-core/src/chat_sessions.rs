@@ -180,9 +180,32 @@ impl ChatSessions {
     /// Switch to tab `i`. Out-of-range indices are silently ignored (no
     /// panic) — the active tab is unchanged in that case.
     pub fn switch_to(&mut self, i: usize) {
-        if i < self.tabs.len() {
-            self.active = i;
+        if i >= self.tabs.len() || i == self.active {
+            return;
         }
+        // Conversations own their transcript/draft, not the floating window.
+        // A hydrated tab may still carry the startup minimized geometry.
+        let from = &self.tabs[self.active];
+        let geometry = (
+            from.anchor,
+            from.panel_width,
+            from.panel_height,
+            from.panel_position,
+            from.collapsed,
+            from.minimized,
+            from.maximized,
+        );
+        self.active = i;
+        let to = &mut self.tabs[i];
+        (
+            to.anchor,
+            to.panel_width,
+            to.panel_height,
+            to.panel_position,
+            to.collapsed,
+            to.minimized,
+            to.maximized,
+        ) = geometry;
     }
 
     /// Remove tab at index `i` and fix up `active` so it remains valid.
@@ -331,10 +354,7 @@ mod tests {
         assert_eq!(sessions.active_index(), 1);
         assert_eq!(sessions.title, "Mobile app");
         assert_eq!(sessions.thread_id.as_deref(), Some("pthr_b"));
-        assert!(sessions
-            .tabs()
-            .iter()
-            .all(|tab| !tab.pending_new_chat));
+        assert!(sessions.tabs().iter().all(|tab| !tab.pending_new_chat));
         sessions.close_tab(1);
         assert_eq!(sessions.tab_count(), 2);
     }
@@ -378,6 +398,31 @@ mod tests {
         let mut s = ChatSessions::default();
         s.switch_to(99);
         assert_eq!(s.active_index(), 0); // unchanged
+    }
+
+    #[test]
+    fn switching_conversations_preserves_the_open_window_not_the_destination_geometry() {
+        let mut s = ChatSessions::default();
+        s.minimize();
+        s.set_input_text("first draft");
+        s.new_tab();
+        s.expand();
+        s.maximized = true;
+        s.panel_width = 520.0;
+        s.panel_height = 640.0;
+        s.panel_position = Some((91.0, 72.0).into());
+        s.set_input_text("second draft");
+        let position = s.panel_position;
+        s.switch_to(0);
+        assert!(!s.is_minimized());
+        assert!(s.maximized);
+        assert_eq!(s.panel_width, 520.0);
+        assert_eq!(s.panel_height, 640.0);
+        assert_eq!(s.panel_position, position);
+        assert_eq!(s.input.text(), "first draft");
+        s.switch_to(1);
+        assert!(!s.is_minimized());
+        assert_eq!(s.input.text(), "second draft");
     }
 
     #[test]

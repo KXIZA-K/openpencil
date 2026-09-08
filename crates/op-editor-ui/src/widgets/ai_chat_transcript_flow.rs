@@ -300,11 +300,9 @@ pub(crate) fn paint_flow(cx: &mut PaintCx<'_>, theme: &Theme, item: &TranscriptI
     }
 }
 
-/// Repair the ONE thing the stream gets wrong: two bold headings glued
-/// together ("**Batch 1****Batch 2**") or a heading opening right after a
-/// colon. The markers themselves are LEFT IN — the transcript now renders
-/// markdown (see `ai_chat_transcript_richtext`), so stripping them here would
-/// throw away the typography before it is ever laid out.
+/// Preserve source Markdown for the rich-text parser. Global marker rewrites
+/// cannot distinguish opening from closing delimiters: rewriting `:**` broke
+/// ordinary labels such as `**Project:**` into two unmatched lines.
 pub(crate) fn normalize_narration_markdown(text: &str) -> String {
-    text.replace("****", "**\n**").replace(":**", ":\n**")
+    text.to_owned()
 }

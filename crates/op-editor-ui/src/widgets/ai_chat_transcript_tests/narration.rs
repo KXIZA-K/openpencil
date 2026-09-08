@@ -28,21 +28,33 @@ fn user_message_images_get_one_thumbnail_rect_each() {
 }
 
 #[test]
-fn narration_markdown_keeps_its_markers_and_re_breaks_glued_headings() {
+fn narration_preserves_markdown_delimiters_without_guessing_line_breaks() {
     use super::normalize_narration_markdown;
-    // The measured stream: batch headings glued back-to-back. The MARKERS stay
-    // — the transcript renders them as typography now (bold labels, code chips,
-    // bullets), so stripping them here would throw the styling away.
-    let raw = "**Batch 1 — Skeleton****Batch 2 — Header**\nThe design features:**Header**";
+    let raw = "**Project:**\n**Batch 1****Batch 2**\nThe design features:**Header**\n`value:**`";
     let out = normalize_narration_markdown(raw);
-    assert!(
-        out.contains("**Batch 1 — Skeleton**\n**Batch 2 — Header**"),
-        "glued headings re-break onto their own lines: {out}"
+    assert_eq!(out, raw);
+}
+
+#[test]
+fn bold_labels_ending_in_colons_render_after_normalization() {
+    use crate::widgets::ai_chat_transcript_richtext::{layout_rich, SpanStyle};
+    let text = normalize_narration_markdown(
+        "**Project:**\n- A calm Thai elder-care dashboard\n- **Two clearly separated screens**\n**Mood:**\n- calm — soft mint\n**โครงการ:** ดูแลผู้สูงอายุ",
     );
-    assert!(
-        out.contains("features:\n**Header**"),
-        "a heading opening after a colon starts its own line: {out}"
-    );
+    for budget in [24, 60] {
+        let lines = layout_rich(&text, budget);
+        for label in ["Project:", "Mood:", "โครงการ:"] {
+            assert!(lines
+                .iter()
+                .flat_map(|line| &line.spans)
+                .any(|span| span.style == SpanStyle::Strong && span.text == label));
+        }
+        assert!(lines
+            .iter()
+            .flat_map(|line| &line.spans)
+            .all(|span| !span.text.contains("**")));
+        assert_eq!(lines.iter().filter(|line| line.bullet).count(), 3);
+    }
 }
 
 #[test]

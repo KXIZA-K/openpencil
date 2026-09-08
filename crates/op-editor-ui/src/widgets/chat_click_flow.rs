@@ -55,6 +55,31 @@ pub enum ChatHostAction {
     },
 }
 
+#[cfg(test)]
+mod conversation_tests {
+    use super::*;
+
+    #[test]
+    fn selecting_a_conversation_closes_only_the_picker() {
+        let mut state = EditorState::default();
+        state.chat.minimize();
+        state.chat.new_tab();
+        state.chat.expand();
+        state.chat.panel_width = 480.0;
+        for index in [0, 1, 0, 0, 1] {
+            state.editor_ui.chat_thread_picker_open = true;
+            assert_eq!(
+                apply_chat_hit(&mut state, AIChatHit::SwitchTab(index), 0),
+                ChatClickStep::RotateChatOwner
+            );
+            assert!(!state.editor_ui.chat_thread_picker_open);
+            assert!(!state.chat.is_minimized());
+            assert_eq!(state.chat.panel_width, 480.0);
+            assert_eq!(state.chat.tab_count(), 2);
+        }
+    }
+}
+
 /// Map a chat hit onto the pressed-button wash target (footer chips,
 /// header buttons, example cards).
 pub fn chat_button_press_target(hit: &AIChatHit) -> Option<ButtonPressTarget> {
