@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use op_editor_core::chat::ChatMessage;
+use op_editor_core::chat_sessions::ChatSessions;
 use serde::Deserialize;
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::{JsCast, JsValue};
@@ -40,12 +41,41 @@ struct DurableThread {
     title: String,
     #[serde(default)]
     messages: Vec<DurableMessage>,
+    #[serde(default, rename = "historyBefore")]
+    history_before: Option<u64>,
+    #[serde(default, rename = "historyLoading")]
+    history_loading: bool,
+    #[serde(default, rename = "historyError")]
+    history_error: bool,
 }
 
-fn studio_managed() -> bool {
+/// Restore only the initial placeholder. Live room refreshes must never
+/// override a conversation the designer has already selected in this editor.
+fn hydrate_with_preference(
+    chat: &mut ChatSessions,
+    threads: Vec<(String, String, Vec<ChatMessage>)>,
+    preferred: Option<&str>,
+) {
+    let initial = chat.active().thread_id.is_none();
+    chat.hydrate_managed_threads(threads);
+    if initial {
+        if let Some(index) = preferred.and_then(|id| {
+            chat.tabs().iter().position(|tab| tab.thread_id.as_deref() == Some(id))
+        }) {
+            chat.switch_to(index);
+        }
+    }
+}
+
+pub(crate) fn studio_managed() -> bool {
+    #[cfg(not(target_arch = "wasm32"))]
+    { false }
+    #[cfg(target_arch = "wasm32")]
+    {
     web_sys::window()
         .and_then(|window| window.location().search().ok())
         .is_some_and(|query| managed_query(&query))
+    }
 }
 
 fn managed_query(query: &str) -> bool {
@@ -65,6 +95,21 @@ fn post(payload: serde_json::Value) {
         return;
     };
     let _ = parent.post_message(&JsValue::from_str(&payload.to_string()), "*");
+}
+
+/// A painted daemon document, not just the starter shell, is ready to show.
+pub(crate) fn document_ready() {
+    if studio_managed() {
+        post(serde_json::json!({ "type": "ids-agent:openpencil-document-ready" }));
+    }
+}
+
+/// Managed embeds delegate collaboration/account UX to the authenticated IDS shell.
+/// This is navigation only: the parent still enforces membership on every API call.
+pub(crate) fn open_team_collaboration() -> bool {
+    if !studio_managed() { return false; }
+    post(serde_json::json!({ "type": "ids-agent:openpencil-collaboration-open" }));
+    true
 }
 
 pub(crate) fn install<C: RepaintContext + 'static>(inner: &Rc<RefCell<C>>) {
@@ -134,6 +179,9 @@ pub(crate) fn install<C: RepaintContext + 'static>(inner: &Rc<RefCell<C>>) {
                     let Ok(mut shell) = inner.try_borrow_mut() else {
                         return;
                     };
+                    let history: Vec<_> = threads.iter().map(|thread| (
+                        thread.id.clone(), thread.history_before, thread.history_loading, thread.history_error,
+                    )).collect();
                     let hydrated = threads
                         .into_iter()
                         .map(|thread| {
@@ -164,11 +212,26 @@ pub(crate) fn install<C: RepaintContext + 'static>(inner: &Rc<RefCell<C>>) {
                             (thread.id, thread.title, messages)
                         })
                         .collect();
-                    shell
-                        .host_mut()
-                        .editor_state_mut()
-                        .chat
-                        .hydrate_managed_threads(hydrated);
+                    hydrate_with_preference(
+                        &mut shell.host_mut().editor_state_mut().chat,
+                        hydrated,
+                        value.get("preferredThreadId").and_then(serde_json::Value::as_str),
+                    );
+                    let chat = &mut shell.host_mut().editor_state_mut().chat;
+                    for index in 0..chat.tab_count() {
+                        if let Some(tab) = chat.tab_mut(index) {
+                            if let Some((_, before, loading, error)) = history.iter().find(|(id, ..)| tab.thread_id.as_ref() == Some(id)) {
+                                let was_loading = tab.history_loading;
+                                tab.history_before = *before;
+                                tab.history_loading = *loading;
+                                tab.history_error = *error;
+                                if was_loading && !loading && !error {
+                                    tab.transcript_pinned = false;
+                                    tab.transcript_scroll.offset = 0.0;
+                                }
+                            }
+                        }
+                    }
                     shell.host_mut().mark_editor_state_dirty();
                     let _ = shell.repaint();
                 }
@@ -240,6 +303,18 @@ pub(crate) fn create_thread() -> Option<String> {
     Some(id)
 }
 
+pub(crate) fn request_history(thread_id: &str, before: u64) {
+    if studio_managed() {
+        post(serde_json::json!({ "type": "ids-agent:openpencil-chat-history", "threadId": thread_id, "before": before }));
+    }
+}
+
+pub(crate) fn thread_selected(thread_id: &str) {
+    if studio_managed() {
+        post(serde_json::json!({ "type": "ids-agent:openpencil-chat-thread-selected", "threadId": thread_id }));
+    }
+}
+
 pub(crate) fn finish_turn(client_run_id: &str, assistant_content: &str, error: Option<&str>) {
     if !studio_managed() {
         return;
@@ -288,6 +363,30 @@ pub(crate) fn cancel_pending_turns() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn initial_preference_survives_empty_snapshot_and_does_not_override_live_selection() {
+        let mut chat = ChatSessions::default();
+        chat.enable_managed_thread_mode("Team Chat");
+        hydrate_with_preference(&mut chat, vec![], Some("a"));
+        let threads = || vec![
+            ("a".into(), "A".into(), vec![ChatMessage::user("only A")]),
+            ("b".into(), "B".into(), vec![ChatMessage::user("only B")]),
+        ];
+        hydrate_with_preference(&mut chat, threads(), Some("a"));
+        assert_eq!(chat.active().thread_id.as_deref(), Some("a"));
+        assert_eq!(chat.active().messages[0].content, "only A");
+        chat.switch_to(1);
+        hydrate_with_preference(&mut chat, threads(), Some("a"));
+        assert_eq!(chat.active().thread_id.as_deref(), Some("b"));
+        assert_eq!(chat.active().messages[0].content, "only B");
+        assert_eq!(chat.tab_count(), 2);
+        assert!(!chat.pending_new_chat);
+        chat.enable_managed_thread_mode("Team Chat");
+        hydrate_with_preference(&mut chat, threads(), Some("archived-or-other-room"));
+        assert_eq!(chat.active().thread_id.as_deref(), Some("b"));
+        assert_eq!(chat.tab_count(), 2);
+    }
 
     #[test]
     fn durable_message_accepts_platform_camel_case_shape() {

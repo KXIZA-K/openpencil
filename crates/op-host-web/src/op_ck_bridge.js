@@ -6,6 +6,9 @@
 // `SkCanvas` ops. Depends on the compiled CanvasKit artifact
 // (`/canvaskit/canvaskit.{js,wasm}`), not on any TS source.
 
+import { hasSourceFontFamily, sourceFontsGeneration } from './op_source_fonts.js';
+import { createBackdropTracker, textBackdrop, textInkPixels, prepareTextFootprint } from './op_ck_backdrop.js';
+
 function loadScript(src) {
   return new Promise((res, rej) => {
     if (window.CanvasKitInit) return res();
@@ -25,6 +28,25 @@ let createWebImageCaches = null;
 
 export function setImageCacheFactory(factory) {
   createWebImageCaches = factory;
+}
+
+const textGraphemes = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+
+// Classify complete graphemes before choosing tintable masks versus color
+// rasters. Codepoint ranges miss e.g. U+2139 and digit/keycap sequences; tinting
+// a color glyph's opaque background destroys its internal artwork.
+export function opCkTextRuns(text) {
+  const out = [];
+  for (const { segment } of textGraphemes.segment(text)) {
+    const emoji = !segment.includes('\uFE0E') && (
+      /[\p{Extended_Pictographic}\p{Emoji_Presentation}]/u.test(segment)
+      || /[#*0-9]\uFE0F?\u20E3/u.test(segment)
+    );
+    const previous = out[out.length - 1];
+    if (previous && previous.emoji === emoji) previous.text += segment;
+    else out.push({ text: segment, emoji });
+  }
+  return out;
 }
 
 const CSS_GENERIC_FONT_FAMILIES = new Set([
@@ -162,15 +184,17 @@ export function opCkBuildMeshGradientData(x, y, w, h, rows, cols, colors) {
 // side can additionally register Local Font Access faces through
 // registerSystemFont().
 export async function opCkInit(canvasId) {
-  await loadScript('/canvaskit/canvaskit.js');
-  const CK = await CanvasKitInit({ locateFile: (f) => '/canvaskit/' + f });
+  const assetBase = globalThis.__OP_CANVASKIT_BASE_URL__ || '/canvaskit/';
+  await loadScript(assetBase + 'canvaskit.js');
+  const CK = await CanvasKitInit({ locateFile: (f) => assetBase + f });
   if (typeof createWebImageCaches !== 'function') {
     throw new Error('CanvasKit image cache factory was not configured');
   }
   let surface = CK.MakeWebGLCanvasSurface(canvasId);
   if (!surface) throw new Error('CanvasKit: MakeWebGLCanvasSurface returned null');
-  let canvas = surface.getCanvas();
   const el = document.getElementById(canvasId);
+  const backdrop = createBackdropTracker(CK, el);
+  let canvas = backdrop.wrap(surface.getCanvas());
 
   const systemTypefaces = [];
   const systemTypefaceKeys = new Set();
@@ -204,14 +228,27 @@ export async function opCkInit(canvasId) {
     for (const f of registeredFamilyFontCache.values()) f.delete();
     registeredFamilyFontCache.clear();
   };
-  const browserTextCanvas = document.createElement('canvas');
-  const browserTextCtx = browserTextCanvas.getContext('2d', { willReadFrequently: true });
+  let browserTextCanvas = document.createElement('canvas');
+  let browserTextCtx = browserTextCanvas.getContext('2d', { willReadFrequently: true });
+  const transparentTextCanvas = browserTextCanvas, transparentTextCtx = browserTextCtx;
+  const opaqueTextCanvas = document.createElement('canvas');
+  const opaqueTextCtx = opaqueTextCanvas.getContext('2d', { willReadFrequently: true, alpha: false });
+  let textBackdropColor = null;
+  let textGrayscale = false;
   const browserTextCache = new Map();
   const clearBrowserTextCache = () => {
     for (const entry of browserTextCache.values()) {
       if (entry && entry.image && entry.image.delete) entry.image.delete();
     }
     browserTextCache.clear();
+  };
+  let sourceFontGeneration = sourceFontsGeneration();
+  const syncSourceFonts = () => {
+    if (sourceFontGeneration === sourceFontsGeneration()) return;
+    sourceFontGeneration = sourceFontsGeneration();
+    clearBrowserTextCache();
+    clearRegisteredFontCaches();
+    coverageCache.clear();
   };
   // Retain DPR so display changes can immediately invalidate stale handles;
   // per-draw supersampling comes from the current CanvasKit transform below.
@@ -289,24 +326,7 @@ export async function opCkInit(canvasId) {
   const isTextFallbackFamily = (family) => {
     return isEmojiFamily(family) || isCjkFamily(family) || familyIncludes(family, ['Arial', 'Arial Unicode MS', 'Helvetica Neue', 'SF Pro', '.SF NS', 'Segoe UI', 'Segoe UI Historic', 'Segoe UI Symbol', 'Apple Symbols', 'Noto Sans', 'Kohinoor Devanagari', 'Devanagari Sangam MN', 'ITFDevanagari', 'ITF Devanagari', 'MuktaMahee', 'Mukta Mahee', 'Noto Sans Devanagari', 'Nirmala UI', 'Mangal', 'SFGeorgian', 'SF Georgian', 'SFHebrew', 'SF Hebrew', 'Thonburi', 'Sukhumvit', 'Noto Sans Thai', 'Leelawadee UI']);
   };
-  // Emoji codepoint (pictographs / symbols / dingbats / regional) + attaching
-  // modifiers (variation selector, ZWJ, keycap, skin tone) that extend a run.
-  const isEmojiCp = (c) => (c >= 0x1f000 && c <= 0x1faff) || (c >= 0x2600 && c <= 0x27bf) || (c >= 0x2b00 && c <= 0x2bff) || (c >= 0x1f1e6 && c <= 0x1f1ff);
-  const isEmojiMod = (c) => (c >= 0xfe00 && c <= 0xfe0f) || c === 0x200d || c === 0x20e3 || (c >= 0x1f3fb && c <= 0x1f3ff);
-  // Split text into consecutive {text, emoji} runs so each draws with the right
-  // typeface (CanvasKit drawText is single-typeface, no per-glyph fallback).
-  const segments = (t) => {
-    const out = []; let cur = '', curEmoji = null;
-    for (const ch of t) {
-      const c = ch.codePointAt(0);
-      const e = isEmojiMod(c) ? (curEmoji === null ? false : curEmoji) : isEmojiCp(c);
-      if (curEmoji === null) { curEmoji = e; cur = ch; }
-      else if (e === curEmoji) { cur += ch; }
-      else { out.push({ text: cur, emoji: curEmoji }); cur = ch; curEmoji = e; }
-    }
-    if (cur) out.push({ text: cur, emoji: curEmoji });
-    return out;
-  };
+  const segments = opCkTextRuns;
 
   const col = (r, g, b, a) => CK.Color4f(r, g, b, a);
   const isPaintStyle = (style) => Boolean(style && typeof style.value !== 'undefined');
@@ -336,15 +356,17 @@ export async function opCkInit(canvasId) {
   // rather than a second cache since text draws are far less frequent than
   // the primitive-shape hot path this task targets.
   const allocFillPaint = (r, g, b, a) => { const p = new CK.Paint(); p.setColor(col(r, g, b, a)); p.setAntiAlias(true); setPaintStyle(p, CK.PaintStyle.Fill); return p; };
-  // Quote the authored family so names with spaces stay one CSS token, and
-  // strip quote/backslash so a family name can't break out of the shorthand.
+  // Preserve CSS fallback order; quoting the whole stack turns it into a
+  // single nonexistent font. Quote individual names, leaving generics bare.
   // Only families the BROWSER knows resolve here; faces registered into
   // CanvasKit as raw bytes are invisible to CSS and fall through the stack.
   const cssFamilyToken = (family) => {
-    const name = String(family || '').trim().replace(/["\\]/g, '');
-    return name ? `"${name}", ` : '';
+    const names = opCkParseFontFamilyStack(family).map(name =>
+      CSS_GENERIC_FONT_FAMILIES.has(opCkNormalizeFontFamilyName(name))
+        ? name : `"${name.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/[\r\n\f]/g, ' ')}"`);
+    return names.length ? names.join(', ') + ', ' : '';
   };
-  const browserTextFont = (sz, weight, italic, family) => `${italic ? 'italic ' : ''}${Math.max(100, Math.min(900, Math.round(weight || 400)))} ${Math.max(1, sz)}px ${cssFamilyToken(family)}${browserTextFontStack}`;
+  const browserTextFont = (sz, weight, italic, family) => { syncSourceFonts(); return `${italic ? 'italic ' : ''}${Math.max(100, Math.min(900, Math.round(weight || 400)))} ${Math.max(1, sz)}px ${cssFamilyToken(family)}${browserTextFontStack}`; };
   const shouldUseBrowserTextFallback = (_t, _emojiRun) => Boolean(browserTextCtx);
   // Complex scripts (Arabic and friends — see `op_editor_core::text_script`,
   // which owns the predicate for BOTH hosts). CanvasKit's `canvas.drawText`
@@ -370,18 +392,18 @@ export async function opCkInit(canvasId) {
     const yScale = Math.hypot(m[1], m[4]);
     return Math.max(1, xScale, yScale);
   };
-  // Text uses a white coverage mask keyed without colour/alpha, then receives
-  // a SrcIn tint at draw time so differently coloured runs share a bitmap.
-  // Emoji retain their legacy RGBA-keyed, untinted raster path because colour
-  // glyphs can ignore fillStyle. Cache-hit reinsertion keeps eviction LRU.
-  const browserTextImage = (t, sz, weight, italic, emoji, r, g, b, a, family = '') => {
+  // Rasterize the actual RGBA: tinting a white mask changes browser glyph
+  // coverage, especially small bold text. Keep the colour-aware cache bounded
+  // and preserve intrinsic colour glyph artwork. Hits refresh the LRU order.
+  const browserTextImage = (t, sz, weight, italic, emoji, r, g, b, a, family = '', phaseX = 0, phaseY = 0) => {
+    syncSourceFonts();
     if (!browserTextCtx) return null;
     const ss = effectiveTextScale();
     // `family` participates in the key: the same string shaped in two
     // different families is two different bitmaps.
     const key = emoji
-      ? ['e', t, sz, weight, italic ? 1 : 0, r, g, b, a, ss, family].join('\n')
-      : [t, sz, weight, italic ? 1 : 0, ss, family].join('\n');
+      ? ['e', t, sz, weight, italic ? 1 : 0, r, g, b, a, ss, family, phaseX, phaseY, textBackdropColor].join('\n')
+      : [t, sz, weight, italic ? 1 : 0, r, g, b, a, ss, family, phaseX, phaseY, textBackdropColor].join('\n');
     const hit = browserTextCache.get(key);
     if (hit) {
       browserTextCache.delete(key);
@@ -391,8 +413,8 @@ export async function opCkInit(canvasId) {
     const font = browserTextFont(sz, weight, italic, family);
     browserTextCtx.font = font;
     const metrics = browserTextCtx.measureText(t);
-    // Logical (CSS-px) box the glyphs occupy; positioning stays in CSS units.
-    const width = Math.max(1, Math.ceil(metrics.width + 4));
+    // Grow overhang padding in whole bitmap pixels to preserve glyph coverage.
+    const left = 2 + Math.ceil(Math.max(0, Math.ceil(metrics.actualBoundingBoxLeft || 0)) * ss) / ss, width = Math.max(1, Math.ceil(left + Math.max(metrics.width, metrics.actualBoundingBoxRight || 0) + 2));
     const ascent = Math.ceil(metrics.actualBoundingBoxAscent || sz * 0.8);
     const descent = Math.ceil(metrics.actualBoundingBoxDescent || sz * 0.25);
     const baseline = ascent + 2;
@@ -404,19 +426,19 @@ export async function opCkInit(canvasId) {
     browserTextCanvas.width = Math.max(1, Math.ceil(width * ss));
     browserTextCanvas.height = Math.max(1, Math.ceil(height * ss));
     browserTextCtx.setTransform(ss, 0, 0, ss, 0, 0);
-    browserTextCtx.clearRect(0, 0, width, height);
+    if (textBackdropColor) {
+      browserTextCtx.fillStyle = textBackdropColor;
+      browserTextCtx.fillRect(0, 0, width, height);
+    } else browserTextCtx.clearRect(0, 0, width, height);
     browserTextCtx.font = font;
     browserTextCtx.textBaseline = 'alphabetic';
-    // Emoji bake their colour (legacy path); text rasters a WHITE mask that is
-    // tinted at draw time.
-    browserTextCtx.fillStyle = emoji
-      ? `rgba(${Math.round(r * 255)}, ${Math.round(g * 255)}, ${Math.round(b * 255)}, ${a})`
-      : 'rgba(255, 255, 255, 1)';
-    browserTextCtx.fillText(t, 2, baseline);
+    browserTextCtx.fillStyle = `rgba(${Math.round(r * 255)}, ${Math.round(g * 255)}, ${Math.round(b * 255)}, ${a})`;
+    browserTextCtx.fillText(t, left + phaseX, baseline + phaseY);
     browserTextCtx.setTransform(1, 0, 0, 1, 0, 0);
+    const inkPixels = textInkPixels(browserTextCtx, browserTextCanvas, textBackdropColor);
     const image = CK.MakeImageFromCanvasImageSource(browserTextCanvas);
     if (!image) return null;
-    const entry = { image, width: metrics.width, baseline, ss, emoji: Boolean(emoji) };
+    const entry = { image, width: metrics.width, left: left + phaseX, baseline: baseline + phaseY, ss, emoji: Boolean(emoji), inkPixels };
     browserTextCache.set(key, entry);
     if (browserTextCache.size > 512) {
       const firstKey = browserTextCache.keys().next().value;
@@ -426,74 +448,51 @@ export async function opCkInit(canvasId) {
     }
     return entry;
   };
-  // Bounded rgb→ColorFilter cache for tinting the WHITE text raster at draw.
-  // `MakeBlend(color, SrcIn)` recolours the mask to `color × coverage`; alpha
-  // is NOT part of the filter (it rides the paint via setAlphaf), so the key is
-  // rgb only and one filter serves every opacity of a colour. Filters are wasm
-  // handles — LRU with a hard cap, `.delete()`ing the evicted handle (mirrors
-  // `svgPathCache`'s wasm-object hygiene). Cap is small: distinct text colours
-  // on screen are few, so this never thrashes the way the old RGBA raster key
-  // did. An evicted filter was already consumed by its draw call (immediate
-  // mode), and `cachedTintPaint` re-`setColorFilter`s before every draw, so a
-  // deleted handle is never dereferenced.
-  const TINT_FILTER_CACHE_CAP = 64;
-  const tintFilterCache = new Map();
-  const tintColorFilter = (r, g, b) => {
-    if (!(CK.ColorFilter && CK.ColorFilter.MakeBlend)) return null;
-    const key = r + '\n' + g + '\n' + b;
-    const hit = tintFilterCache.get(key);
-    if (hit) {
-      tintFilterCache.delete(key);
-      tintFilterCache.set(key, hit);
-      return hit;
-    }
-    const cf = CK.ColorFilter.MakeBlend(col(r, g, b, 1), CK.BlendMode.SrcIn);
-    if (!cf) return null;
-    tintFilterCache.set(key, cf);
-    if (tintFilterCache.size > TINT_FILTER_CACHE_CAP) {
-      const firstKey = tintFilterCache.keys().next().value;
-      const old = tintFilterCache.get(firstKey);
-      if (old && old.delete) old.delete();
-      tintFilterCache.delete(firstKey);
-    }
-    return cf;
-  };
-  // Dedicated long-lived paint that tints the white text raster. Kept SEPARATE
-  // from cachedFillPaint / cachedStrokePaint because drawBrowserText runs while
-  // drawText's / drawScriptRun's fill paint `p` is already live in an outer
-  // loop — sharing would corrupt that paint mid-run (the same reason
-  // allocFillPaint exists). antiAlias stays at the CK.Paint default (false) so
-  // image sampling matches the prior no-paint drawImage exactly.
-  const cachedTintPaint = new CK.Paint();
   const drawBrowserText = (t, x, y, sz, weight, italic, r, g, b, a, emoji, family = '') => {
-    const entry = browserTextImage(t, sz, weight, italic, emoji, r, g, b, a, family);
-    if (!entry) return 0;
-    // Emoji rasters bake their own colour and draw UNTINTED (legacy path);
-    // text rasters are white masks tinted here. For text: tint to (r,g,b) via a
-    // cached SrcIn ColorFilter with opacity `a` riding the paint — SrcIn keeps
-    // alpha = coverage × a and rgb = colour, pixel-identical to the old
-    // baked-colour raster.
-    let paint = null;
-    if (!entry.emoji) {
-      paint = cachedTintPaint;
-      paint.setColorFilter(tintColorFilter(r, g, b) || null);
-      paint.setAlphaf(a < 0 ? 0 : a > 1 ? 1 : a);
+    // BEGIN native-backing text phase
+    // Raster at the final device-pixel phase, then compensate bitmap placement.
+    // Do not change rotated/vector transforms or compositor-downsampled canvases.
+    let phaseX = 0, phaseY = 0;
+    const matrix = canvas.getTotalMatrix();
+    if (browserTextCtx && el.clientWidth > 0 && el.clientHeight > 0
+      && Math.abs(el.width / el.clientWidth - globalThis.devicePixelRatio) < 0.001
+      && Math.abs(el.height / el.clientHeight - globalThis.devicePixelRatio) < 0.001
+      && [...matrix].every(Number.isFinite) && matrix[0] >= 1 && matrix[4] === matrix[0]
+      && matrix[1] === 0 && matrix[3] === 0 && matrix[6] === 0 && matrix[7] === 0 && matrix[8] === 1) {
+      syncSourceFonts();
+      const scale = effectiveTextScale();
+      browserTextCtx.font = browserTextFont(sz, weight, italic, family);
+      const ink = browserTextCtx.measureText(t);
+      const left = 2 + Math.ceil(Math.max(0, Math.ceil(ink.actualBoundingBoxLeft || 0)) * scale) / scale;
+      const baseline = Math.ceil(ink.actualBoundingBoxAscent || sz * 0.8) + 2;
+      phaseX = (((matrix[0] * (x - left) + matrix[2]) % 1 + 1) % 1) / scale;
+      phaseY = (((matrix[4] * (y - baseline) + matrix[5]) % 1 + 1) % 1) / scale;
     }
+    // END native-backing text phase
+    textBackdropColor = null;
+    if (!textGrayscale && transparentTextCtx && opaqueTextCtx) {
+      transparentTextCtx.font = browserTextFont(sz, weight, italic, family);
+      textBackdropColor = textBackdrop(backdrop, el, matrix, transparentTextCtx.measureText(t), sz,
+        effectiveTextScale(), x, y, phaseX, phaseY, !emoji);
+    }
+    browserTextCanvas = textBackdropColor ? opaqueTextCanvas : transparentTextCanvas;
+    browserTextCtx = textBackdropColor ? opaqueTextCtx : transparentTextCtx;
+    const entry = browserTextImage(t, sz, weight, italic, emoji, r, g, b, a, family, phaseX, phaseY);
+    if (!entry) return 0;
+    // Colour and opacity are already baked; do not tint or apply alpha twice.
     const ss = entry.ss || 1;
+    prepareTextFootprint(backdrop, el, matrix, entry, x, y);
     if (ss !== 1) {
       // The bitmap is `ss`x oversampled; place it in logical space at
-      // (x-2, y-baseline) then scale down by `ss` so its device footprint
+      // (x-left, y-baseline) then scale down by `ss` so its device footprint
       // matches the intended CSS box at native resolution.
       canvas.save();
-      canvas.translate(x - 2, y - entry.baseline);
+      canvas.translate(x - entry.left, y - entry.baseline);
       canvas.scale(1 / ss, 1 / ss);
-      if (paint) canvas.drawImage(entry.image, 0, 0, paint);
-      else canvas.drawImage(entry.image, 0, 0);
+      canvas.drawImage(entry.image, 0, 0);
       canvas.restore();
-    } else if (paint) {
-      canvas.drawImage(entry.image, x - 2, y - entry.baseline, paint);
     } else {
-      canvas.drawImage(entry.image, x - 2, y - entry.baseline);
+      canvas.drawImage(entry.image, x - entry.left, y - entry.baseline);
     }
     return entry.width;
   };
@@ -525,8 +524,13 @@ export async function opCkInit(canvasId) {
     const rad = (angleDeg - 90) * Math.PI / 180;
     const cx = x + w / 2;
     const cy = y + h / 2;
-    const dx = Math.cos(rad) * w / 2;
-    const dy = Math.sin(rad) * h / 2;
+    // CSS projects the box onto the gradient direction. Scaling each axis
+    // independently changes both angle and stop distance on nonsquare boxes.
+    const ux = Math.cos(rad);
+    const uy = Math.sin(rad);
+    const halfLength = (Math.abs(ux) * w + Math.abs(uy) * h) / 2;
+    const dx = ux * halfLength;
+    const dy = uy * halfLength;
     return { start: [cx - dx, cy - dy], end: [cx + dx, cy + dy] };
   };
   const uniformRRect = (x, y, w, h, radius) => CK.RRectXY(
@@ -542,6 +546,8 @@ export async function opCkInit(canvasId) {
     Math.max(0, bottomLeft), Math.max(0, bottomLeft),
   );
   const drawGradientRRect = (rrect, shader, fallbackColor) => {
+    // Gradients invalidate their footprint, not unrelated flat backdrops.
+    backdrop.prepare(rrect[0], rrect[1], rrect[2] - rrect[0], rrect[3] - rrect[1]);
     if (!shader) {
       canvas.drawRRect(rrect, fillPaint(...fallbackColor));
       return;
@@ -597,6 +603,7 @@ export async function opCkInit(canvasId) {
     }
   };
   const drawMeshGradientRRect = (rrect, x, y, w, h, rows, cols, colors, opacity) => {
+    backdrop.prepare(x, y, w, h);
     const alpha = opCkClampUnit(opacity);
     const fallback = colors.length >= 4
       ? [
@@ -683,6 +690,8 @@ export async function opCkInit(canvasId) {
   // Resolve an explicit imported/system face in authored stack order. Generic
   // candidates intentionally return null and continue through browser text.
   const familyTypefaceEntry = (family) => {
+    syncSourceFonts();
+    if (opCkParseFontFamilyStack(family).some(hasSourceFontFamily)) return null;
     return opCkResolveRegisteredTypeface(family, importedTypefaces, systemTypefacesByFamily);
   };
   // Shared "typeface + font for (family, sz)" so the family-aware draw and
@@ -770,13 +779,12 @@ export async function opCkInit(canvasId) {
   // browser-canvas), returning the advance consumed. Shared by the
   // family-blind path and the uncovered segments of a family-aware run, so the
   // two stay identical. Mirrors `measureTextStyled` advance-for-advance.
-  const drawScriptRun = (t, x, y, sz, weight, italic, r, g, b, a) => {
+  const drawScriptRun = (t, x, y, sz, weight, italic, r, g, b, a, family = '') => {
     const segs = segments(t);
     if (segs.length === 0) return 0;
     if (allSegmentsUseBrowserTextFallback(segs)) {
-      let cx = x;
-      for (const seg of segs) cx += drawBrowserText(seg.text, cx, y, sz, weight, italic, r, g, b, a, seg.emoji);
-      return cx - x;
+      // Shape a whole authored run so kerning and script boundaries match DOM.
+      return drawBrowserText(t, x, y, sz, weight, italic, r, g, b, a, segs.some(seg => seg.emoji), family);
     }
     const p = allocFillPaint(r, g, b, a);
     if (weight >= 600 && isPaintStyle(CK.PaintStyle.StrokeAndFill)) {
@@ -786,7 +794,7 @@ export async function opCkInit(canvasId) {
     let cx = x;
     for (const seg of segs) {
       if (shouldUseBrowserTextFallback(seg.text, seg.emoji)) {
-        cx += drawBrowserText(seg.text, cx, y, sz, weight, italic, r, g, b, a, seg.emoji);
+        cx += drawBrowserText(seg.text, cx, y, sz, weight, italic, r, g, b, a, seg.emoji, family);
         continue;
       }
       const f = new CK.Font(tfFor(seg.text, seg.emoji), sz);
@@ -852,7 +860,9 @@ export async function opCkInit(canvasId) {
     return base.copy();
   };
 
-  const imageCaches = createWebImageCaches(CK);
+  const imageCaches = createWebImageCaches(CK, () => {
+    el.dispatchEvent(new Event('op-image-ready'));
+  });
 
   // Figma maps node-normalized coordinates to normalized image UV. Image
   // shaders consume the inverse, mapping image pixels into the destination
@@ -921,6 +931,9 @@ export async function opCkInit(canvasId) {
   ][blendMode] || CK.BlendMode.SrcOver;
 
   const drawImageRectLinear = (image, src, dst, paint) => {
+    // Image paint is unknown only inside its destination. No spatial filters
+    // are installed by this helper's callers; the tracker adds an AA fringe.
+    backdrop.prepare(dst[0], dst[1], dst[2] - dst[0], dst[3] - dst[1]);
     if (canvas.drawImageRectOptions) {
       canvas.drawImageRectOptions(image, src, dst, CK.FilterMode.Linear, CK.MipmapMode.None, paint);
     } else {
@@ -943,14 +956,51 @@ export async function opCkInit(canvasId) {
       while (canvas.getSaveCount() > 1) canvas.restore();
       surface.flush();
     },
-    clear(r, g, b, a) { canvas.clear(col(r, g, b, a)); },
+    setTextGrayscale(value) { textGrayscale = Boolean(value); },
+    clear(r, g, b, a) { textGrayscale = false; canvas.clear(col(r, g, b, a)); backdrop.clear(r, g, b, a); },
 
-    fillRect(x, y, w, h, r, g, b, a) { const p = fillPaint(r, g, b, a); canvas.drawRect(CK.LTRBRect(x, y, x + w, y + h), p); },
+    fillRect(x, y, w, h, r, g, b, a) {
+      backdrop.prepare(x, y, w, h);
+      const p = fillPaint(r, g, b, a); canvas.drawRect(CK.LTRBRect(x, y, x + w, y + h), p);
+      backdrop.fill(x, y, w, h, 0, r, g, b, a);
+    },
     strokeRect(x, y, w, h, r, g, b, a, sw) { const p = strokePaint(r, g, b, a, sw); canvas.drawRect(CK.LTRBRect(x, y, x + w, y + h), p); },
-    fillRoundRect(x, y, w, h, rad, r, g, b, a) { const p = fillPaint(r, g, b, a); canvas.drawRRect(CK.RRectXY(CK.LTRBRect(x, y, x + w, y + h), rad, rad), p); },
+    fillRoundRect(x, y, w, h, rad, r, g, b, a) {
+      backdrop.prepare(x, y, w, h);
+      const p = fillPaint(r, g, b, a); canvas.drawRRect(CK.RRectXY(CK.LTRBRect(x, y, x + w, y + h), rad, rad), p);
+      backdrop.fill(x, y, w, h, Math.max(0, rad), r, g, b, a);
+    },
+    fillDropShadow(x, y, w, h, radius, blur, r, g, b, a) {
+      // Effect paints must not contaminate the shared solid-fill paint cache.
+      const paint = allocFillPaint(r, g, b, a);
+      let mask = null;
+      try {
+        // CanvasKit 0.40.0: SkBlurMaskFilterImpl::computeFastBounds uses 3*sigma.
+        // Restrict proof to uniform CTMs; nonuniform mapRadius is not per-axis.
+        const shadowMatrix = canvas.getTotalMatrix();
+        if ([...shadowMatrix].every(Number.isFinite) && shadowMatrix[0] > 0 &&
+            shadowMatrix[0] === shadowMatrix[4] && shadowMatrix[1] === 0 &&
+            shadowMatrix[3] === 0 && shadowMatrix[6] === 0 &&
+            shadowMatrix[7] === 0 && shadowMatrix[8] === 1 && Number.isFinite(blur)) {
+          const shadowPad = 3 * Math.max(0, blur) * 0.5;
+          backdrop.prepare(x - shadowPad, y - shadowPad, w + 2 * shadowPad, h + 2 * shadowPad);
+        }
+        const sigma = Math.max(0, blur) * 0.5;
+        if (sigma > 0) {
+          mask = CK.MaskFilter.MakeBlur(CK.BlurStyle.Normal, sigma, true);
+          if (mask) paint.setMaskFilter(mask);
+        }
+        canvas.drawRRect(CK.RRectXY(CK.LTRBRect(x, y, x + w, y + h), radius, radius), paint);
+      } finally {
+        paint.delete();
+        if (mask) mask.delete();
+      }
+    },
     fillRoundRectPerCorner(x, y, w, h, tl, tr, br, bl, r, g, b, a) {
       const rr = Float32Array.of(x, y, x + w, y + h, tl, tl, tr, tr, br, br, bl, bl);
+      backdrop.prepare(x, y, w, h);
       const p = fillPaint(r, g, b, a); canvas.drawRRect(rr, p);
+      backdrop.fill(x, y, w, h, Math.max(0, tl, tr, br, bl), r, g, b, a);
     },
     fillRoundRectLinearGradient(x, y, w, h, radius, stops, angleDeg, opacity) {
       if (stops.length < 5) return;
@@ -998,14 +1048,33 @@ export async function opCkInit(canvasId) {
         x, y, w, h, rows, cols, colors, opacity,
       );
     },
-    strokeRoundRect(x, y, w, h, rad, r, g, b, a, sw) { const p = strokePaint(r, g, b, a, sw); canvas.drawRRect(CK.RRectXY(CK.LTRBRect(x, y, x + w, y + h), rad, rad), p); },
+    strokeRoundRect(x, y, w, h, rad, r, g, b, a, sw) {
+      const margin = Math.max(1, Math.abs(sw));
+      backdrop.prepare(x - margin, y - margin, w + 2 * margin, h + 2 * margin);
+      const p = strokePaint(r, g, b, a, sw); canvas.drawRRect(CK.RRectXY(CK.LTRBRect(x, y, x + w, y + h), rad, rad), p);
+    },
     strokeRoundRectPerCorner(x, y, w, h, tl, tr, br, bl, r, g, b, a, sw) {
+      const margin = Math.max(1, Math.abs(sw));
+      backdrop.prepare(x - margin, y - margin, w + 2 * margin, h + 2 * margin);
       const rr = Float32Array.of(x, y, x + w, y + h, tl, tl, tr, tr, br, br, bl, bl);
       const p = strokePaint(r, g, b, a, sw); canvas.drawRRect(rr, p);
     },
-    fillOval(x, y, w, h, r, g, b, a) { const p = fillPaint(r, g, b, a); canvas.drawOval(CK.LTRBRect(x, y, x + w, y + h), p); },
-    strokeOval(x, y, w, h, r, g, b, a, sw) { const p = strokePaint(r, g, b, a, sw); canvas.drawOval(CK.LTRBRect(x, y, x + w, y + h), p); },
-    strokeLine(x1, y1, x2, y2, r, g, b, a, sw) { const p = strokePaint(r, g, b, a, sw); canvas.drawLine(x1, y1, x2, y2, p); },
+    fillOval(x, y, w, h, r, g, b, a) {
+      backdrop.prepare(x, y, w, h);
+      const p = fillPaint(r, g, b, a); canvas.drawOval(CK.LTRBRect(x, y, x + w, y + h), p);
+    },
+    strokeOval(x, y, w, h, r, g, b, a, sw) {
+      const margin = Math.max(1, Math.abs(sw));
+      backdrop.prepare(x - margin, y - margin, w + 2 * margin, h + 2 * margin);
+      const p = strokePaint(r, g, b, a, sw); canvas.drawOval(CK.LTRBRect(x, y, x + w, y + h), p);
+    },
+    strokeLine(x1, y1, x2, y2, r, g, b, a, sw) {
+      // Round caps stay inside this conservative box, including hairlines.
+      const margin = Math.max(1, Math.abs(sw));
+      backdrop.prepare(Math.min(x1, x2) - margin, Math.min(y1, y2) - margin,
+        Math.abs(x2 - x1) + 2 * margin, Math.abs(y2 - y1) + 2 * margin);
+      const p = strokePaint(r, g, b, a, sw); canvas.drawLine(x1, y1, x2, y2, p);
+    },
 
     fillPolygon(pts, r, g, b, a) {
       const path = new CK.Path(); path.moveTo(pts[0], pts[1]);
@@ -1148,7 +1217,7 @@ export async function opCkInit(canvasId) {
         canvas.clipRRect(CK.RRectXY(dst, cornerRadius, cornerRadius), CK.ClipOp.Intersect, true);
       }
       let shader = null;
-      const local = mode === 3 ? null : figmaImageLocalMatrix(x, y, w, h, imageW, imageH, transform);
+      const local = mode === 3 || mode === 5 ? null : figmaImageLocalMatrix(x, y, w, h, imageW, imageH, transform);
       if (local) {
         canvas.clipRect(dst, CK.ClipOp.Intersect, true);
         const tileMode = typeof CK.TileMode.Decal !== 'undefined' ? CK.TileMode.Decal : CK.TileMode.Clamp;
@@ -1164,6 +1233,18 @@ export async function opCkInit(canvasId) {
           const dw = imageW * scale;
           const dh = imageH * scale;
           drawImageRectLinear(image, src, CK.LTRBRect(x + (w - dw) / 2, y + (h - dh) / 2, x + (w + dw) / 2, y + (h + dh) / 2), paint);
+        } else if (mode === 5) {
+          // CSS repeats anchor at the box origin and sample across seams.
+          // Keep centered Figma Tile (mode3) unchanged.
+          const sourceW = Number.isFinite(originalWidth) && originalWidth > 0 ? originalWidth : imageW;
+          const sourceH = Number.isFinite(originalHeight) && originalHeight > 0 ? originalHeight : imageH;
+          const scale = Number.isFinite(tileScale) && tileScale > 0 ? tileScale : 1;
+          const repeatMatrix = [sourceW * scale / imageW, 0, x, 0, sourceH * scale / imageH, y, 0, 0, 1];
+          shader = image.makeShaderOptions(CK.TileMode.Repeat, CK.TileMode.Repeat, CK.FilterMode.Linear, CK.MipmapMode.None, repeatMatrix);
+          if (shader) {
+            paint.setShader(shader);
+            canvas.drawRect(dst, paint);
+          }
         } else if (mode === 3) {
           canvas.clipRect(dst, CK.ClipOp.Intersect, true);
           const sourceW = Number.isFinite(originalWidth) && originalWidth > 0 ? originalWidth : imageW;
@@ -1222,7 +1303,7 @@ export async function opCkInit(canvasId) {
       const familyEntry = familyTypefaceEntry(family);
       const covSegs = familyEntry ? registeredCoverageSegments(familyEntry.key, familyEntry.tf, sz, t) : null;
       if (!covSegs || (covSegs.length === 1 && !covSegs[0].registered)) {
-        drawScriptRun(t, x, y, sz, weight, italic, r, g, b, a);
+        drawScriptRun(t, x, y, sz, weight, italic, r, g, b, a, family);
         return;
       }
       const p = fillPaint(r, g, b, a);
@@ -1237,7 +1318,7 @@ export async function opCkInit(canvasId) {
           canvas.drawText(seg.text, cx, y, p, f);
           cx += runWidth(f, seg.text);
         } else {
-          cx += drawScriptRun(seg.text, cx, y, sz, weight, italic, r, g, b, a);
+          cx += drawScriptRun(seg.text, cx, y, sz, weight, italic, r, g, b, a, family);
         }
       }
     },
@@ -1247,10 +1328,10 @@ export async function opCkInit(canvasId) {
         // No 2D context (headless embed / hostile sandbox). The segmented
         // path at least paints glyphs rather than nothing, though it cannot
         // reorder or join them.
-        drawScriptRun(t, x, y, sz, weight, italic, r, g, b, a);
+        drawScriptRun(t, x, y, sz, weight, italic, r, g, b, a, family);
         return;
       }
-      drawBrowserText(t, x, y, sz, weight, italic, r, g, b, a, false, family);
+      drawBrowserText(t, x, y, sz, weight, italic, r, g, b, a, segments(t).some(seg => seg.emoji), family);
     },
     measureShapedText(t, family, sz, weight, italic) {
       if (!t) return 0;
@@ -1288,18 +1369,18 @@ export async function opCkInit(canvasId) {
       let descent = 0;
       const includeBrowserMetrics = (text) => {
         if (!browserTextCtx) return false;
-        browserTextCtx.font = browserTextFont(sz, weight, italic);
+        browserTextCtx.font = browserTextFont(sz, weight, italic, family);
         const metrics = browserTextCtx.measureText(text);
         const fontAscent = Number(metrics.fontBoundingBoxAscent);
         const fontDescent = Number(metrics.fontBoundingBoxDescent);
         const inkAscent = Number(metrics.actualBoundingBoxAscent);
         const inkDescent = Number(metrics.actualBoundingBoxDescent);
+        // CSS line boxes use font metrics, not glyph ink bounds. Accents may
+        // overhang the box; expanding it shifts the baseline of the whole run.
         ascent = Math.max(ascent,
-          Number.isFinite(fontAscent) ? fontAscent : 0,
-          Number.isFinite(inkAscent) ? inkAscent : 0);
+          Number.isFinite(fontAscent) ? fontAscent : Number.isFinite(inkAscent) ? inkAscent : 0);
         descent = Math.max(descent,
-          Number.isFinite(fontDescent) ? fontDescent : 0,
-          Number.isFinite(inkDescent) ? inkDescent : 0);
+          Number.isFinite(fontDescent) ? fontDescent : Number.isFinite(inkDescent) ? inkDescent : 0);
         return true;
       };
       const includeFontMetrics = (font) => {
@@ -1341,9 +1422,7 @@ export async function opCkInit(canvasId) {
       const familyEntry = familyTypefaceEntry(family);
       const covSegs = familyEntry ? registeredCoverageSegments(familyEntry.key, familyEntry.tf, sz, t) : null;
       if (!covSegs || (covSegs.length === 1 && !covSegs[0].registered)) {
-        // No registered family (or it covers nothing): the family-blind
-        // script-segmented measure — the SAME path drawText falls to.
-        return this.measureTextStyled(t, sz, weight, italic);
+        return this.measureTextStyled(t, sz, weight, italic, family);
       }
       let w = 0;
       for (const seg of covSegs) {
@@ -1351,16 +1430,17 @@ export async function opCkInit(canvasId) {
           const f = registeredFamilyFont(familyEntry.key, familyEntry.tf, sz, italic);
           w += runWidth(f, seg.text);
         } else {
-          w += this.measureTextStyled(seg.text, sz, weight, italic);
+          w += this.measureTextStyled(seg.text, sz, weight, italic, family);
         }
       }
       return w;
     },
-    measureTextStyled(t, sz, weight, italic) {
+    measureTextStyled(t, sz, weight, italic, family = '') {
+      if (browserTextCtx) return browserTextMeasure(t, sz, weight, italic, family);
       let w = 0;
       for (const seg of segments(t)) {
         if (shouldUseBrowserTextFallback(seg.text, seg.emoji)) {
-          w += browserTextMeasure(seg.text, sz, weight, italic);
+          w += browserTextMeasure(seg.text, sz, weight, italic, family);
           continue;
         }
         const f = new CK.Font(tfFor(seg.text, seg.emoji), sz);
@@ -1511,7 +1591,7 @@ export async function opCkInit(canvasId) {
       el.width = w; el.height = h;
       try { surface.delete(); } catch (e) {}
       surface = CK.MakeWebGLCanvasSurface(canvasId);
-      canvas = surface.getCanvas();
+      canvas = backdrop.wrap(surface.getCanvas());
     },
     // Set the device-pixel-ratio used to supersample the offscreen text raster.
     // Called from Rust on mount + every display resize so glyph bitmaps stay

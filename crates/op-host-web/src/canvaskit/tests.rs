@@ -12,6 +12,30 @@ use super::convert::{
 };
 
 #[test]
+fn image_decode_budget_is_shared_by_all_backend_consumers() {
+    let backend = include_str!("backend.rs");
+    let frame = backend.split("fn begin_frame(&mut self)").nth(1).unwrap();
+    let frame = frame.split("fn end_frame").next().unwrap();
+    assert!(frame.contains("self.drain_pending_decodes(2)"));
+    assert!(frame.find("drain_pending_decodes").unwrap() < frame.find("self.ck.begin_frame").unwrap());
+    assert!(!include_str!("inner.rs").contains("drain_pending_decodes"));
+}
+
+#[test]
+fn drop_shadow_uses_isolated_blur_paint() {
+    let backend = include_str!("backend.rs");
+    assert!(backend.contains("fn fill_drop_shadow(&mut self"));
+    let bridge = include_str!("../op_ck_bridge.js");
+    let shadow = bridge.split("fillDropShadow(").nth(1).unwrap().split("\n    },").next().unwrap();
+    assert!(shadow.contains("allocFillPaint("));
+    assert!(shadow.contains("MaskFilter.MakeBlur"));
+    assert!(shadow.contains("blur) * 0.5"));
+    assert!(shadow.contains("paint.delete()"));
+    assert!(shadow.contains("mask.delete()"));
+    assert!(!shadow.contains("= fillPaint("));
+}
+
+#[test]
 fn rounded_gradient_ffi_preserves_stop_and_vertex_alpha() {
     let transparent = Color {
         r: 1.0,
@@ -198,17 +222,22 @@ fn image_residency_uses_the_real_canvaskit_cache() {
 }
 
 #[test]
-fn display_dpr_uses_a_two_x_quality_floor() {
-    assert_eq!(display_dpr(1.0), 2.0);
-    assert_eq!(display_dpr(1.25), 2.0);
-    assert_eq!(display_dpr(1.5), 2.0);
-    assert_eq!(display_dpr(2.0), 2.0);
-    assert_eq!(display_dpr(3.0), 3.0);
+fn display_dpr_uses_native_resolution_above_zoom_out_floor() {
+    for native in [1.0, 1.25, 1.5, 2.0, 3.0] {
+        for zoom in [0.01, 0.5, 0.99] {
+            assert_eq!(display_dpr(native, zoom), native.max(2.0));
+        }
+        for zoom in [1.0, 1.01, 2.0, 100.0] {
+            assert_eq!(display_dpr(native, zoom), native);
+        }
+    }
 }
 
 #[test]
 fn display_dpr_sanitizes_invalid_or_sub_one_values() {
-    assert_eq!(display_dpr(f32::NAN), 2.0);
-    assert_eq!(display_dpr(0.0), 2.0);
-    assert_eq!(display_dpr(0.75), 2.0);
+    assert_eq!(display_dpr(f32::NAN, 1.0), 2.0);
+    assert_eq!(display_dpr(0.0, 1.0), 2.0);
+    assert_eq!(display_dpr(0.75, 1.0), 2.0);
+    assert_eq!(display_dpr(1.0, f32::NAN), 2.0);
+    assert_eq!(display_dpr(1.0, 0.0), 2.0);
 }

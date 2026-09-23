@@ -150,6 +150,7 @@ fn rect(id: &str, name: &str, x: i32, y: i32, w: i32, h: i32, fill_hex: &str) ->
 fn text(id: &str, content: &str, x: i32, y: i32, w: i32, h: i32) -> PenNode {
     let (sw, sh) = sizing(w, h);
     PenNode::Text(TextNode {
+        text_rasterization: None,
         base: base(id, content, x, y),
         width: Some(sw),
         height: Some(sh),

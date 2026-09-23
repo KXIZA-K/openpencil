@@ -101,7 +101,7 @@ fn placement(fit: SceneImageFit, rect: Rect, source_px: (f32, f32)) -> (String, 
         return (String::new(), "<a:fillRect/>".to_string());
     }
     match fit {
-        SceneImageFit::Stretch | SceneImageFit::Tile => {
+        SceneImageFit::Stretch | SceneImageFit::Tile | SceneImageFit::CssRepeat => {
             (String::new(), "<a:fillRect/>".to_string())
         }
         SceneImageFit::Fill | SceneImageFit::Crop => {

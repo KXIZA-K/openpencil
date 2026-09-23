@@ -325,6 +325,7 @@ fn enrich_nodes_from_html_hints_fills_missing_text_props() {
         },
     );
     let mut nodes = vec![PenNode::Text(TextNode {
+        text_rasterization: None,
         base: base(),
         width: None,
         height: None,
@@ -377,6 +378,7 @@ fn enrich_does_not_overwrite_explicit_values() {
         },
     );
     let mut nodes = vec![PenNode::Text(TextNode {
+        text_rasterization: None,
         base: base(),
         width: None,
         height: None,

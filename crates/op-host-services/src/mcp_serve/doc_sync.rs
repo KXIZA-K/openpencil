@@ -27,6 +27,7 @@ pub struct DocumentSyncRequest<'a> {
     /// Exact `document` JSON borrowed from the HTTP request body.
     pub document_json: &'a str,
     pub base_version: Option<u64>,
+    pub base_generation: Option<String>,
     pub active_page_index: Option<usize>,
     pub preserve_authored_geometry: Option<bool>,
     pub metadata_only: bool,
@@ -64,6 +65,7 @@ impl DocumentSyncRequest<'_> {
 pub(crate) struct BorrowedDocumentEnvelope<'a> {
     pub document_json: Option<&'a str>,
     pub base_version: Option<u64>,
+    pub base_generation: Option<String>,
     pub active_page_index: Option<u64>,
     pub preserve_authored_geometry: Option<bool>,
     pub metadata_only: bool,
@@ -78,6 +80,7 @@ struct BorrowedJsonFields<'a> {
     pages: Option<&'a RawValue>,
     editor_meta: Option<&'a RawValue>,
     base_version: Option<&'a RawValue>,
+    base_generation: Option<&'a RawValue>,
     active_page_index: Option<&'a RawValue>,
     preserve_authored_geometry: Option<&'a RawValue>,
     metadata_only: Option<&'a RawValue>,
@@ -109,6 +112,12 @@ impl<'de> Visitor<'de> for BorrowedJsonFieldsVisitor {
                 "pages" => fields.pages = Some(value),
                 "editorMeta" => fields.editor_meta = Some(value),
                 "baseVersion" => fields.base_version = Some(value),
+                "baseGeneration" => {
+                    if fields.base_generation.is_some() {
+                        return Err(serde::de::Error::custom("Duplicate baseGeneration"));
+                    }
+                    fields.base_generation = Some(value);
+                }
                 "activePageIndex" => fields.active_page_index = Some(value),
                 "preserveAuthoredGeometry" => fields.preserve_authored_geometry = Some(value),
                 "metadataOnly" => fields.metadata_only = Some(value),
@@ -192,9 +201,14 @@ pub(crate) fn parse_borrowed_document_envelope(
     body: &str,
 ) -> Result<BorrowedDocumentEnvelope<'_>, serde_json::Error> {
     let fields = borrowed_json_fields(body)?;
+    let base_generation = fields.base_generation.map(|raw| serde_json::from_str::<String>(raw.get())).transpose()?;
+    if base_generation.as_ref().is_some_and(|value| value.len() != 32 || !value.bytes().all(|b| b.is_ascii_hexdigit())) {
+        return Err(<serde_json::Error as serde::de::Error>::custom("Invalid baseGeneration"));
+    }
     Ok(BorrowedDocumentEnvelope {
         document_json: fields.document.map(|value| value.get()),
         base_version: raw_u64(fields.base_version),
+        base_generation,
         active_page_index: raw_u64(fields.active_page_index),
         preserve_authored_geometry: raw_bool(fields.preserve_authored_geometry),
         metadata_only: raw_bool(fields.metadata_only).unwrap_or(false),
@@ -222,6 +236,7 @@ pub fn parse_document_sync_request(body: &str) -> Result<DocumentSyncRequest<'_>
     Ok(DocumentSyncRequest {
         document_json,
         base_version: envelope.base_version,
+        base_generation: envelope.base_generation,
         active_page_index: envelope
             .active_page_index
             .and_then(|index| usize::try_from(index).ok()),

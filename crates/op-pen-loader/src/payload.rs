@@ -68,6 +68,10 @@ pub struct NodePayload {
     /// computes them.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub schema_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub css_paint_origin: Option<[f32; 2]>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub text_grayscale: bool,
     pub kind: String,
     pub name: String,
     pub x: f32,

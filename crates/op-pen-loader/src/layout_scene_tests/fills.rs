@@ -215,6 +215,18 @@ fn image_fill_mode_threads_into_scene_node() {
 }
 
 #[test]
+fn css_repeat_is_distinct_from_centered_tile_in_scene_and_wire() {
+    let src = r#"{"version":"1.0.0","children":[{"type":"rectangle","id":"r","width":390,"height":340,"fill":[{"type":"image","url":"data:image/png;base64,AA==","mode":"css_repeat"}]}]}"#;
+    let parsed: jian_ops_schema::document::PenDocument = serde_json::from_str(src).unwrap();
+    let wire = serde_json::to_string(&parsed).unwrap();
+    assert!(wire.contains("css_repeat"));
+    let scene = editor_state_to_layout_scene(&state_from(&wire));
+    let node = &scene.pages[0].children[0];
+    assert_eq!(node.image_fit, SceneImageFit::CssRepeat);
+    assert_eq!(format!("{:?}", node.image_fit.to_draw_mode()), "CssRepeat");
+}
+
+#[test]
 fn invalid_or_missing_tile_scale_defaults_to_one_in_scene() {
     for tile_scale in ["", ",\"tileScale\":0", ",\"tileScale\":-2"] {
         let src = format!(

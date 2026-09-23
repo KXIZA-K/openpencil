@@ -32,6 +32,7 @@ mod tests;
 
 pub use backend::{init_backend, CanvasKitBackend};
 pub use bindings::OpCk;
+pub use convert::display_dpr;
 
 /// Mount the full editor chrome on `canvas_id`, rendered via CanvasKit on the
 /// GPU, with mouse / wheel / keyboard interactivity. Builds the shared

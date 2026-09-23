@@ -311,7 +311,7 @@ impl NativeBackend {
         // affine transform (the Tesla 191×236 card does this). Apply the
         // transform before mode fallback so explicit CROP and transformed
         // STRETCH paints share Fill's exact sampling path.
-        let transform = if mode == ImageDrawMode::Tile {
+        let transform = if matches!(mode, ImageDrawMode::Tile | ImageDrawMode::CssRepeat) {
             None
         } else {
             transform
@@ -353,6 +353,23 @@ impl NativeBackend {
             }
             ImageDrawMode::Tile => {
                 draw_tiled_image(canvas, rect, &image, &paint, original_size, tile_scale);
+            }
+            ImageDrawMode::CssRepeat => {
+                let [sw, sh] = valid_original_size(original_size)
+                    .unwrap_or([image.width() as f32, image.height() as f32]);
+                let scale = if tile_scale.is_finite() && tile_scale > 0.0 { tile_scale } else { 1.0 };
+                let matrix = skia_safe::Matrix::new_all(
+                    sw * scale / image.width() as f32, 0.0, rect.origin.x,
+                    0.0, sh * scale / image.height() as f32, rect.origin.y,
+                    0.0, 0.0, 1.0,
+                );
+                let sampling = skia_safe::SamplingOptions::new(skia_safe::FilterMode::Linear, skia_safe::MipmapMode::None);
+                if let Some(shader) = image.to_shader(
+                    (skia_safe::TileMode::Repeat, skia_safe::TileMode::Repeat), sampling, &matrix,
+                ) {
+                    paint.set_shader(shader);
+                    canvas.draw_rect(to_sk_rect(rect), &paint);
+                }
             }
             ImageDrawMode::Fill | ImageDrawMode::Crop => {
                 let dst = cover_rect(rect, image.width() as f32, image.height() as f32);
@@ -542,6 +559,14 @@ fn effective_tile_scale(rect: Rect, image_w: f32, image_h: f32, scale: f32) -> f
 #[cfg(test)]
 mod crop_transform_tests {
     use super::*;
+
+    #[test]
+    fn css_repeat_keeps_origin_distinct_from_centered_tile() {
+        let repeat = render_with_scale(ImageDrawMode::CssRepeat, None, 0.7);
+        assert_ne!(repeat, render_with_scale(ImageDrawMode::Tile, None, 0.7));
+        assert_eq!(repeat, render_with_options(ImageDrawMode::CssRepeat, None, Some([4.0, 2.0]), 0.7));
+        assert_eq!(repeat, render_with_scale(ImageDrawMode::CssRepeat, Some([1.0, 0.0, 0.5, 0.0, 1.0, 0.5]), 0.7));
+    }
 
     fn render_with_scale(
         mode: ImageDrawMode,

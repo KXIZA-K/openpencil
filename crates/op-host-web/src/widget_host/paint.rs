@@ -256,8 +256,13 @@ impl WidgetHost {
         if let Some(chat_rect) = self.ai_chat_rect(viewport_width, viewport_height) {
             // Owner-stamp so paint stores the canonical build under THIS host's
             // owner (mirrors native).
-            let chat = AIChatPlaceholder::from_editor_at(&self.editor_state, self.now_ms)
+            let mut chat = AIChatPlaceholder::from_editor_at(&self.editor_state, self.now_ms)
                 .owned_by(self.chat_panel_owner);
+            // The conversation should stand out against the canvas in both themes.
+            chat.theme = match self.editor_state.editor_ui.theme_mode {
+                op_editor_core::ThemeMode::Dark => op_editor_ui::theme::Theme::light(),
+                op_editor_core::ThemeMode::Light => op_editor_ui::theme::Theme::dark(),
+            };
             let mut cx = PaintCx {
                 backend: &mut *backend,
             };
@@ -265,7 +270,7 @@ impl WidgetHost {
         }
 
         if let Some(status_rect) =
-            canvas_geometry::status_bar_rect(&self.editor_state, viewport_width, viewport_height)
+            self.status_bar_rect(viewport_width, viewport_height)
         {
             let status = StatusBar::for_editor(&self.editor_state);
             let mut cx = PaintCx {

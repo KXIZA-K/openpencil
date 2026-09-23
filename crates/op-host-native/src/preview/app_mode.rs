@@ -403,6 +403,7 @@ pub(in crate::preview) fn solve_roots(
 ) -> Result<(Vec<RootFrame>, (f32, f32)), super::PreviewLayoutError> {
     use super::PreviewLayoutError;
 
+    #[cfg(not(target_arch = "wasm32"))]
     runtime
         .layout
         .set_backend(std::rc::Rc::new(jian_skia::SkiaMeasure::new()));
@@ -454,17 +455,15 @@ pub(in crate::preview) fn solve_roots(
     // `offset`. Adding `offset` again doubled `scene_rect`'s origin,
     // making every scene-space tap fall outside every root's bounds
     // (matched nothing, fell through to the "outside all roots"
-    // passthrough). `frame.offset` itself (used unchanged by
-    // `input.rs`'s scene→runtime subtraction) is still the standalone
-    // authored origin, independent of this rect-construction bug.
+    // passthrough). Input mapping uses Runtime::node_scene_rect directly
+    // so it agrees with the runtime's spatial index.
     let root_frames = {
         let mut frames = Vec::new();
         if let Some(rt_doc) = runtime.document.as_ref() {
             for root_key in rt_doc.tree.roots.iter() {
-                let Some(node_data) = rt_doc.tree.nodes.get(*root_key) else {
+                let Some(_node_data) = rt_doc.tree.nodes.get(*root_key) else {
                     continue;
                 };
-                let offset = op_pen_loader::root_authored_origin(&node_data.schema);
                 let rrect = runtime.layout.node_rect(*root_key);
                 let (rx, ry, rw, rh) = rrect
                     .map(|r| (r.origin.x, r.origin.y, r.size.width, r.size.height))
@@ -474,7 +473,6 @@ pub(in crate::preview) fn solve_roots(
                         origin: Point2D::new(rx, ry),
                         size: Point2D::new(rw, rh),
                     },
-                    offset,
                 });
             }
         }

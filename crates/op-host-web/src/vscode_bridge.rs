@@ -36,7 +36,7 @@ use op_editor_core::bridge_protocol::{
     event_conflict_resolved, event_ready, event_snapshot_conflict, event_snapshot_result,
     BridgeInbound, ConflictMode,
 };
-use op_editor_core::web_sync::WebSyncClient;
+use op_editor_core::web_sync::{WebSyncAuthority, WebSyncClient};
 
 use document_snapshot::BridgeDocumentSnapshot;
 
@@ -47,10 +47,6 @@ const BRIDGE_TICK_INTERVAL_MS: i32 = 250;
 /// Re-check interval while waiting for an in-flight push to release `push_busy`
 /// so the bridge's own (open / snapshot / resolve) push can serialize behind it.
 const PUSH_BUSY_RETRY_MS: i32 = 40;
-/// A 409 between probe and push means a concurrent MCP write landed; re-probe
-/// and retry exactly once before surfacing the conflict.
-const RETRY_ONCE: u8 = 1;
-
 /// The `(generation, revision, is_dirty)` triple the observer compares to emit
 /// `dirty-changed`.
 type DirtyTriple = (u64, u64, bool);
@@ -399,9 +395,8 @@ fn handle_resolve_conflict<C: RepaintContext + 'static>(
 /// `resolve-conflict: use-local`: re-push the local document over the snapshot
 /// channel using the conflict's server version as `baseVersion`. Success →
 /// `mark_pushed` + `note_synced` (clears the conflict, and any pending open,
-/// whose `opened` the observer then reports) + `conflict-resolved`. A second
-/// conflict retries once with the fresh server version; still failing →
-/// `snapshot-conflict`.
+/// whose `opened` the observer then reports) + `conflict-resolved`. Another
+/// conflict requires a new user decision, never an automatic overwrite retry.
 fn resolve_use_local<C: RepaintContext + 'static>(
     inner: &Rc<RefCell<C>>,
     sync: &SharedSync,
@@ -415,8 +410,14 @@ fn resolve_use_local<C: RepaintContext + 'static>(
     let Some(snapshot) = snapshot_state(inner) else {
         return;
     };
+    let authority = sync.try_borrow().ok().and_then(|s| s.conflict_authority.clone())
+        .filter(|a| a.version == server_v);
+    let Some(authority) = authority else {
+        post_to_parent(&event_snapshot_conflict(&request_id, server_v));
+        return;
+    };
     let base = crate::daemon_base::daemon_base();
-    drive_use_local_push(sync.clone(), base, request_id, snapshot, server_v);
+    drive_use_local_push(sync.clone(), base, request_id, snapshot, authority);
 }
 
 /// `resolve-conflict: accept-remote`: first reply `snapshot-result` with the
@@ -462,57 +463,48 @@ fn drive_open_push(sync: SharedSync, base: String, snapshot: BridgeDocumentSnaps
         });
         return;
     }
-    open_push_attempt(sync, base, snapshot, RETRY_ONCE);
+    open_push_attempt(sync, base, snapshot);
 }
 
 /// Probe `GET /api/mcp/version` for the daemon's live version `V` (NOT
 /// `last_version()` — during bootstrap that is 0 while sync-reset already
 /// bumped it, forcing a spurious 409), then conditionally push with
-/// `baseVersion=V`. 409 → re-probe + retry once; still 409 → `note_conflict`
-/// (its latch drives the observer's `sync-conflict`), release `push_busy`, no
-/// `opened`. `push_busy` is HELD across the retry (single-flight preserved).
+/// the paired generation/version. 409 → `note_conflict`; never re-probe and
+/// silently overwrite a change that happened after the initial observation.
+/// The conflict latch drives the observer; release `push_busy` without `opened`.
 fn open_push_attempt(
     sync: SharedSync,
     base: String,
     snapshot: BridgeDocumentSnapshot,
-    retries_left: u8,
 ) {
     let version_url = format!("{base}/api/mcp/version");
     let on_version: Rc<dyn Fn(String)> = {
         let sync = sync.clone();
         Rc::new(move |body: String| {
-            let Some(v) = WebSyncClient::parse_version_probe(&body) else {
+            let authority = sync.try_borrow().ok()
+                .and_then(|s| s.client.parse_authority(&body).ok());
+            let Some(authority) = authority else {
                 // Daemon down / non-JSON — abort without wedging: release the
                 // latch, leave open_pending (a later retry / reload recovers).
                 release_push_busy(&sync);
                 return;
             };
-            let push_body = snapshot.push_body(v);
+            let push_body = snapshot.push_body_with_authority(&authority);
             let doc_url = format!("{base}/api/mcp/document");
             let on_resp: Rc<dyn Fn(String)> = {
                 let sync = sync.clone();
-                let base = base.clone();
                 let snapshot = snapshot.clone();
                 Rc::new(move |resp: String| {
                     if let Some(server_v) = WebSyncClient::parse_push_conflict(&resp) {
-                        if retries_left > 0 {
-                            // Re-probe + retry once, still holding push_busy.
-                            open_push_attempt(
-                                sync.clone(),
-                                base.clone(),
-                                snapshot.clone(),
-                                retries_left - 1,
-                            );
-                            return;
-                        }
                         if let Ok(mut s) = sync.try_borrow_mut() {
-                            s.gate.note_conflict(server_v);
+                            s.note_conflict_response(&resp, server_v);
                             s.push_busy = false;
                         }
                         return;
                     }
                     if let Some(version) = WebSyncClient::parse_push_response(&resp) {
                         if let Ok(mut s) = sync.try_borrow_mut() {
+                            s.client.acknowledge_push_authority(&authority);
                             snapshot.mark_pushed(&mut s.client, version);
                             let pair = snapshot.pair();
                             s.gate.note_synced(pair.0, pair.1);
@@ -560,18 +552,20 @@ fn snapshot_push_attempt(
     request_id: String,
     snapshot: BridgeDocumentSnapshot,
 ) {
-    let base_version = sync
-        .try_borrow()
-        .map(|s| s.client.last_version())
-        .unwrap_or(0);
-    let push_body = snapshot.push_body(base_version);
+    let push_body = {
+        let Ok(s) = sync.try_borrow() else {
+            release_push_busy(&sync);
+            return;
+        };
+        snapshot.push_body_for_client(&s.client)
+    };
     let doc_url = format!("{base}/api/mcp/document");
     let on_resp: Rc<dyn Fn(String)> = {
         let sync = sync.clone();
         Rc::new(move |resp: String| {
             if let Some(server_v) = WebSyncClient::parse_push_conflict(&resp) {
                 if let Ok(mut s) = sync.try_borrow_mut() {
-                    s.gate.note_conflict(server_v);
+                    s.note_conflict_response(&resp, server_v);
                     s.push_busy = false;
                 }
                 post_to_parent(&event_snapshot_conflict(&request_id, server_v));
@@ -607,50 +601,34 @@ fn drive_use_local_push(
     base: String,
     request_id: String,
     snapshot: BridgeDocumentSnapshot,
-    base_version: u64,
+    authority: WebSyncAuthority,
 ) {
     if !acquire_push_busy(&sync) {
         schedule_once(PUSH_BUSY_RETRY_MS, move || {
-            drive_use_local_push(sync, base, request_id, snapshot, base_version)
+            drive_use_local_push(sync, base, request_id, snapshot, authority)
         });
         return;
     }
-    use_local_push_attempt(sync, base, request_id, snapshot, base_version, RETRY_ONCE);
+    use_local_push_attempt(sync, base, request_id, snapshot, authority);
 }
 
-/// Re-push the local document with `baseVersion = base_version` (the conflict's
-/// server version). Confirm → `mark_pushed` + `note_synced` (clears conflict +
-/// any pending open) + `conflict-resolved`. Second conflict → retry once with
-/// the fresh server version (push_busy held); still failing → `note_conflict`
-/// (keeps the gate's conflict version current for a later retry) +
-/// `snapshot-conflict`.
+/// Re-push against the exact conflict authority selected by the user.
+/// A second conflict is reported, not retried against unreviewed newer work.
 fn use_local_push_attempt(
     sync: SharedSync,
     base: String,
     request_id: String,
     snapshot: BridgeDocumentSnapshot,
-    base_version: u64,
-    retries_left: u8,
+    authority: WebSyncAuthority,
 ) {
-    let push_body = snapshot.push_body(base_version);
+    let push_body = snapshot.push_body_with_authority(&authority);
     let doc_url = format!("{base}/api/mcp/document");
     let on_resp: Rc<dyn Fn(String)> = {
         let sync = sync.clone();
         Rc::new(move |resp: String| {
             if let Some(server_v) = WebSyncClient::parse_push_conflict(&resp) {
-                if retries_left > 0 {
-                    use_local_push_attempt(
-                        sync.clone(),
-                        base.clone(),
-                        request_id.clone(),
-                        snapshot.clone(),
-                        server_v,
-                        retries_left - 1,
-                    );
-                    return;
-                }
                 if let Ok(mut s) = sync.try_borrow_mut() {
-                    s.gate.note_conflict(server_v);
+                    s.note_conflict_response(&resp, server_v);
                     s.push_busy = false;
                 }
                 post_to_parent(&event_snapshot_conflict(&request_id, server_v));
@@ -658,6 +636,7 @@ fn use_local_push_attempt(
             }
             if let Some(version) = WebSyncClient::parse_push_response(&resp) {
                 if let Ok(mut s) = sync.try_borrow_mut() {
+                    s.client.acknowledge_push_authority(&authority);
                     snapshot.mark_pushed(&mut s.client, version);
                     let pair = snapshot.pair();
                     s.gate.note_synced(pair.0, pair.1);

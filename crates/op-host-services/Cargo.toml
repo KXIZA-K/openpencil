@@ -23,6 +23,7 @@ dev-op-auth-abi-v2 = [
 ]
 
 [dependencies]
+jian-core = { path = "../../vendor/jian/crates/jian-core" }
 # --- workspace path deps (the headless daemon's closure; modules land in
 #     Phases 2-5). Conditional deps (op-codegen / op-config-store) are added
 #     when a moved module proves it needs them, per the plan. op-figma landed

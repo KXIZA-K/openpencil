@@ -2,6 +2,9 @@
 
 pub fn lookup(key: &str) -> Option<&'static str> {
     Some(match key {
+        "ai.history.older" => "Carregar mensagens anteriores",
+        "ai.history.loading" => "Carregando histórico…",
+        "ai.history.retry" => "Falha ao carregar · Tentar novamente",
         "collab.topbar.collaborate" => "Colaborar",
         "collab.topbar.starting" => "Iniciando colaboração…",
         "collab.topbar.joining" => "Entrando…",

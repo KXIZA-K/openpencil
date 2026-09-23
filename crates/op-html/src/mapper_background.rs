@@ -51,7 +51,12 @@ pub(super) fn image_layer(
             context.warn_once(ImportWarning::BackgroundTileSizeIgnored);
         }
         return LayerGeometry {
-            mode: Some(ImageFillMode::Tile),
+            mode: Some(if repeat == "repeat" && position_is_default(&position)
+                && matches!(size.as_str(), "auto" | "auto auto") {
+                ImageFillMode::CssRepeat
+            } else {
+                ImageFillMode::Tile
+            }),
             transform: None,
             position_dropped: !position_is_default(&position),
         };

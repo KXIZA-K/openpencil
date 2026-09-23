@@ -128,12 +128,20 @@ fn paint_node_inner<'a>(
     if node.hidden || matches!(reveal_state, RevealPaintState::Pending) {
         return PaintNodeHits::default();
     }
+    let mut paint_bounds = node.bounds;
+    if matches!(node.kind, NodeKind::Frame | NodeKind::Rect | NodeKind::Group) {
+        if let Some(origin) = node.css_paint_origin {
+            let start = origin + (node.bounds.origin - origin).round();
+            let end = origin + (node.bounds.origin + node.bounds.size - origin).round();
+            paint_bounds = Rect { origin: start, size: (end - start).max(Point2D::ZERO) };
+        }
+    }
     let world_rect = Rect {
         origin: Point2D::new(
-            viewport_origin.x + node.bounds.origin.x * zoom,
-            viewport_origin.y + node.bounds.origin.y * zoom,
+            viewport_origin.x + paint_bounds.origin.x * zoom,
+            viewport_origin.y + paint_bounds.origin.y * zoom,
         ),
-        size: Point2D::new(node.bounds.size.x * zoom, node.bounds.size.y * zoom),
+        size: Point2D::new(paint_bounds.size.x * zoom, paint_bounds.size.y * zoom),
     };
     // Wireframe ghost: the first beat of a reveal paints the node as a blue
     // outline box (content and children withheld) — the Pencil-style

@@ -143,6 +143,7 @@ pub fn editor_state_to_active_page_layout_scene(
         prepared.as_ref(),
         active_page_index,
         state.editor_ui.preserve_authored_geometry,
+        state.doc.conversion.as_ref(),
     );
     let var_table = editor_state_var_table(state);
     pages[active_page_index].children = payload

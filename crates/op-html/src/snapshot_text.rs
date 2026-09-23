@@ -20,13 +20,13 @@
 
 use std::collections::BTreeMap;
 
-use jian_ops_schema::node::text::{FontStyleKind, FontWeight, TextContent, TextGrowth, TextNode};
 use jian_ops_schema::node::PenNode;
+use jian_ops_schema::node::text::{FontStyleKind, FontWeight, TextContent, TextGrowth, TextNode};
 use jian_ops_schema::sizing::{SizeLimits, SizingBehavior};
 use jian_ops_schema::style::{FontStyleKind as SegmentFontStyle, StyledTextSegment};
 use serde_json::{Map, Value};
 
-use super::{parse_px, parse_text_align, solid_fill, Rect, SnapshotCtx};
+use super::{Rect, SnapshotCtx, parse_px, parse_text_align, solid_fill};
 use crate::color::parse_css_color;
 
 /// Sizing decided for one captured run.
@@ -82,7 +82,7 @@ impl SnapshotCtx<'_> {
         if text.trim().is_empty() {
             return None;
         }
-        let id = self.allocate_id()?;
+        let id = self.allocate_node_id(object)?;
         let styles = super::style_map(object);
         let font_size = styles
             .get("font-size")
@@ -109,7 +109,10 @@ impl SnapshotCtx<'_> {
         // pushed such runs a dozen pixels below the captured box (while a
         // neighbouring run with a normal line-height stayed put — the footer
         // misalignment). On a run the browser kept to one line the
-        // line-height is pure leading, so it is clamped to the captured box;
+        // line-height is pure leading, so it is replaced by the captured box.
+        // Tight/negative leading is already included in y too: retaining it
+        // moves tall Thai glyph runs upward a second time. Normal leading also
+        // needs the captured height rather than a renderer-specific default;
         // a wrapped run keeps it, because there it is the stride between
         // lines.
         let line_height = styles
@@ -118,7 +121,7 @@ impl SnapshotCtx<'_> {
             .filter(|_| font_size > 0.0)
             .map(|height| height / font_size);
         let line_height = if is_single_line(lines, nowrap) {
-            clamp_single_line_leading(line_height, font_size, rect.h)
+            captured_single_line_leading(line_height, font_size, rect.h)
         } else {
             line_height
         };
@@ -126,9 +129,16 @@ impl SnapshotCtx<'_> {
             .get("letter-spacing")
             .filter(|value| value.as_str() != "normal")
             .and_then(|value| parse_px(value));
-        let text_align = styles
-            .get("text-align")
-            .and_then(|value| parse_text_align(value));
+        // Range geometry already includes single-line horizontal alignment.
+        // Aligning again inside the imported layout shifts tight runs twice,
+        // notably icon + label buttons. Wrapped blocks still need alignment.
+        let text_align = if is_single_line(lines, nowrap) {
+            parse_text_align("left")
+        } else {
+            styles
+                .get("text-align")
+                .and_then(|value| parse_text_align(value))
+        };
         // Transparent glyphs under a `background-clip: text` ancestor take
         // the colour that ancestor's background moved onto the context (the
         // gradient-text idiom — see `map_element`). Transparent text WITHOUT
@@ -147,6 +157,8 @@ impl SnapshotCtx<'_> {
         };
         let sizing = text_box(rect, lines, nowrap);
         Some(PenNode::Text(TextNode {
+            text_rasterization: (styles.get("-studio-text-rasterization").map(String::as_str) == Some("grayscale"))
+                .then_some(jian_ops_schema::node::text::TextRasterization::Grayscale),
             base: self.base(id, Some("Text".into()), rect, Some(parent_rect)),
             limits: sizing.limits,
             width: sizing.width,
@@ -285,18 +297,17 @@ fn is_single_line(lines: u64, nowrap: bool) -> bool {
     lines <= 1 || nowrap
 }
 
-/// Cap a single-line run's line-height at the captured glyph box so paint
-/// does not re-apply half-leading the page already positioned (see the
-/// comment at the call site). A missing or already-tight line-height passes
-/// through.
-fn clamp_single_line_leading(line_height: Option<f64>, font_size: f64, rect_h: f64) -> Option<f64> {
-    line_height.map(|leading| {
-        if font_size > 0.0 && rect_h > 0.0 {
-            leading.min(rect_h / font_size)
-        } else {
-            leading
-        }
-    })
+/// Range geometry already contains CSS half-leading, positive or negative.
+fn captured_single_line_leading(
+    line_height: Option<f64>,
+    font_size: f64,
+    rect_h: f64,
+) -> Option<f64> {
+    if font_size.is_finite() && rect_h.is_finite() && font_size > 0.0 && rect_h > 0.0 {
+        Some(rect_h / font_size)
+    } else {
+        line_height
+    }
 }
 
 /// Runs the browser never wrapped, so the importer must not wrap them either.
@@ -319,6 +330,17 @@ fn is_nowrap(styles: &BTreeMap<String, String>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn snapshot_text_keeps_only_the_supported_rasterization_hint() {
+        let source = include_str!("../tests/fixtures/snapshot_v1_sample.json");
+        for hint in ["grayscale", "lcd", "unknown"] {
+            let json = source.replace("\"font-family\":", &format!("\"-studio-text-rasterization\":\"{hint}\",\"font-family\":"));
+            let result = crate::snapshot::import_snapshot(&json, &crate::HtmlImportOptions::default());
+            let serialized = serde_json::to_string(&result.nodes).unwrap();
+            assert_eq!(serialized.contains("\"textRasterization\":\"grayscale\""), hint == "grayscale");
+        }
+    }
 
     fn rect() -> Rect {
         Rect {
@@ -381,14 +403,23 @@ mod tests {
     /// leading again would push the run ~12px below the captured box.
     #[test]
     fn a_single_line_run_clamps_its_leading_to_the_captured_box() {
-        let clamped = clamp_single_line_leading(Some(40.0 / 14.0), 14.0, 15.5);
+        let clamped = captured_single_line_leading(Some(40.0 / 14.0), 14.0, 15.5);
         assert!((clamped.unwrap() - 15.5 / 14.0).abs() < 1e-9);
-        // An already-tight leading passes through untouched.
-        let tight = clamp_single_line_leading(Some(1.05), 14.0, 15.5);
-        assert_eq!(tight, Some(1.05));
-        assert_eq!(clamp_single_line_leading(None, 14.0, 15.5), None);
+        // Tight and normal leading must not be applied a second time either.
+        assert_eq!(
+            captured_single_line_leading(Some(1.3), 36.0, 54.0),
+            Some(1.5)
+        );
+        assert_eq!(
+            captured_single_line_leading(None, 14.0, 15.5),
+            Some(15.5 / 14.0)
+        );
         // Degenerate geometry never divides by zero.
-        assert_eq!(clamp_single_line_leading(Some(2.0), 0.0, 15.5), Some(2.0));
+        assert_eq!(
+            captured_single_line_leading(Some(2.0), 0.0, 15.5),
+            Some(2.0)
+        );
+        assert_eq!(captured_single_line_leading(None, 14.0, f64::NAN), None);
     }
 
     #[test]

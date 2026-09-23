@@ -141,6 +141,16 @@ impl WidgetHost {
                 Some(op_editor_core::ButtonPressTarget::TopBar(pressed));
             // Arms whose behaviour is identical on both hosts live in
             // the shared flow; only the platform ones fall through.
+            // IDS owns identity and room membership in managed web embeds;
+            // standalone/native OpenPencil keeps its own collaboration login.
+            if matches!(hit, TopBarHit::Collaboration | TopBarHit::Account)
+                && crate::platform_chat_bridge::open_team_collaboration()
+            {
+                self.editor_state.editor_ui.collab.panel.open = false;
+                self.editor_state.editor_ui.login_modal_open = false;
+                self.mark_dirty();
+                return Some(true);
+            }
             match press_flow::apply_shared_top_bar_hit(&mut self.editor_state, hit, self.now_ms) {
                 TopBarPress::Handled => {
                     self.mark_dirty();

@@ -61,7 +61,8 @@ impl ImageFillMode {
         match value {
             Some(jian_ops_schema::style::ImageFillMode::Fit) => Self::Fit,
             Some(jian_ops_schema::style::ImageFillMode::Crop) => Self::Crop,
-            Some(jian_ops_schema::style::ImageFillMode::Tile) => Self::Tile,
+            Some(jian_ops_schema::style::ImageFillMode::Tile)
+            | Some(jian_ops_schema::style::ImageFillMode::CssRepeat) => Self::Tile,
             Some(jian_ops_schema::style::ImageFillMode::Fill)
             | Some(jian_ops_schema::style::ImageFillMode::Stretch)
             | None => Self::Fill,

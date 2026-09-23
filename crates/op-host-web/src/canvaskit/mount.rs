@@ -54,6 +54,8 @@ pub(super) async fn mount_ck(canvas_id: String) -> Result<(), JsValue> {
     let search = window.location().search().unwrap_or_default();
     host.editor_state_mut().editor_ui.embed = op_editor_core::EmbedHost::from_query(&search);
     let credential_load = crate::web_settings::load_into(host.editor_state_mut());
+    // Keep the primary design conversation at the canvas's bottom-right.
+    host.editor_state_mut().chat.anchor = op_editor_core::ChatAnchor::BottomRight;
     // Managed embeds may require deterministic chrome language. Apply the URL
     // policy after persisted browser settings so an old saved locale cannot
     // override the embedding host on reload.
@@ -162,14 +164,15 @@ pub(super) async fn mount_ck(canvas_id: String) -> Result<(), JsValue> {
     // 1. Install the bridge listener + observer BEFORE any daemon request, so an
     //    Init / OpenDocument arriving during bootstrap is never missed.
     crate::vscode_bridge::install(&inner, sync_controller.clone());
-    // Prototype Studio owns durable shared chat and per-room Agent admission.
-    // Standalone/VS Code opens do not carry a Studio ticket and remain local.
-    crate::platform_chat_bridge::install(&inner);
+    crate::platform_selection_bridge::install(&inner);
+    crate::platform_font_bridge::install(&inner);
     // 2. Inside a webview iframe, await the host's Init (token) with a 2s
     //    fallback (proceed as a direct open on timeout). A standalone browser
     //    tab is a direct open and continues immediately.
     let is_iframe = crate::vscode_bridge::in_iframe(&window);
-    if is_iframe {
+    // Studio uses a Gateway cookie, not VS Code Init; awaiting it exposes
+    // painted controls for two seconds before their input listeners exist.
+    if is_iframe && !crate::platform_chat_bridge::studio_managed() {
         crate::vscode_bridge::await_init(&window, 2000).await;
     }
     // 3. Only now start the daemon-dependent services — in managed mode the
@@ -264,6 +267,13 @@ pub(super) async fn mount_ck(canvas_id: String) -> Result<(), JsValue> {
     let mut listeners: Vec<Listener> = Vec::new();
     let canvas_target: web_sys::EventTarget = canvas.clone().into();
     let win_target: web_sys::EventTarget = window.clone().into();
+    // The final async SVG decode may finish after the last scheduled paint.
+    add_listener::<web_sys::Event, _, _>(
+        &canvas_target,
+        "op-image-ready",
+        &mut listeners,
+        |_| crate::repaint_coalescer::request(),
+    )?;
 
     // Accessibility DOM mirror (#57): delegated `focus` / `click` on the
     // hidden mirror container map a focused/activated mirror node back to a
@@ -776,6 +786,10 @@ pub(super) async fn mount_ck(canvas_id: String) -> Result<(), JsValue> {
     }
 
     crate::dom_io::register_io_listeners(&inner, &canvas, &win_target, &mut listeners)?;
+
+    // Announce Studio chat-ready only after all input listeners are installed,
+    // so hydration cannot expose a chat that still loses its first click.
+    crate::platform_chat_bridge::install(&inner);
 
     // Retain the shell + its listeners for the page lifetime. (A future
     // WebShell-style handle can own these for explicit teardown; leaking keeps

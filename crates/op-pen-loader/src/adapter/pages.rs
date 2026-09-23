@@ -2,6 +2,7 @@
 //! the taffy layout pass that harvests computed rects.
 
 use super::*;
+use op_editor_core::PenNodeExt;
 
 /// Resolve one page into the paint payload used by the editor scene.
 ///
@@ -14,18 +15,25 @@ pub(crate) fn pen_roots_to_page_payload(
     roots: &[PenNode],
     page_idx: usize,
     preserve_authored_geometry: bool,
+    conversion: Option<&jian_ops_schema::conversion::ConversionSpec>,
 ) -> PagePayload {
     if preserve_authored_geometry {
-        build_page_preserving_geometry(id, name, roots)
+        build_page_preserving_geometry(id, name, roots, conversion)
     } else {
-        build_page(id, name, roots, page_idx)
+        build_page(id, name, roots, page_idx, conversion)
     }
 }
 
-pub(super) fn build_page(id: &str, name: &str, roots: &[PenNode], page_idx: usize) -> PagePayload {
+pub(super) fn build_page(
+    id: &str,
+    name: &str,
+    roots: &[PenNode],
+    page_idx: usize,
+    conversion: Option<&jian_ops_schema::conversion::ConversionSpec>,
+) -> PagePayload {
     let mut layout_rects: BTreeMap<String, [f32; 4]> = BTreeMap::new();
     for root in roots {
-        compute_layout(root, &mut layout_rects);
+        compute_layout(root, &mut layout_rects, conversion);
     }
     let _ = page_idx;
     let mut children: Vec<NodePayload> = roots
@@ -33,6 +41,7 @@ pub(super) fn build_page(id: &str, name: &str, roots: &[PenNode], page_idx: usiz
         .map(|n| node_to_payload(n, &layout_rects))
         .collect();
     mark_root_frame_clips(roots, &mut children);
+    mark_css_paint_origins(roots, &mut children, conversion);
     PagePayload {
         id: id.to_string(),
         name: name.to_string(),
@@ -40,14 +49,31 @@ pub(super) fn build_page(id: &str, name: &str, roots: &[PenNode], page_idx: usiz
     }
 }
 
+pub(super) fn mark_css_paint_origins(roots: &[PenNode], children: &mut [NodePayload], conversion: Option<&jian_ops_schema::conversion::ConversionSpec>) {
+    fn mark(node: &mut NodePayload, origin: [f32; 2]) {
+        // Transformed subtrees keep vector paint; CSS transform rasterization
+        // is a separate policy, not screen-space rounding of rotated bounds.
+        if node.rotation != 0.0 || node.flip_x || node.flip_y { return; }
+        node.css_paint_origin = Some(origin);
+        for child in &mut node.children { mark(child, origin); }
+    }
+    for (root, child) in roots.iter().zip(children) {
+        if uses_css_layout(root, conversion) {
+            mark(child, [child.x, child.y]);
+        }
+    }
+}
+
 pub(super) fn build_page_preserving_geometry(
     id: &str,
     name: &str,
     roots: &[PenNode],
+    conversion: Option<&jian_ops_schema::conversion::ConversionSpec>,
 ) -> PagePayload {
     let rects = crate::authored_geometry::rects_for_roots(roots);
     let mut children: Vec<NodePayload> = roots.iter().map(|n| node_to_payload(n, &rects)).collect();
     mark_root_frame_clips(roots, &mut children);
+    mark_css_paint_origins(roots, &mut children, conversion);
     PagePayload {
         id: id.to_string(),
         name: name.to_string(),
@@ -88,7 +114,11 @@ pub(super) fn mark_root_frame_clips(roots: &[PenNode], children: &mut [NodePaylo
 /// origin` stays exported for `op-host-native`'s Canvas Preview tap
 /// translation, which still needs the authored origin as a standalone
 /// value (not baked into a rect).
-pub(super) fn compute_layout(root: &PenNode, out: &mut BTreeMap<String, [f32; 4]>) {
+pub(super) fn compute_layout(
+    root: &PenNode,
+    out: &mut BTreeMap<String, [f32; 4]>,
+    conversion: Option<&jian_ops_schema::conversion::ConversionSpec>,
+) {
     let (root_w, root_h) = root_available_size(root);
     let mut tree = NodeTree::new();
     tree.insert_subtree(root.clone(), None);
@@ -106,6 +136,11 @@ pub(super) fn compute_layout(root: &PenNode, out: &mut BTreeMap<String, [f32; 4]
     let Some(root_id) = taffy_roots.first() else {
         return;
     };
+    // Only captured CSS roots opt in. Ordinary vector documents retain their
+    // existing layout; source layout coordinates stay distinct from paint.
+    if uses_css_layout(root, conversion) {
+        engine.preserve_subpixel_layout();
+    }
     if engine.compute(*root_id, (root_w, root_h)).is_err() {
         return;
     }
@@ -129,6 +164,24 @@ pub(super) fn compute_layout(root: &PenNode, out: &mut BTreeMap<String, [f32; 4]
         }
     }
     crate::layout_repair::repair_fit_content_layout(root, out);
+}
+
+/// Existing ledger fields survive older editor and native-server serializers.
+/// Only an explicit, versioned screen mapping enables CSS layout semantics.
+fn uses_css_layout(
+    root: &PenNode,
+    conversion: Option<&jian_ops_schema::conversion::ConversionSpec>,
+) -> bool {
+    conversion.is_some_and(|spec| {
+        spec.entries.iter().any(|entry| {
+            entry.kind == jian_ops_schema::conversion::ConversionKind::Screen
+                && entry.node_id.as_deref() == Some(root.base().id.as_str())
+                && entry
+                    .key
+                    .strip_prefix("html-snapshot:v1:")
+                    .is_some_and(|key| !key.is_empty())
+        })
+    })
 }
 
 fn layout_measure_backend() -> Rc<dyn MeasureBackend> {

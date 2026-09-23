@@ -115,9 +115,17 @@ impl ChatTranscriptSelection {
 #[derive(Debug, Clone)]
 pub struct ChatState {
     pub messages: Vec<ChatMessage>,
+    /// Parent-owned durable history paging; standalone chats leave this empty.
+    pub history_before: Option<u64>,
+    pub history_loading: bool,
+    pub history_error: bool,
+    pub pending_history: bool,
     /// Durable Platform thread id when this tab belongs to a managed Studio.
     /// Standalone OpenPencil tabs leave it unset.
     pub thread_id: Option<String>,
+    /// Locally requested thread not yet observed in a durable room snapshot.
+    /// Keep its draft during snapshots that raced ahead of the creation POST.
+    pub pending_thread_creation: bool,
     /// Short label shown in the floating chat panel header.
     pub title: String,
     /// Text input state for the chat textarea draft.
@@ -256,7 +264,12 @@ impl Default for ChatState {
     fn default() -> Self {
         Self {
             messages: Vec::new(),
+            history_before: None,
+            history_loading: false,
+            history_error: false,
+            pending_history: false,
             thread_id: None,
+            pending_thread_creation: false,
             title: DEFAULT_CHAT_TITLE.to_string(),
             input: TextInputState::default(),
             focused: false,

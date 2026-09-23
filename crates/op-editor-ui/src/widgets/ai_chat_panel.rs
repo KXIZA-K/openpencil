@@ -385,13 +385,21 @@ impl<'a> AIChatPlaceholder<'a> {
     }
 
     pub fn body_rect(&self, rect: Rect) -> Rect {
-        let body_top = rect.origin.y + HEADER_HEIGHT + 14.0; // gap before first bubble
+        let history_height = if self.history_button_rect(rect).is_some() { 28.0 } else { 0.0 };
+        let body_top = rect.origin.y + HEADER_HEIGHT + 14.0 + history_height;
         let body_bottom =
             rect.origin.y + rect.size.y - self.input_height_for_rect(rect) - PAD - 8.0;
         Rect {
             origin: Point2D::new(rect.origin.x + PAD, body_top),
             size: Point2D::new(rect.size.x - PAD * 2.0, (body_bottom - body_top).max(0.0)),
         }
+    }
+
+    pub(crate) fn history_button_rect(&self, rect: Rect) -> Option<Rect> {
+        self.state.history_before.map(|_| Rect {
+            origin: Point2D::new(rect.origin.x + PAD, rect.origin.y + HEADER_HEIGHT + 4.0),
+            size: Point2D::new((rect.size.x - PAD * 2.0).max(0.0), 26.0),
+        })
     }
 
     /// Maximum transcript scroll offset (px) for the panel laid out at

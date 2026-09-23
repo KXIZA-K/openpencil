@@ -15,6 +15,13 @@ mod render;
 mod scene;
 mod snapshot;
 mod viewer_host;
+// Compile the existing PreviewSession, not a second implementation. Its painter,
+// widget state and navigation remain shared with the native design preview.
+#[cfg(target_arch = "wasm32")]
+#[path = "../../op-host-native/src/preview/mod.rs"]
+pub mod preview;
+#[cfg(all(target_arch = "wasm32", feature = "canvaskit"))]
+mod playback;
 
 use op_editor_core::Viewport as DocViewport;
 use wasm_bindgen::prelude::*;

@@ -58,7 +58,20 @@
 //! `private_interfaces` on the `AppMode` type).
 
 mod app_mode;
+#[cfg(not(target_arch = "wasm32"))]
 mod auto_wire;
+// Browser Run receives explicit screen/interaction metadata with its revision.
+// Never pull the generation orchestrator into the playback bundle.
+#[cfg(target_arch = "wasm32")]
+mod auto_wire {
+    pub fn auto_wire_for_preview(
+        _: &jian_ops_schema::PenDocument,
+        _: usize,
+    ) -> Option<jian_ops_schema::PenDocument> {
+        None
+    }
+}
+mod binding_overlay;
 mod binding_sites;
 mod error;
 mod input;
@@ -107,19 +120,13 @@ use op_editor_ui::layout_scene::{LayoutScene, SceneNode};
 use op_editor_ui::widgets::{paint_scene_page, PaintCx};
 use op_editor_ui::{Color, Point2D, Rect, RenderBackend};
 
-/// One page-root's mapping between the design scene's coordinate space
-/// (root offset baked in) and the jian runtime's root-relative
-/// hit-test space. Used to translate a scene-space tap back into the
-/// space `Runtime::dispatch_pointer` expects.
+/// One page-root's scene bounds, used by screen presentation.
 ///
 /// Fields are `pub(in crate::preview)` so `app_mode::solve_roots` (which
 /// constructs these) can reach them from the child module.
 pub(in crate::preview) struct RootFrame {
     /// The root's bounds in SCENE space (authored origin + size).
     pub(in crate::preview) scene_rect: Rect,
-    /// The root's authored `(base.x, base.y)` — the delta between scene
-    /// space and the runtime's root-relative space.
-    pub(in crate::preview) offset: (f32, f32),
 }
 
 /// A live preview runtime built from a snapshot of the editor document.
@@ -164,6 +171,7 @@ pub struct PreviewSession {
     /// re-evaluated against the live state graph each overlay pass (see
     /// `apply_binding_sites`) so `set $app.*` writes become visible.
     binding_sites: Vec<BindingSite>,
+    binding_hidden_ids: std::collections::HashSet<String>,
     /// APP MODE state (routed multi-screen doc), or `None` for the
     /// classic single-page workbench preview. `pub(in crate::preview)`
     /// so `app_mode`'s `is_app_mode` can read it. See [`AppMode`].
@@ -202,6 +210,34 @@ fn widget_field_foreground(node: &SceneNode) -> Color {
 }
 
 impl PreviewSession {
+    /// Browser playback paints the exact authored scene used by the editor,
+    /// without changing frame-based artwork through widget promotion.
+    #[cfg(target_arch = "wasm32")]
+    pub fn use_authored_scene(&mut self, scene: LayoutScene) {
+        self.scene = scene;
+    }
+
+    /// Semantic state for the browser's accessibility/testing adapter. This is
+    /// ephemeral preview state, never written back to the design document.
+    #[cfg(target_arch = "wasm32")]
+    pub fn interaction_snapshot(&self) -> serde_json::Value {
+        fn walk(nodes: &[SceneNode], out: &mut Vec<serde_json::Value>) {
+            for node in nodes {
+                if let Some(widget) = &node.widget {
+                    out.push(serde_json::json!({ "id": node.id, "kind": widget.kind, "value": widget.value_str,
+                        "checked": widget.checked, "x": node.bounds.origin.x, "y": node.bounds.origin.y,
+                        "width": node.bounds.size.x, "height": node.bounds.size.y }));
+                }
+                walk(&node.children, out);
+            }
+        }
+        let mut out = Vec::new();
+        if let Some(page) = self.overlay_runtime_state(&self.scene).active_page() {
+            walk(&page.children, &mut out);
+        }
+        serde_json::json!(out)
+    }
+
     /// Build a preview runtime from the document's JSON. `promote=true`
     /// turns legacy role-frames into first-class widget nodes in-memory
     /// (the source doc is untouched). `canvas_size` is the editor canvas
@@ -443,6 +479,7 @@ impl PreviewSession {
             preserve_authored_geometry,
             warnings,
             binding_sites,
+            binding_hidden_ids: Default::default(),
             app,
             gesture_mapping: None,
             transition: None,
@@ -459,6 +496,7 @@ impl PreviewSession {
     /// Push the host clock so the runtime can drive caret blink etc.
     pub fn set_now_ms(&mut self, now_ms: u64) {
         self.runtime.set_now_ms(now_ms);
+        self.sync_binding_input();
         self.last_now_ms = now_ms;
     }
 
@@ -557,24 +595,6 @@ impl PreviewSession {
         self.apply_binding_sites(node);
         for child in node.children.iter_mut() {
             self.overlay_node(child);
-        }
-    }
-
-    /// Re-evaluate this node's compiled bindings against the live state
-    /// graph. Only `content` (scene text) lands today; other props are
-    /// skipped until the preview painter learns them. Linear scan over
-    /// the sites is fine at preview scale (a handful of bindings per
-    /// document); index by node id if profiles ever say otherwise.
-    fn apply_binding_sites(&self, node: &mut SceneNode) {
-        for site in self.binding_sites.iter().filter(|s| s.node_id == node.id) {
-            if site.prop != "content" {
-                continue;
-            }
-            let (value, _warnings) = site.expr.eval(&self.runtime.state, None, Some(&node.id));
-            node.text = Some(display_string(&value));
-            // Bound text is dynamic single-style content — styled runs
-            // resolved from the authored literal no longer apply.
-            node.text_runs.clear();
         }
     }
 

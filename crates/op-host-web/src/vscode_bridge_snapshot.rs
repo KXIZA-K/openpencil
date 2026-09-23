@@ -8,7 +8,7 @@
 
 use std::rc::Rc;
 
-use op_editor_core::web_sync::WebSyncClient;
+use op_editor_core::web_sync::{WebSyncAuthority, WebSyncClient};
 use op_editor_core::EditorState;
 use op_pen_loader::EditorMeta;
 
@@ -32,12 +32,21 @@ impl BridgeDocumentSnapshot {
         self.pair
     }
 
-    pub(super) fn push_body(&self, base_version: u64) -> String {
-        WebSyncClient::wrap_push_body_with_base_and_editor_meta(
+    pub(super) fn push_body_with_authority(&self, authority: &WebSyncAuthority) -> String {
+        WebSyncClient::wrap_push_with_authority(
+            self.document_json.as_ref(), authority,
+            self.editor_meta.active_page_index, self.editor_meta.preserve_authored_geometry,
+        )
+    }
+
+    /// Ordinary Save must retain the authority that supplied the local draft.
+    /// Probing a newer server version here would silently turn Save into overwrite.
+    pub(super) fn push_body_for_client(&self, client: &WebSyncClient) -> String {
+        client.wrap_push_for_authority(
             self.document_json.as_ref(),
-            base_version,
             self.editor_meta.active_page_index,
             self.editor_meta.preserve_authored_geometry,
+            false,
         )
     }
 
@@ -61,6 +70,24 @@ impl BridgeDocumentSnapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn save_retains_applied_authority_after_observing_a_restart() {
+        let mut client = WebSyncClient::new();
+        let response = r#"{"generation":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","version":7,"document":{"version":"1.0.0","children":[]}}"#;
+        assert!(client.sync(response, |_, _| true).unwrap());
+        assert!(client.wants_version_response(
+            r#"{"generation":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","version":1}"#
+        ));
+        let doc = op_pen_loader::load_canonical(
+            r#"{"version":"1.0.0","children":[]}"#,
+        ).unwrap().value;
+        let snapshot = BridgeDocumentSnapshot::capture(&EditorState::from_document(doc)).unwrap();
+        let body: serde_json::Value = serde_json::from_str(&snapshot.push_body_for_client(&client)).unwrap();
+        assert_eq!(body["baseGeneration"], "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        assert_eq!(body["baseVersion"], 7);
+        assert!(body["document"].is_object());
+    }
 
     #[test]
     fn sync_baseline_uses_typed_bytes_while_disk_snapshot_embeds_metadata() {

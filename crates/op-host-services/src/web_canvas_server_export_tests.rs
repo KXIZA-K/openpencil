@@ -365,13 +365,21 @@ fn get_version_is_a_cheap_change_probe() {
     let mut s = fresh_state();
     let r = handle_web_canvas_request("GET", "/api/mcp/version", "", &mut s);
     assert!(r.status.starts_with("200"));
-    // `collabSeq` rides along so one poll covers both document and
-    // collaboration changes; `version` keeps its exact spelling and position.
-    assert_eq!(r.body, r#"{"version":0,"collabSeq":0}"#);
+    // One small probe covers document/collaboration changes and the process
+    // generation fence. It must not include the document payload.
+    let generation = s.generation.clone();
+    assert!(!generation.is_empty());
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&r.body).unwrap(),
+        serde_json::json!({"version": 0, "generation": generation, "collabSeq": 0})
+    );
     // A document mutation bumps the probed version.
     let _ = handle_web_canvas_request("POST", "/api/mcp/document", SYNC_BODY, &mut s);
     let r2 = handle_web_canvas_request("GET", "/api/mcp/version", "", &mut s);
-    assert_eq!(r2.body, r#"{"version":1,"collabSeq":0}"#);
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&r2.body).unwrap(),
+        serde_json::json!({"version": 1, "generation": generation, "collabSeq": 0})
+    );
 }
 
 #[test]

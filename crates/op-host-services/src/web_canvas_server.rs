@@ -85,6 +85,8 @@ pub struct WebCanvasState {
     /// Monotonic sync version, bumped on every document mutation — the key the
     /// browser shell uses to detect that the live document changed.
     pub(crate) version: u64,
+    /// Unique authority incarnation; counters may repeat after process restart.
+    pub(crate) generation: String,
     /// The bound port, reported by `GET /api/mcp/server` (TS `server.get.ts`
     /// parity).
     pub(crate) port: u16,
@@ -154,11 +156,15 @@ impl WebCanvasState {
         if !credential_persistence.server_persistence() {
             let _ = crate::web_credentials::remove_browser_owned_credentials(&mut editor);
         }
+        let mut generation_bytes = [0u8; 16];
+        getrandom::fill(&mut generation_bytes).expect("OS randomness is required for document generation fencing");
+        let generation = generation_bytes.iter().map(|byte| format!("{byte:02x}")).collect();
         Self {
             editor,
             credential_persistence,
             current_path,
             version: 0,
+            generation,
             port,
             managed_token: None,
             allow_origins: Vec::new(),
@@ -261,6 +267,14 @@ impl WebCanvasState {
     /// was taken. What remains is the part that genuinely needs exclusivity:
     /// re-checking `baseVersion` against the live counter, and installing.
     ///
+    pub(crate) fn matches_write_authority(&self, generation: Option<&str>, version: Option<u64>) -> bool {
+        if self.managed_token.is_some() && (generation.is_none() || version.is_none()) {
+            return false;
+        }
+        generation.is_none_or(|expected| expected == self.generation)
+            && version.is_none_or(|expected| expected == self.version)
+    }
+
     /// The `baseVersion` check MUST be here rather than at parse time: the
     /// version can move between parse and install, and checking it outside the
     /// lock would be a race that silently clobbers a concurrent write.
@@ -270,13 +284,8 @@ impl WebCanvasState {
         base_version_override: Option<u64>,
     ) -> Result<PushOutcome> {
         let base_version = base_version_override.or(push.base_version);
-        if let Some(expected) = base_version {
-            if expected != self.version {
-                return Ok(PushOutcome {
-                    applied: false,
-                    current_version: self.version,
-                });
-            }
+        if !self.matches_write_authority(push.base_generation.as_deref(), base_version) {
+            return Ok(PushOutcome { applied: false, current_version: self.version });
         }
         // The gateway runs BEFORE the document is taken out of `push`, so a
         // refusal leaves `push` still owning it — and its `Drop` releases the
@@ -483,8 +492,9 @@ pub fn handle_web_canvas_request(
             Ok(doc_json) => WebReply {
                 status: "200 OK",
                 body: format!(
-                    r#"{{"document":{doc_json},"version":{},"activePageIndex":{},"preserveAuthoredGeometry":{}}}"#,
+                    r#"{{"document":{doc_json},"version":{},"generation":"{}","activePageIndex":{},"preserveAuthoredGeometry":{}}}"#,
                     state.version,
+                    state.generation,
                     state.editor.ui.active_page_index,
                     state.editor.editor_ui.preserve_authored_geometry
                 ),
@@ -508,6 +518,7 @@ pub fn handle_web_canvas_request(
                     "ok": false,
                     "error": "version-conflict",
                     "version": outcome.current_version,
+                    "generation": state.generation,
                 })
                 .to_string(),
             },
@@ -520,8 +531,9 @@ pub fn handle_web_canvas_request(
             // is unaffected.
             status: "200 OK",
             body: format!(
-                r#"{{"version":{},"collabSeq":{}}}"#,
+                r#"{{"version":{},"generation":"{}","collabSeq":{}}}"#,
                 state.version,
+                state.generation,
                 state.collab.seq()
             ),
         },

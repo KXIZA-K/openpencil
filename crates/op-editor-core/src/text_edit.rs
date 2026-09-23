@@ -38,6 +38,10 @@ use jian_ops_schema::node::{PenNode, TextContent};
 /// than this opens a fresh undo entry.
 const TEXT_COALESCE_MS: u64 = 500;
 
+#[cfg(test)]
+#[path = "text_edit_revision_tests.rs"]
+mod revision_tests;
+
 impl EditorState {
     /// Enter inline text-edit mode on `id`. `false` when the node
     /// isn't a `Text` node or doesn't exist. The caret seeds at the
@@ -389,6 +393,10 @@ impl EditorState {
             let snap = self.snapshot_for_history();
             self.ui.pending_text_edit_history = None;
             self.history_push_past(snap);
+        } else {
+            // Undo coalescing must not coalesce content identity: a save or
+            // sync acknowledgement can land between any two characters.
+            self.mark_document_changed();
         }
     }
 }

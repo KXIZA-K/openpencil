@@ -29,6 +29,8 @@ pub enum AIChatHit {
     ToggleMaximize,
     /// Click on the plus affordance in the header.
     NewChat,
+    /// Fetch an earlier page for the current managed conversation.
+    LoadHistory,
     /// Click on the active conversation selector in the header.
     ToggleThreadPicker,
     /// Click on the model chip (bottom-left of the input toolbar) —

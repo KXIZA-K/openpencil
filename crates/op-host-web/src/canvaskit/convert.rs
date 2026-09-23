@@ -5,27 +5,19 @@
 
 use op_editor_ui::{Color, ImageBlendMode, ImageDrawMode};
 
-/// Minimum backing-store scale used by the web host.
-///
-/// Some embedded browsers report a DPR of 1 even on a HiDPI display. Text in
-/// the web host is rasterized through a browser canvas before CanvasKit draws
-/// it, so a 1x backing store leaves small glyphs visibly softer than native.
+/// Bounded backing-store floor while zoomed out.
 const MIN_WEB_RENDER_DPR: f32 = 2.0;
 
-/// Use the browser's full device-pixel ratio for the CanvasKit backing store,
-/// with a 2x quality floor for browsers and webviews that report DPR 1.
-///
-/// Capping the surface by viewport area made large HiDPI windows render below
-/// their native resolution and left CSS to upscale the result. That saved GPU
-/// memory, but it also softened every glyph and one-pixel chrome edge. Native
-/// hosts render at the display scale, so the web host must do the same.
-pub(super) fn display_dpr(native_dpr: f32) -> f32 {
-    (if native_dpr.is_finite() {
-        native_dpr
-    } else {
-        MIN_WEB_RENDER_DPR
-    })
-    .max(MIN_WEB_RENDER_DPR)
+/// Shared editor/player resolution policy: native DPR at zoom >= 1, and a
+/// bounded 2x quality floor below it. Never render below the physical display.
+pub fn display_dpr(native_dpr: f32, zoom: f32) -> f32 {
+    if !native_dpr.is_finite() || native_dpr < 1.0 || !zoom.is_finite() || zoom <= 0.0 {
+        return MIN_WEB_RENDER_DPR;
+    }
+    // At native-size or larger, avoid compositor downsampling of browser text
+    // masks. Below 100%, preserve the measured 2x zoom-out quality floor.
+    // Never allocate a backing store proportional to 1/zoom.
+    native_dpr.max(if zoom < 1.0 { MIN_WEB_RENDER_DPR } else { 1.0 })
 }
 
 pub(super) fn flatten_gradient_stops(stops: &[(f32, Color)]) -> Vec<f32> {
@@ -51,6 +43,7 @@ pub(super) fn image_draw_mode_code(mode: ImageDrawMode) -> u8 {
         ImageDrawMode::Crop => 2,
         ImageDrawMode::Tile => 3,
         ImageDrawMode::Stretch => 4,
+        ImageDrawMode::CssRepeat => 5,
     }
 }
 

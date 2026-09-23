@@ -9,9 +9,8 @@
 //! bullets with a hanging indent so wrapped lines line up under the text rather
 //! than under the dot.
 //!
-//! Deliberately a SUBSET of markdown: `**strong**`, `` `code` ``, and `- `/`• `
-//! bullets. Anything else stays literal — a half-supported syntax that silently
-//! eats characters is worse than none.
+//! CommonMark is parsed into text-only widget runs. No HTML is executed and
+//! links/images never fetch resources while a transcript is being rendered.
 
 use crate::theme::Theme;
 use crate::widgets::PaintCx;
@@ -19,6 +18,11 @@ use crate::{Point2D, Rect, TextLayout};
 
 use super::ai_chat_transcript::{BODY_FONT, CHAR_UNIT_PX, LINE_H};
 use super::ai_chat_transcript_text::char_display_units;
+#[path = "ai_chat_markdown.rs"]
+mod markdown;
+pub(crate) use markdown::layout_rich;
+#[cfg(test)]
+pub(crate) use markdown::parse_spans;
 
 /// Left inset of a bullet's text — the dot sits in the gutter and wrapped
 /// lines align under the text, not under the dot.
@@ -31,6 +35,9 @@ pub(crate) enum SpanStyle {
     Body,
     Strong,
     Code,
+    Emphasis,
+    StrongEmphasis,
+    Heading,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -46,97 +53,12 @@ pub(crate) struct RichLine {
     pub inset: f32,
     /// Paint a bullet dot in this line's gutter (the first line of a bullet).
     pub bullet: bool,
-}
-
-/// Split `text` into markdown spans. Unclosed markers stay literal.
-pub(crate) fn parse_spans(text: &str) -> Vec<Span> {
-    let mut spans = Vec::new();
-    let mut buffer = String::new();
-    let mut rest = text;
-    while !rest.is_empty() {
-        let (marker, style) = if rest.starts_with("**") {
-            ("**", SpanStyle::Strong)
-        } else if rest.starts_with('`') {
-            ("`", SpanStyle::Code)
-        } else {
-            let take = rest.find(['*', '`']).unwrap_or(rest.len()).max(1);
-            let (head, tail) = rest.split_at(char_boundary(rest, take));
-            buffer.push_str(head);
-            rest = tail;
-            continue;
-        };
-        let body = &rest[marker.len()..];
-        let Some(end) = body.find(marker) else {
-            // Unclosed — the marker is just a character.
-            buffer.push_str(&rest[..marker.len()]);
-            rest = &rest[marker.len()..];
-            continue;
-        };
-        if !buffer.is_empty() {
-            spans.push(Span {
-                text: std::mem::take(&mut buffer),
-                style: SpanStyle::Body,
-            });
-        }
-        spans.push(Span {
-            text: body[..end].to_string(),
-            style,
-        });
-        rest = &body[end + marker.len()..];
-    }
-    if !buffer.is_empty() {
-        spans.push(Span {
-            text: buffer,
-            style: SpanStyle::Body,
-        });
-    }
-    spans
-}
-
-fn char_boundary(s: &str, mut at: usize) -> usize {
-    at = at.min(s.len());
-    while at < s.len() && !s.is_char_boundary(at) {
-        at += 1;
-    }
-    at
-}
-
-/// Lay `text` out as rich lines within `budget` display units.
-pub(crate) fn layout_rich(text: &str, budget: u32) -> Vec<RichLine> {
-    let mut lines = Vec::new();
-    for raw in text.lines() {
-        let trimmed = raw.trim_start();
-        let (body, bullet) = match trimmed
-            .strip_prefix("- ")
-            .or_else(|| trimmed.strip_prefix("• "))
-        {
-            Some(rest) => (rest, true),
-            None => (trimmed, false),
-        };
-        if body.is_empty() {
-            lines.push(RichLine {
-                spans: Vec::new(),
-                inset: 0.0,
-                bullet: false,
-            });
-            continue;
-        }
-        let inset = if bullet { BULLET_INDENT } else { 0.0 };
-        let line_budget = budget.saturating_sub((inset / CHAR_UNIT_PX) as u32).max(8);
-        let wrapped = wrap_spans(&parse_spans(body), line_budget);
-        for (index, spans) in wrapped.into_iter().enumerate() {
-            lines.push(RichLine {
-                spans,
-                inset,
-                bullet: bullet && index == 0,
-            });
-        }
-    }
-    lines
+    pub code_block_width: f32,
+    pub quote: bool,
 }
 
 /// Greedy word wrap that carries the style across the break.
-fn wrap_spans(spans: &[Span], budget: u32) -> Vec<Vec<Span>> {
+pub(super) fn wrap_spans(spans: &[Span], budget: u32) -> Vec<Vec<Span>> {
     let mut lines: Vec<Vec<Span>> = Vec::new();
     let mut current: Vec<Span> = Vec::new();
     let mut used = 0u32;
@@ -211,6 +133,23 @@ pub(crate) fn rich_height(lines: &[RichLine]) -> f32 {
 pub(crate) fn paint_rich(cx: &mut PaintCx<'_>, theme: &Theme, lines: &[RichLine], origin: Point2D) {
     let mut baseline = origin.y + 11.0;
     for line in lines {
+        if line.code_block_width > 0.0 {
+            cx.backend.fill_rect(
+                Rect::xywh(
+                    origin.x + line.inset,
+                    baseline - 11.0,
+                    line.code_block_width,
+                    LINE_H,
+                ),
+                theme.muted,
+            );
+        }
+        if line.quote {
+            cx.backend.fill_rect(
+                Rect::xywh(origin.x + 2.0, baseline - 11.0, 2.0, LINE_H),
+                theme.muted_foreground,
+            );
+        }
         if line.bullet {
             let r = 1.6;
             cx.backend.fill_oval(
@@ -224,6 +163,19 @@ pub(crate) fn paint_rich(cx: &mut PaintCx<'_>, theme: &Theme, lines: &[RichLine]
                 SpanStyle::Body => (theme.muted_foreground, 400),
                 SpanStyle::Strong => (theme.foreground, 700),
                 SpanStyle::Code => (theme.foreground, 400),
+                SpanStyle::Emphasis => (theme.muted_foreground, 400),
+                SpanStyle::StrongEmphasis | SpanStyle::Heading => (theme.foreground, 700),
+            };
+            let italic = matches!(span.style, SpanStyle::Emphasis | SpanStyle::StrongEmphasis);
+            let font_size = if span.style == SpanStyle::Heading {
+                BODY_FONT + 2.0
+            } else {
+                BODY_FONT
+            };
+            let family = if span.style == SpanStyle::Code {
+                "monospace"
+            } else {
+                "system-ui"
             };
             // Advance by the REAL glyph width, not the wrap estimate: paint
             // used the same 6.6px-per-unit budget the wrapper does, so every
@@ -233,13 +185,13 @@ pub(crate) fn paint_rich(cx: &mut PaintCx<'_>, theme: &Theme, lines: &[RichLine]
             // be backend-free and deterministic); only paint measures.
             let measured = cx
                 .backend
-                .measure_text_weighted(&span.text, BODY_FONT, weight);
+                .measure_text_family_styled(&span.text, font_size, family, weight, italic);
             let width = if measured > 0.0 {
                 measured
             } else {
                 span.text.chars().map(char_display_units).sum::<u32>() as f32 * CHAR_UNIT_PX
             };
-            if span.style == SpanStyle::Code {
+            if span.style == SpanStyle::Code && line.code_block_width == 0.0 {
                 cx.backend.fill_round_rect(
                     Rect::xywh(
                         x - CODE_PAD_X,
@@ -253,12 +205,13 @@ pub(crate) fn paint_rich(cx: &mut PaintCx<'_>, theme: &Theme, lines: &[RichLine]
             }
             let layout = TextLayout::single_run(
                 &span.text,
-                "system-ui",
-                BODY_FONT,
+                family,
+                font_size,
                 color.to_jian(),
                 Point2D::new(0.0, 0.0),
             )
-            .with_font_weight(weight);
+            .with_font_weight(weight)
+            .with_italic(italic);
             cx.backend.draw_text(&layout, Point2D::new(x, baseline));
             x += width;
         }

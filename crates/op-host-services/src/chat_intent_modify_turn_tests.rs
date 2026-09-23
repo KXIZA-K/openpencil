@@ -135,10 +135,10 @@ fn retry_test_request() -> ChatRequest {
 
 fn expected_retry_request(mut request: ChatRequest) -> ChatRequest {
     request.system_prompt.push_str(
-        "\n\nCRITICAL: Respond with ONLY I(...) JavaScript statements -- never prose, explanations, or numbered/bulleted lists. If you truly cannot make the change, return an empty program.",
+        "\n\nCRITICAL: Respond with ONLY a compact JSON array of update/move/delete operations for existing nodes, or I(...) JavaScript statements when new nodes are needed. Never mix formats or return prose, explanations, or numbered/bulleted lists. If you truly cannot make the change, return an empty program.",
     );
     request.user_message.push_str(
-        "\n\nRETRY FEEDBACK:\nThe previous response produced no applicable edit. Rewrite the requested modification as valid I(parent, node) JavaScript.\nParser feedback: response was not valid modification JavaScript; response was not valid node JSON",
+        "\n\nRETRY FEEDBACK:\nThe previous response produced no applicable edit. Rewrite it as compact JSON update/move/delete operations for existing nodes, or valid I(parent, node) JavaScript for new nodes.\nParser feedback: response was not valid modification JavaScript; response was not valid node JSON",
     );
     request
 }
@@ -360,9 +360,11 @@ fn run_modify_turn_does_not_retry_provider_errors() {
 
     assert_eq!(provider.requests(), vec![request]);
     let deltas = drain_chat(&chat_rx);
-    assert!(deltas
-        .iter()
-        .any(|delta| matches!(delta, ChatDelta::Error(message) if message == "rate limited")));
+    assert!(
+        deltas
+            .iter()
+            .any(|delta| matches!(delta, ChatDelta::Error(message) if message == "rate limited"))
+    );
 }
 
 #[test]
@@ -413,9 +415,11 @@ fn run_modify_turn_script_response_does_not_retry() {
     assert_eq!(requests[0], request);
     assert_eq!(nodes[0].1["id"], serde_json::json!("hero"));
     assert_eq!(text_delta_count(&deltas, MODIFY_STEP), 1);
-    assert!(deltas
-        .iter()
-        .any(|d| matches!(d, ChatDelta::TextDelta(s) if s.contains("<!-- APPLIED -->"))));
+    assert!(
+        deltas
+            .iter()
+            .any(|d| matches!(d, ChatDelta::TextDelta(s) if s.contains("<!-- APPLIED -->")))
+    );
     let doc = serde_json::to_string(&state.doc).unwrap();
     assert!(doc.contains("Hero First Attempt"));
     assert!(doc.contains("First Attempt Label"));

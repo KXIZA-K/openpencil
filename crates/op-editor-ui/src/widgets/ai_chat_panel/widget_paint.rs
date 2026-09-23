@@ -140,6 +140,17 @@ impl<'a> Widget for AIChatPlaceholder<'a> {
         );
 
         // Body — either messages or examples.
+        if let Some(button) = self.history_button_rect(rect) {
+            let key = if self.state.history_loading { "ai.history.loading" }
+                else if self.state.history_error { "ai.history.retry" }
+                else { "ai.history.older" };
+            let label = op_i18n::translate(self.locale, key);
+            cx.backend.fill_round_rect(button, 6.0, self.theme.secondary);
+            let layout = crate::TextLayout::single_run(
+                label, "system-ui", 11.0, self.theme.muted_foreground.to_jian(), Point2D::new(0.0, 0.0),
+            );
+            cx.backend.draw_text(&layout, Point2D::new(button.origin.x + 8.0, button.origin.y + 17.0));
+        }
         if self.state.messages.is_empty() {
             paint_examples(
                 cx,

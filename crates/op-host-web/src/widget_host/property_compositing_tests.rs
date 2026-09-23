@@ -178,13 +178,16 @@ fn web_image_fill_popover_owns_status_bar_overlap() {
     host.editor_state.editor_ui.image_fill_popover_open = true;
 
     let panel = op_editor_ui::widgets::PropertyPanel::for_selection(&host.editor_state).unwrap();
-    let property_rect = property_rect(&host);
-    let status_rect = host.status_bar_rect(VIEWPORT_W, VIEWPORT_H).unwrap();
+    // At a narrow viewport the left-docked zoom still overlaps this popover.
+    let viewport_w = 800.0;
+    let mut property_rect = property_rect(&host);
+    property_rect.origin.x = viewport_w - property_rect.size.x;
+    let status_rect = host.status_bar_rect(viewport_w, VIEWPORT_H).unwrap();
     let status = op_editor_ui::widgets::StatusBar::for_editor(&host.editor_state);
     let point = find_status_bar_popover_overlap(&panel, property_rect, &status, status_rect);
     let zoom_before = host.editor_state.viewport.zoom;
 
-    assert!(host.apply_press(point.x, point.y, VIEWPORT_W, VIEWPORT_H));
+    assert!(host.apply_press(point.x, point.y, viewport_w, VIEWPORT_H));
     assert!(host.editor_state.editor_ui.image_fill_popover_open);
     assert_eq!(host.editor_state.viewport.zoom, zoom_before);
     assert!(!matches!(

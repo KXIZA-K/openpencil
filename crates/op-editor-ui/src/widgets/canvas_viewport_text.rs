@@ -336,6 +336,7 @@ pub(crate) fn paint_text_node(
             return;
         }
     }
+    cx.backend.set_text_grayscale(paint_node.text_grayscale);
     let family = if paint_node.font_family.trim().is_empty() {
         "system-ui"
     } else {
@@ -426,6 +427,9 @@ pub(crate) fn paint_text_node(
                     0.0
                 };
             let baseline_y = first_baseline_y + idx as f32 * layout.line_h;
+            let baseline_y = paint_node.css_paint_origin.map_or(baseline_y, |origin| {
+                origin.y + (baseline_y - origin.y).round()
+            });
             let mut x = x0;
             for_each_slice_range(
                 &paint_node.text_runs,
@@ -469,6 +473,7 @@ pub(crate) fn paint_text_node(
             );
         }
     }
+    cx.backend.set_text_grayscale(false);
     // Caret while editing — at the real caret offset (hidden while a
     // selection is active, textarea-style).
     if let Some(c) = editing {

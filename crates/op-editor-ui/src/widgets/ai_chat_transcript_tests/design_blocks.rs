@@ -6,6 +6,45 @@
 use super::*;
 
 #[test]
+fn historical_applied_edit_protocol_is_folded_without_changing_history() {
+    let code = r#"[{"op":"update","id":"title","data":{"content":"สวัสดี"}},{"op":"delete","id":"sidebar"}]"#;
+    for payload in [code.to_string(), format!("```json\n{code}\n```")] {
+        let original = format!("<step title=\"Checking guidelines\">Working</step>\n{payload}\n<!-- APPLIED -->");
+        let mut message = ChatMessage::assistant(&original);
+        let items = build_transcript(std::slice::from_ref(&message), body(), op_editor_core::Locale::EnUs);
+        assert_eq!(message.content, original);
+        assert_eq!(items[0].design_blocks.len(), 1);
+        let block = &items[0].design_blocks[0];
+        assert!(block.applied && !block.expanded && block.apply.is_none());
+        assert_eq!(block.element_count, 2);
+        assert_eq!(block.code, code);
+        message.design_block_expanded_overrides = vec![Some(true)];
+        let expanded = build_transcript(&[message], body(), op_editor_core::Locale::EnUs);
+        assert!(expanded[0].design_blocks[0].expanded);
+        assert!(expanded[0].design_blocks[0].apply.is_none());
+        assert!(expanded[0].design_blocks[0].code_lines.join("\n").contains("สวัสดี"));
+    }
+}
+
+#[test]
+fn historical_edit_folding_does_not_hide_unacknowledged_or_ordinary_json() {
+    for content in [
+        r#"[{"op":"update","id":"title","data":{"content":"Example"}}]"#,
+        "[{\"op\":\"query\",\"id\":\"example\"}]\n<!-- APPLIED -->",
+        "[{\"type\":\"audit\",\"id\":\"example\"}]\n<!-- APPLIED -->",
+        "[{\"op\":\"update\",\"id\":\"title\",\"data\":\n<!-- APPLIED -->",
+    ] {
+        let message = ChatMessage::assistant(content);
+        let items = build_transcript(&[message], body(), op_editor_core::Locale::EnUs);
+        assert!(items[0].design_blocks.is_empty(), "{content}");
+        assert!(items[0].bubble.as_ref().is_some_and(|b| !b.lines.is_empty()));
+    }
+    let message = ChatMessage::user("[{\"op\":\"delete\",\"id\":\"example\"}]\n<!-- APPLIED -->");
+    let items = build_transcript(&[message], body(), op_editor_core::Locale::EnUs);
+    assert!(items[0].design_blocks.is_empty());
+}
+
+#[test]
 fn assistant_design_json_code_fence_renders_compact_design_block() {
     let message = ChatMessage::assistant(
         r#"Here is the design:

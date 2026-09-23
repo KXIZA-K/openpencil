@@ -12,11 +12,11 @@ use crate::theme::Theme;
 // growth. Owned by the panel so its layout constants stay in one table.
 use crate::widgets::ai_chat_panel::INPUT_AREA_HEIGHT;
 use crate::widgets::text_input_backend::BaselineAdjustingBackend;
-use crate::widgets::{text_metrics, PaintCx};
+use crate::widgets::{PaintCx, text_metrics};
 use crate::{Color, Point2D, Rect, RenderBackend, TextLayout};
-use jian_core::text_input::{prev_char_boundary, TextInputState};
-use jian_widgets::components::text_area::{TextArea, TextLine};
+use jian_core::text_input::{TextInputState, prev_char_boundary};
 use jian_widgets::Tokens;
+use jian_widgets::components::text_area::{TextArea, TextLine};
 use op_editor_core::chat::ChatState;
 
 /// Family the jian `TextArea` draws its runs in — measurement must name it.
@@ -118,7 +118,16 @@ pub(crate) fn input_text_view(
     let band_top = input_rect.origin.y + ((input_area_h - band_h) / 2.0).max(0.0);
     let text_rect = Rect {
         origin: Point2D::new(input_rect.origin.x, band_top - TEXT_AREA_PAD_Y - scroll),
-        size: input_rect.size,
+        // TextArea adds its own clip. After translating the whole block for
+        // scrolling, a viewport-sized inner clip would hide the final rows
+        // (or the entire draft). Only clip_rect owns the visible viewport.
+        size: Point2D::new(
+            input_rect.size.x,
+            input_rect
+                .size
+                .y
+                .max(lines.len() as f32 * INPUT_LINE_H + TEXT_AREA_PAD_Y * 2.0),
+        ),
     };
     // Nothing overflows: keep the historical full-rect clip so a tall
     // single-row area can't shave a descender. Once rows are hidden the

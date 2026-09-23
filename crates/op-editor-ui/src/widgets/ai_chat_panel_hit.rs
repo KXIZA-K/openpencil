@@ -103,6 +103,9 @@ impl<'a> AIChatPlaceholder<'a> {
         if self.state.is_minimized() {
             return Some(AIChatHit::ToggleCollapse);
         }
+        if self.history_button_rect(rect).is_some_and(|button| button.contains(point)) {
+            return Some(if self.state.history_loading { AIChatHit::Inside } else { AIChatHit::LoadHistory });
+        }
         let can_use_model = !self.state.available_models.is_empty();
         // Expanded: chevron + "New Chat" title group toggles collapse.
         if (self.expanded_header_title_rect(rect)).contains(point) {

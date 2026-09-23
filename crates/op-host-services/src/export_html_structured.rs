@@ -295,7 +295,7 @@ fn image_unexpressible(n: &SceneNode, src: &str) -> Option<&'static str> {
         // painter's colour matrix; CSS filters are not the same curves.
         return Some("image colour adjustments");
     }
-    if n.image_fit == SceneImageFit::Tile && n.image_original_size.is_none() {
+    if matches!(n.image_fit, SceneImageFit::Tile | SceneImageFit::CssRepeat) && n.image_original_size.is_none() {
         // Without the source dimensions the repeat frequency would be
         // invented, and a wrong tile size is a visibly wrong texture.
         return Some("tiled image without source dimensions");

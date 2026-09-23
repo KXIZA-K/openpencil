@@ -240,6 +240,24 @@ pub(super) fn tmp_export_path(ext: &str) -> PathBuf {
 }
 
 pub(super) fn save_current_file(body: &str, state: &mut WebCanvasState) -> WebReply {
+    // This route also replaces the live editor. Check before touching disk,
+    // under the same exclusive state access as ordinary document pushes.
+    let envelope = match crate::mcp_serve::parse_borrowed_document_envelope(body) {
+        Ok(envelope) => envelope,
+        Err(error) => return WebReply {
+            status: "400 Bad Request",
+            body: crate::mcp_serve::rest_error_body(&format!("save failed: {error}")),
+        },
+    };
+    if !state.matches_write_authority(envelope.base_generation.as_deref(), envelope.base_version) {
+        return WebReply {
+            status: "409 Conflict",
+            body: serde_json::json!({
+                "ok": false, "error": "version-conflict",
+                "version": state.version, "generation": state.generation,
+            }).to_string(),
+        };
+    }
     let Some(path) = state.current_path.clone() else {
         return WebReply {
             status: "400 Bad Request",
@@ -259,6 +277,7 @@ pub(super) fn save_current_file(body: &str, state: &mut WebCanvasState) -> WebRe
                 body: serde_json::json!({
                     "ok": true,
                     "version": state.version,
+                    "generation": state.generation,
                     "fileName": file_name,
                 })
                 .to_string(),

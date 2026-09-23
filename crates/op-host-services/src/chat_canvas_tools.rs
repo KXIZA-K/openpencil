@@ -242,6 +242,9 @@ pub fn apply_design_modification(
     nodes: &[DesignModificationOp],
     target_frame_ids: &[String],
 ) -> (usize, bool) {
+    if crate::chat_interaction_validation::validate_modifications(nodes).is_err() {
+        return (0, false);
+    }
     if !valid_modify_scope(state, target_frame_ids) {
         return (0, false);
     }
@@ -256,6 +259,19 @@ pub fn apply_design_modification(
             }
             match node.get("op").and_then(|v| v.as_str()) {
                 Some("delete") => true,
+                Some("move") => {
+                    node.get("parent")
+                        .and_then(|v| v.as_str())
+                        .is_some_and(|parent| {
+                            node_is_in_modify_scope(state, target_frame_ids, parent)
+                        })
+                        && node.get("index").is_none_or(|index| {
+                            index
+                                .as_u64()
+                                .and_then(|n| usize::try_from(n).ok())
+                                .is_some()
+                        })
+                }
                 Some("update") => {
                     node.get("data")
                         .and_then(|v| v.as_object())
@@ -275,12 +291,20 @@ pub fn apply_design_modification(
         let before = state.clone();
         let mut changed = false;
         for (_, node) in nodes {
-            let tool = if node["op"] == "delete" {
-                "delete_node"
-            } else {
-                "update_node"
+            let (tool, mut args) = match node["op"].as_str() {
+                Some("delete") => ("delete_node", serde_json::json!({"nodeId":node["id"]})),
+                Some("move") => (
+                    "move_node",
+                    serde_json::json!({"nodeId":node["id"], "parent":node["parent"]}),
+                ),
+                _ => (
+                    "update_node",
+                    serde_json::json!({"nodeId":node["id"], "data":node["data"]}),
+                ),
             };
-            let args = serde_json::json!({"nodeId":node["id"], "data":node.get("data")});
+            if let Some(index) = node.get("index").filter(|_| tool == "move_node") {
+                args["index"] = serde_json::Value::String(index.to_string());
+            }
             let (result, mutated) = execute_chat_tool(state, tool, &args.to_string());
             if result.is_error {
                 *state = before;

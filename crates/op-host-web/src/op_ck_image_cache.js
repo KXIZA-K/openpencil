@@ -88,7 +88,7 @@ const SVG_RASTER_MAX_EDGE = 2048;
 const SVG_RASTER_SCALE = 2;
 const SVG_FAILURE_CAP = 1024;
 
-export function createWebImageCaches(CK) {
+export function createWebImageCaches(CK, onImageReady = () => {}) {
   const fullImageCache = new Map();
   let fullImageCacheBytes = 0;
   const thumbnailCache = new Map();
@@ -99,6 +99,7 @@ export function createWebImageCaches(CK) {
   // keeps re-requesting until the browser's async decode lands the raster
   // in `fullImageCache`.
   const svgPending = new Set();
+  const svgRequestedEdges = new Map();
   const svgFailures = new Set();
 
   const rememberSvgFailure = (key) => {
@@ -112,10 +113,10 @@ export function createWebImageCaches(CK) {
     const sourceW = img.naturalWidth || img.width;
     const sourceH = img.naturalHeight || img.height;
     if (!(sourceW > 0) || !(sourceH > 0)) return false;
-    const scale = Math.min(
-      SVG_RASTER_SCALE,
-      SVG_RASTER_MAX_EDGE / Math.max(sourceW, sourceH),
-    );
+    const sourceEdge = Math.max(sourceW, sourceH);
+    const targetEdge = Math.min(SVG_RASTER_MAX_EDGE,
+      Math.max(sourceEdge * SVG_RASTER_SCALE, svgRequestedEdges.get(key) || 0));
+    const scale = targetEdge / sourceEdge;
     if (!(scale > 0)) return false;
     const width = Math.max(1, Math.round(sourceW * scale));
     const height = Math.max(1, Math.round(sourceH * scale));
@@ -144,10 +145,16 @@ export function createWebImageCaches(CK) {
       deleteImage(image);
       return false;
     }
+    const previous = fullImageCache.get(key);
+    if (previous) {
+      fullImageCacheBytes -= previous.bytes;
+      deleteImage(previous.image);
+    }
     fullImageCache.set(key, {
       image,
       bytes,
-      coversEdgePx: Number.MAX_SAFE_INTEGER,
+      svg: true,
+      coversEdgePx: Math.max(width, height),
     });
     fullImageCacheBytes += bytes;
     evictFullImages();
@@ -159,14 +166,22 @@ export function createWebImageCaches(CK) {
   // ordinary CanvasKit image. resvg does this on native; carrying it into
   // the wasm bundle would bust the 6 MiB ceiling for a codec the platform
   // already ships.
-  const startSvgRaster = (key, encoded) => {
+  const startSvgRaster = (key, encoded, maxEdgePx) => {
+    // Coalesce zoom changes while the browser decodes the vector. Rasterize
+    // at the largest requested edge, but keep allocations bounded.
+    const requested = Number.isFinite(maxEdgePx) && maxEdgePx > 0
+      ? Math.min(SVG_RASTER_MAX_EDGE, maxEdgePx) : 0;
+    svgRequestedEdges.set(key, Math.max(svgRequestedEdges.get(key) || 0, requested));
     if (svgPending.has(key)) return;
     svgPending.add(key);
     let url = null;
     const settle = (installed) => {
       if (url) URL.revokeObjectURL(url);
       svgPending.delete(key);
+      svgRequestedEdges.delete(key);
       if (!installed) rememberSvgFailure(key);
+      // Async completion must wake an idle renderer; it is not a document edit.
+      onImageReady();
     };
     try {
       const blob = new Blob([copyBytes(encoded)], { type: 'image/svg+xml' });
@@ -227,10 +242,14 @@ export function createWebImageCaches(CK) {
   // size is what made a zoomed-out image-dense page evict and re-decode
   // continuously; sizing to the view keeps hundreds of thumbnails cheap.
   const hasFullImage = (lo, hi, maxEdgePx) => {
-    const hit = fullImageCache.get(imageKey(lo, hi));
+    const key = imageKey(lo, hi);
+    const hit = fullImageCache.get(key);
     if (!hit) return false;
     if (!(maxEdgePx > 0)) return true;
-    return hit.coversEdgePx >= maxEdgePx;
+    // A failed upgrade must not discard a previously usable raster. Above
+    // the SVG safety ceiling, reuse the bounded image instead of decode loops.
+    if (hit.svg && svgFailures.has(key)) return true;
+    return hit.coversEdgePx >= (hit.svg ? Math.min(maxEdgePx, SVG_RASTER_MAX_EDGE) : maxEdgePx);
   };
 
   const fullImage = (lo, hi) => {
@@ -242,15 +261,19 @@ export function createWebImageCaches(CK) {
     return hit.image;
   };
 
-  // NOTE: the browser decodes at the source's own size. Sizing the
+  // Raster images decode at the source's own size. Sizing the
   // raster to the view (as the native host does) needs a surface
   // round-trip whose snapshot aliases the surface's pixels, so freeing
   // the surface would dangle the cached image — deferred rather than
   // shipped unsafely. A full raster serves every requested size, so it
   // records itself as covering any edge.
-  const installFullImage = (lo, hi, encoded, _maxEdgePx) => {
+  const installFullImage = (lo, hi, encoded, maxEdgePx) => {
     const key = imageKey(lo, hi);
-    if (fullImageCache.has(key)) return true;
+    if (hasFullImage(lo, hi, maxEdgePx)) return true;
+    if (fullImageCache.get(key)?.svg) {
+      startSvgRaster(key, encoded, maxEdgePx);
+      return true;
+    }
 
     let image = null;
     try {
@@ -263,7 +286,7 @@ export function createWebImageCaches(CK) {
         // remembered here and this returns false for good).
         if (svgFailures.has(key)) return false;
         if (sniffsAsSvg(encoded)) {
-          startSvgRaster(key, encoded);
+          startSvgRaster(key, encoded, maxEdgePx);
           return true;
         }
         return false;

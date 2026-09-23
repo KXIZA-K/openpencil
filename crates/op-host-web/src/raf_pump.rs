@@ -28,6 +28,18 @@ type FrameSlot = Rc<RefCell<Option<Closure<dyn FnMut()>>>>;
 /// freeing the closure. `tick` is `Rc<dyn Fn() -> bool>` so the caller can share
 /// the same drain function the rest of the shell holds.
 pub fn start(tick: Rc<dyn Fn() -> bool>) {
+    start_with_scheduler(tick, false);
+}
+
+/// Drain lifecycle work even when the browser suspends animation frames for a
+/// hidden tab/iframe. Timers may be throttled in the background but, unlike rAF,
+/// do not require a paint opportunity to publish a completed Agent turn.
+/// Keep purely visual pumps on `start`; this timer exists only while work runs.
+pub fn start_background_safe(tick: Rc<dyn Fn() -> bool>) {
+    start_with_scheduler(tick, true);
+}
+
+fn start_with_scheduler(tick: Rc<dyn Fn() -> bool>, background_safe: bool) {
     let holder: FrameSlot = Rc::new(RefCell::new(None));
     let holder2 = holder.clone();
 
@@ -37,7 +49,7 @@ pub fn start(tick: Rc<dyn Fn() -> bool>) {
             // `request_frame` returns, so re-entrancy on a synchronous rAF
             // callback (browsers don't do this, but be safe) can't deadlock.
             if let Some(c) = holder2.borrow().as_ref() {
-                request_frame(c);
+                request_tick(c, background_safe);
             }
         } else {
             // Drop the closure to free its slot. Deferred `take` (we're inside
@@ -55,15 +67,22 @@ pub fn start(tick: Rc<dyn Fn() -> bool>) {
     {
         let slot = holder.borrow();
         if let Some(c) = slot.as_ref() {
-            request_frame(c);
+            request_tick(c, background_safe);
         }
     }
 }
 
 /// Schedule `c` to run on the next animation frame. Best-effort: if `window` is
 /// unavailable (e.g. a WebWorker) the pump simply doesn't run.
-fn request_frame(c: &Closure<dyn FnMut()>) {
+fn request_tick(c: &Closure<dyn FnMut()>, background_safe: bool) {
     if let Some(window) = web_sys::window() {
-        let _ = window.request_animation_frame(c.as_ref().unchecked_ref());
+        if background_safe {
+            let _ = window.set_timeout_with_callback_and_timeout_and_arguments_0(
+                c.as_ref().unchecked_ref(),
+                32,
+            );
+        } else {
+            let _ = window.request_animation_frame(c.as_ref().unchecked_ref());
+        }
     }
 }

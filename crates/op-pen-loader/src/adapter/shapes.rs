@@ -208,6 +208,7 @@ pub(super) fn path_to_payload(n: &PathNode) -> NodePayload {
 
 pub(super) fn text_to_payload(n: &TextNode) -> NodePayload {
     let mut p = base_payload(&n.base, "text");
+    p.text_grayscale = n.text_rasterization == Some(jian_ops_schema::node::text::TextRasterization::Grayscale);
     // Flat string + styled segment runs + node italic/underline/
     // strikethrough — see `text_style.rs`.
     crate::text_style::apply_text_content(&mut p, n);

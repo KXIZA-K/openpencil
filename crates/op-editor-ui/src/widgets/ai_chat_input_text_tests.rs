@@ -38,6 +38,23 @@ fn line_height_matches_the_component_that_paints_it() {
 }
 
 #[test]
+fn scrolled_draft_inner_clip_still_covers_visible_rows() {
+    let text = (0..40)
+        .map(|i| format!("ข้อความทดสอบบรรทัด {i}\n"))
+        .collect::<String>();
+    let chat = chat_with(&text);
+    let rect = input_rect(INPUT_MAX_LINES);
+    let view = measured_input_text_view(&chat, rect, rect.size.y);
+    assert!(view.scroll > rect.size.y);
+    // TextArea clips to text_rect internally, inside our viewport clip.
+    // The full block must reach the bottom of the visible band after scrolling.
+    assert!(
+        view.text_rect.origin.y + view.text_rect.size.y
+            >= view.clip_rect.origin.y + view.clip_rect.size.y
+    );
+}
+
+#[test]
 fn input_grows_to_the_cap_then_stops() {
     let panel_h = 520.0;
     let width = 328.0;

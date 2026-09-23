@@ -256,10 +256,8 @@ fn overlay_reflects_widget_toggle_on_tap() {
 
 #[test]
 fn tap_translates_scene_space_to_runtime_for_offset_root() {
-    // A root authored at (100, 50): the design scene offsets the whole
-    // subtree by (100, 50), but the runtime lays it at its own origin.
-    // A scene-space tap must subtract the root's authored origin so it
-    // hits the runtime's root-relative geometry.
+    // Both the scene and runtime spatial index include the authored root
+    // origin. The mapping must preserve it, then actually activate the widget.
     let src = r##"{
         "version": "1.1",
         "formatVersion": "1.1",
@@ -278,16 +276,18 @@ fn tap_translates_scene_space_to_runtime_for_offset_root() {
     let doc = jian_ops_schema::load_str(src)
         .expect("parse offset-root doc")
         .value;
-    let session = PreviewSession::enter(&doc, (800.0, 600.0), &default_theme(), 0, false, false)
+    let mut session = PreviewSession::enter(&doc, (800.0, 600.0), &default_theme(), 0, false, false)
         .expect("enter preview");
 
-    // A point inside the root in SCENE space maps to that point minus
-    // the root's authored origin in RUNTIME space.
+    // This point is inside the switch's authored scene bounds.
     let (rx, ry) = session.scene_to_runtime_for_test(150.0, 80.0);
     assert!(
-        (rx - 50.0).abs() < 0.001 && (ry - 30.0).abs() < 0.001,
-        "scene (150,80) under root@(100,50) should map to runtime (50,30), got ({rx},{ry})"
+        (rx - 150.0).abs() < 0.001 && (ry - 80.0).abs() < 0.001,
+        "scene (150,80) should map to the same spatial-index point, got ({rx},{ry})"
     );
+    session.dispatch_tap(150.0, 80.0);
+    let scene = session.preview_scene_for_test();
+    assert_eq!(scene.active_page().unwrap().find("sw").unwrap().widget.as_ref().unwrap().checked, Some(true));
 
     // A point outside every root falls through unchanged (nothing to hit).
     let (ox, oy) = session.scene_to_runtime_for_test(5.0, 5.0);

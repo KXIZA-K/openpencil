@@ -5,6 +5,68 @@ use super::*;
 use crate::HtmlImportOptions;
 use jian_ops_schema::node::PenNode;
 
+#[test]
+fn captured_borders_do_not_add_padding_to_positioned_children() {
+    for styles in [
+        serde_json::json!({"border":"1px solid rgb(0, 0, 0)","padding":"12px"}),
+        serde_json::json!({"border-left-width":"3px","border-left-style":"solid",
+            "border-left-color":"rgb(0, 0, 0)","border-top-width":"2px",
+            "border-top-style":"solid","border-top-color":"rgb(0, 0, 0)"}),
+    ] {
+        let json = serde_json::json!({"version":1,"root":{
+            "kind":"element","tag":"div","rect":{"x":10,"y":20,"w":200,"h":100},
+            "styles":styles,"children":[{
+                "kind":"element","tag":"button","rect":{"x":30,"y":40,"w":150,"h":50},
+                "styles":{"border":"1px solid rgb(0, 0, 0)"},"children":[{
+                    "kind":"text","text":"Label","lines":1,
+                    "rect":{"x":75,"y":56,"w":60,"h":18},"styles":{"font-size":"15px"}
+                }]
+            }]
+        }});
+        let result = import_snapshot(&json.to_string(), &HtmlImportOptions::default());
+        let PenNode::Frame(root) = &result.nodes[0] else {
+            panic!("frame")
+        };
+        let PenNode::Frame(button) = &root.children.as_ref().unwrap()[0] else {
+            panic!("button")
+        };
+        let PenNode::Text(text) = &button.children.as_ref().unwrap()[0] else {
+            panic!("text")
+        };
+        assert!(root.container.padding.is_none());
+        assert!(button.container.padding.is_none());
+        assert!(button.container.stroke.is_some(), "Keep the painted border");
+        assert_eq!((button.base.x, button.base.y), (Some(20.0), Some(20.0)));
+        assert_eq!((text.base.x, text.base.y), (Some(45.0), Some(16.0)));
+    }
+}
+
+#[test]
+fn captured_single_line_alignment_is_not_applied_twice() {
+    for (lines, expected) in [(1, "left"), (2, "center")] {
+        let json = serde_json::json!({
+            "version": 1,
+            "root": { "kind": "element", "tag": "button",
+                "rect": { "x": 100, "y": 0, "w": 180, "h": 40 },
+                "children": [{ "kind": "text", "text": "New Incident Report",
+                    "rect": { "x": 142, "y": 11, "w": 123, "h": 17 },
+                    "lines": lines,
+                    "styles": { "font-size": "14px", "text-align": "center" }
+                }]
+            }
+        });
+        let result = import_snapshot(&json.to_string(), &HtmlImportOptions::default());
+        let PenNode::Frame(root) = &result.nodes[0] else {
+            panic!("frame")
+        };
+        let PenNode::Text(text) = &root.children.as_ref().unwrap()[0] else {
+            panic!("text")
+        };
+        assert_eq!(text.text_align, parse_text_align(expected));
+        assert_eq!(text.base.x, Some(42.0));
+    }
+}
+
 /// The regression this fix targets: a paragraph whose children are all inline
 /// (bare text + `<a>` + `<code>`) that wraps across several lines. The
 /// extractor now folds it into ONE positioned text node carrying styled
@@ -70,9 +132,10 @@ fn folded_inline_block_is_one_styled_text_node_without_overlap() {
     let code = &segments[3];
     assert_eq!(code.text, "Painter");
     assert_eq!(code.font_family.as_deref(), Some("ui-monospace"));
-    assert!(code
-        .font_size
-        .is_some_and(|size| (size - 13.6).abs() < 0.01));
+    assert!(
+        code.font_size
+            .is_some_and(|size| (size - 13.6).abs() < 0.01)
+    );
     // Multi-line → wrapped mode: keep the captured width, grow the height.
     assert!(matches!(text.width, Some(SizingBehavior::Number(w)) if w == 300.0));
     assert_eq!(text.text_growth, Some(TextGrowth::FixedWidth));
@@ -217,6 +280,36 @@ fn a_single_line_run_with_oversized_leading_imports_clamped() {
         (leading - 15.5 / 14.0).abs() < 1e-9,
         "leading clamped to the glyph box, got {leading}"
     );
+}
+
+#[test]
+fn captured_thai_line_boxes_remove_negative_leading_but_keep_multiline_stride() {
+    for (lines, height, css, expected) in [
+        (1, 54.0, "46.8px", 1.5),
+        (1, 54.0, "normal", 1.5),
+        (3, 147.6, "46.8px", 1.3),
+    ] {
+        let json = serde_json::json!({
+            "version": 1,
+            "root": { "kind": "element", "tag": "div",
+                "rect": { "x": 0, "y": 0, "w": 390, "h": 200 },
+                "children": [{ "kind": "text", "text": "ดูแลผู้สูงอายุอย่าง",
+                    "lines": lines,
+                    "rect": { "x": 15, "y": -4, "w": 275, "h": height },
+                    "styles": { "font-size": "36px", "line-height": css }
+                }]
+            }
+        });
+        let result = import_snapshot(&json.to_string(), &HtmlImportOptions::default());
+        let PenNode::Frame(root) = &result.nodes[0] else {
+            panic!("root frame")
+        };
+        let PenNode::Text(text) = &root.children.as_ref().unwrap()[0] else {
+            panic!("text run")
+        };
+        assert_eq!(text.base.y, Some(-4.0));
+        assert!((text.line_height.unwrap() - expected).abs() < 1e-9);
+    }
 }
 
 /// Source-level guards for the inline-fold contract (see

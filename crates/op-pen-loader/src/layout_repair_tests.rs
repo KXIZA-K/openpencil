@@ -305,6 +305,7 @@ fn vertical_space_between_reflows_children_like_ts_layout() {
     let scene = editor_state_to_layout_scene(&state_from(src));
     let badge = scene.pages[0].find("badge").expect("badge text");
 
+    // Legacy vector documents keep their existing pixel-rounded layout.
     assert_eq!(badge.bounds.origin.y, 22.0);
 }
 

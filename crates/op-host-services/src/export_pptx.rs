@@ -459,7 +459,7 @@ fn image_unexpressible(n: &SceneNode, src: &str) -> Option<&'static str> {
         // the same curves.
         return Some("image colour adjustments");
     }
-    if n.image_fit == SceneImageFit::Tile {
+    if matches!(n.image_fit, SceneImageFit::Tile | SceneImageFit::CssRepeat) {
         // `a:tile` states its frequency as a percentage of the SHAPE,
         // while the scene states it as a scale of the source; without
         // both the repeat lands at a visibly wrong size.

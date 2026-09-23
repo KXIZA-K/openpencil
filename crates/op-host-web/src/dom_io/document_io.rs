@@ -255,7 +255,15 @@ fn start_daemon_save<C: RepaintContext + 'static>(
         )
     };
     let body = match body {
-        Ok(body) => body,
+        Ok(body) => match crate::live_sync_glue::fence_daemon_save(&body) {
+            Some(fenced) => fenced,
+            None => {
+                console_warn("[save] no sync baseline; preserving a local download instead");
+                save_to_browser_if_snapshot_current(inner, snap_epoch, snap_gen, snap_rev);
+                finish_daemon_save();
+                return;
+            }
+        },
         Err(e) => {
             console_error(&format!("[save] {e}"));
             save_to_browser_if_snapshot_current(inner, snap_epoch, snap_gen, snap_rev);
@@ -267,6 +275,7 @@ fn start_daemon_save<C: RepaintContext + 'static>(
     let base = crate::daemon_base::daemon_base();
     let inner_for_response = inner.clone();
     let on_response: Rc<dyn Fn(String)> = Rc::new(move |response| {
+        crate::live_sync_glue::note_daemon_save_conflict(&response);
         match file_actions::parse_save_response(&response) {
             Ok(saved) => {
                 let mut b = inner_for_response.borrow_mut();

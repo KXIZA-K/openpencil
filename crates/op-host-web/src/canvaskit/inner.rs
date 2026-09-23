@@ -29,7 +29,11 @@ pub(super) struct CkInner {
 
 impl CkInner {
     pub(super) fn repaint(&mut self) {
-        self.backend.drain_pending_decodes(2);
+        // Zoom changes backing resolution, never the host/editor state. Resize
+        // the existing surface before drawing the coalesced frame.
+        if let Some(window) = web_sys::window() {
+            let _ = self.resize_to_window(&window);
+        }
         // Assets the last paint asked for but the bundle does not carry
         // (preview JPEGs, template documents, the icon catalog). Bounded per
         // call; the installs wake a later frame through `repaint_coalescer`.
@@ -154,7 +158,7 @@ impl CkInner {
             .unwrap_or_else(|| self.canvas.client_height().max(1) as f64)
             .round()
             .max(1.0) as u32;
-        let dpr = display_dpr(window.device_pixel_ratio() as f32);
+        let dpr = display_dpr(window.device_pixel_ratio() as f32, self.host.editor_state().viewport.zoom);
         let dev_w = ((css_w as f32) * dpr).round().max(1.0) as u32;
         let dev_h = ((css_h as f32) * dpr).round().max(1.0) as u32;
 

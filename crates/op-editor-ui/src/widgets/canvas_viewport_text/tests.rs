@@ -78,6 +78,8 @@ fn justify_spreads_residual_across_space_gaps() {
 
 #[derive(Default)]
 struct CaptureBackend {
+    grayscale: bool,
+    text_modes: Vec<bool>,
     origins: Vec<Point2D>,
     contents: Vec<String>,
     weights: Vec<u16>,
@@ -89,6 +91,7 @@ struct CaptureBackend {
 }
 
 impl RenderBackend for CaptureBackend {
+    fn set_text_grayscale(&mut self, value: bool) { self.grayscale = value; }
     fn begin_frame(&mut self) {}
     fn end_frame(&mut self) {}
     fn fill_rect(&mut self, rect: Rect, _: Color) {
@@ -96,6 +99,7 @@ impl RenderBackend for CaptureBackend {
     }
     fn stroke_rect(&mut self, _: Rect, _: Color, _: f32) {}
     fn draw_text(&mut self, layout: &TextLayout, origin: Point2D) {
+        self.text_modes.push(self.grayscale);
         self.origins.push(origin);
         self.italics.push(layout.italic());
         if let Some(run) = layout.runs().first() {
@@ -164,6 +168,21 @@ fn tiny_on_screen_text_greeks_to_a_bar_instead_of_shaping() {
         "greeked text must not shape or draw glyph runs"
     );
     assert_eq!(backend.fill_rects, vec![node.bounds]);
+}
+
+#[test]
+fn source_grayscale_is_scoped_to_one_text_node() {
+    let mut node = text_node("Same label");
+    node.text_grayscale = true;
+    let mut backend = CaptureBackend::default();
+    paint_text_node(&mut PaintCx { backend: &mut backend }, &node, node.bounds, 1.0, &None);
+    assert!(!backend.text_modes.is_empty());
+    assert!(backend.text_modes.iter().all(|mode| *mode));
+    assert!(!backend.grayscale, "Node paint must restore the default for editor chrome");
+    backend.text_modes.clear();
+    node.text_grayscale = false;
+    paint_text_node(&mut PaintCx { backend: &mut backend }, &node, node.bounds, 1.0, &None);
+    assert!(backend.text_modes.iter().all(|mode| !*mode));
 }
 
 #[test]
@@ -291,6 +310,28 @@ fn authored_line_height_requests_a_text_aware_first_baseline() {
     paint_text_node(&mut cx, &node, node.bounds, 1.0, &None);
 
     assert_eq!(backend.origins[0].y, 19.25);
+}
+
+#[test]
+fn css_baselines_snap_relative_to_source_root_not_viewport_zoom() {
+    for zoom in [0.5, 1.0, 1.25, 2.0] {
+        let mut node = SceneNode::leaf("css-text", NodeKind::Text);
+        node.text = Some("🧥 new".into());
+        node.font_family = "Inter, system-ui, sans-serif".into();
+        node.font_size = 24.0;
+        node.font_weight = 700;
+        node.italic = true;
+        node.line_height = 1.5;
+        node.bounds.origin = Point2D::new(15.25, 42.8);
+        node.bounds.size = Point2D::new(100.0, 30.0);
+        node.css_paint_origin = Some(Point2D::new(10.25, 20.5));
+        let original_bounds = node.bounds;
+        let mut backend = CaptureBackend { requested_baseline: Some(19.25), ..Default::default() };
+        let mut cx = PaintCx { backend: &mut backend };
+        paint_text_node(&mut cx, &node, node.bounds, zoom, &None);
+        assert_eq!(backend.origins[0], Point2D::new(15.25, 62.5));
+        assert_eq!(node.bounds, original_bounds);
+    }
 }
 
 #[test]

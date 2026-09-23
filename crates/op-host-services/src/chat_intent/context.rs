@@ -223,7 +223,7 @@ pub(super) fn parse_modify_response(full_response: &str) -> ModifyNodeParse {
             && ops.iter().all(|op| {
                 matches!(
                     op.get("op").and_then(|v| v.as_str()),
-                    Some("update" | "delete")
+                    Some("update" | "delete" | "move")
                 ) && op
                     .get("id")
                     .and_then(|v| v.as_str())
@@ -367,6 +367,13 @@ pub fn build_modify_plan(state: &EditorState, instruction: &str) -> Option<Modif
     }
 
     system_prompt.push_str("\n\nFor targeted property changes or removals, return ONLY a JSON array of compact operations instead of rewriting entire frames. Examples: [{\"op\":\"update\",\"id\":\"EXISTING_ID\",\"data\":{\"height\":844}},{\"op\":\"delete\",\"id\":\"DUPLICATE_ID\"}]. Use only IDs from CONTEXT NODES. Update preserves all unspecified fields and descendants; data must not contain id, type or children. Delete removes that node and its descendants: use only for elements the user explicitly asked to remove. Do not recreate unrelated content or invent IDs. If the task needs new nodes, use the existing design-node response format instead; do not mix formats.");
+    system_prompt.push_str("\nFor reparenting or reordering an existing node, use a compact move in that same JSON array: {\"op\":\"move\",\"id\":\"EXISTING_ID\",\"parent\":\"EXISTING_PARENT_ID\"}. Optional integer index sets sibling order; omit it to append last. Both node and destination must belong to the selected frame scope. Move preserves the entire subtree, IDs, events, and bindings; never repeat the subtree or the whole screen just to move it. Follow with an update operation for x/y/width/height when needed.");
+    system_prompt.push_str(r#"
+For a floating overlay inside an auto-layout parent, update its data with "role":"overlay" and explicit x/y/width/height. Authored x/y alone does not reliably escape auto-layout: layout repair may put an ordinary child back in the flow. Use the overlay role only for floating content, not normal flow children. Preserve existing events and visibility bindings.
+Sibling index 0 is frontmost; appending last places a node behind its siblings. Move an overlay to index 0 in its parent and put close buttons and labels before decorative backgrounds within the overlay. Coordinates alone do not set stacking order. Hidden flow children can still reserve layout space; do not promise that a visible binding collapses that space.
+"#);
+
+    system_prompt.push_str(crate::chat_interaction_validation::GUIDANCE);
 
     Some(ModifyPlan {
         user_message,

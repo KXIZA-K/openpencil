@@ -426,7 +426,7 @@ fn paint_image_node_with_stroke(
     // image at full size is what made a zoomed-out image-dense page
     // thrash its cache (hundreds of 16 MB rasters against a 384 MB
     // budget) while the same page zoomed in stayed smooth.
-    let decode_transform = if node.image_fit == crate::layout_scene::SceneImageFit::Tile {
+    let decode_transform = if matches!(node.image_fit, crate::layout_scene::SceneImageFit::Tile | crate::layout_scene::SceneImageFit::CssRepeat) {
         None
     } else {
         node.image_transform

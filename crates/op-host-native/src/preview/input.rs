@@ -24,7 +24,7 @@
 //! outright while `transition_active()` — see that method's doc
 //! (`crate::preview::transition`) for why discard, not queue.
 
-use super::{apply_widget_state, PreviewSession};
+use super::{PreviewSession, apply_widget_state};
 
 use jian_core::gesture::pointer::{Modifiers, PointerPhase};
 use op_editor_ui::layout_scene::SceneNode;
@@ -39,6 +39,7 @@ impl PreviewSession {
     /// mid variant-swap and froze input for IME safety, which reads as
     /// "not consumed" here, same as any other declined dispatch.
     pub fn dispatch_text(&mut self, text: &str) -> bool {
+        self.sync_binding_input();
         self.runtime.dispatch_text_input(text).unwrap_or(false)
     }
 
@@ -46,6 +47,7 @@ impl PreviewSession {
     /// `"Tab"`) into the runtime with the given modifier set. Returns
     /// `true` when the dispatch emitted any semantic event.
     pub fn dispatch_key(&mut self, key: &str, modifiers: Modifiers) -> bool {
+        self.sync_binding_input();
         !self
             .runtime
             .dispatch_keyboard(key.to_string(), modifiers)
@@ -92,6 +94,17 @@ impl PreviewSession {
         if self.transition_active() {
             return false;
         }
+        self.sync_binding_input();
+        // The runtime's generic hit order differs from the editor painter.
+        // Scope this dispatch to the visible scene target; the gesture engine
+        // still owns capture and builds the ancestor path for event bubbling.
+        let target = self.deepest_mapped_node(scene_x, scene_y).and_then(|node| {
+            let document = self.runtime.document.as_ref()?;
+            let key = *document.tree.by_id.get(&node.id)?;
+            let rect = self.runtime.node_scene_rect(key)?;
+            Some(jian_core::spatial::NodeBBox { key, rect })
+        });
+        self.runtime.spatial.rebuild(target);
         let (rt_x, rt_y) = self.resolve_runtime_point(scene_x, scene_y, phase);
         let mut ev = PointerEvent::simple(1, phase, point(rt_x, rt_y));
         ev.kind = PointerKind::Mouse;
@@ -99,7 +112,10 @@ impl PreviewSession {
             ev.buttons = MouseButtons::empty();
             ev.pressure = 0.0;
         }
-        !self.runtime.dispatch_pointer(ev).is_empty()
+        let emitted = self.runtime.dispatch_pointer(ev);
+        self.runtime.rebuild_spatial();
+        self.sync_binding_input();
+        !emitted.is_empty()
     }
 
     /// The scene→runtime point for one pointer phase, honoring the
@@ -132,6 +148,7 @@ impl PreviewSession {
     /// the host falls back to canvas pan/zoom otherwise. `dx`/`dy` are
     /// screen-pixel deltas (same magnitude the design canvas pans by).
     pub fn dispatch_wheel(&mut self, scene_x: f32, scene_y: f32, dx: f32, dy: f32) -> bool {
+        self.sync_binding_input();
         use jian_core::geometry::point;
         use jian_core::gesture::pointer::WheelEvent;
         if self.transition_active() {
@@ -155,8 +172,7 @@ impl PreviewSession {
     /// the same relative spot inside the runtime's copy of the node —
     /// keeping caret placement and slider-knob drags accurate.
     ///
-    /// Falls back to the root-origin translation when the point is
-    /// outside every mapped node (empty canvas — nothing to hit).
+    /// Unmapped points pass through unchanged (empty canvas — nothing to hit).
     fn scene_to_runtime(&self, x: f32, y: f32) -> (f32, f32) {
         let mapping = self.deepest_mapped_rects(x, y);
         self.scene_to_runtime_via(x, y, mapping)
@@ -166,7 +182,7 @@ impl PreviewSession {
     /// anchor — same relative position inside the runtime rect,
     /// linearly extrapolated when the point is outside the scene rect
     /// (a held drag past the node's edge). `None` resolves fresh at the
-    /// point, falling back to the root-origin translation.
+    /// point, passing unmapped points through unchanged.
     fn scene_to_runtime_via(&self, x: f32, y: f32, mapping: Option<(Rect, Rect)>) -> (f32, f32) {
         if let Some((s, r)) = mapping {
             let fx = if s.size.x > f32::EPSILON {
@@ -181,26 +197,21 @@ impl PreviewSession {
             };
             return (r.origin.x + fx * r.size.x, r.origin.y + fy * r.size.y);
         }
-        for frame in &self.root_frames {
-            let rect = frame.scene_rect;
-            if x >= rect.origin.x
-                && x <= rect.origin.x + rect.size.x
-                && y >= rect.origin.y
-                && y <= rect.origin.y + rect.size.y
-            {
-                return (x - frame.offset.0, y - frame.offset.1);
-            }
-        }
         (x, y)
     }
 
     /// The (scene rect, runtime rect) pair of the deepest visible scene
     /// node containing the point that also has a runtime layout rect.
-    /// Children win over parents; later siblings (painted on top) win
-    /// over earlier ones.
+    /// Children win over parents; earlier siblings are topmost, matching
+    /// the shared painter's reverse traversal of the front-to-back list.
     fn deepest_mapped_rects(&self, x: f32, y: f32) -> Option<(Rect, Rect)> {
+        let node = self.deepest_mapped_node(x, y)?;
+        self.runtime_rect(&node.id).map(|rect| (node.bounds, rect))
+    }
+
+    fn deepest_mapped_node(&self, x: f32, y: f32) -> Option<&SceneNode> {
         let page = self.scene.active_page()?;
-        for node in page.children.iter().rev() {
+        for node in &page.children {
             if let Some(hit) = self.deepest_mapped_in(node, x, y) {
                 return Some(hit);
             }
@@ -208,8 +219,8 @@ impl PreviewSession {
         None
     }
 
-    fn deepest_mapped_in(&self, node: &SceneNode, x: f32, y: f32) -> Option<(Rect, Rect)> {
-        if node.hidden {
+    fn deepest_mapped_in<'a>(&self, node: &'a SceneNode, x: f32, y: f32) -> Option<&'a SceneNode> {
+        if self.binding_hidden(node) {
             return None;
         }
         let b = node.bounds;
@@ -220,12 +231,12 @@ impl PreviewSession {
         {
             return None;
         }
-        for child in self.mapped_children(node).iter().rev() {
+        for child in self.mapped_children(node) {
             if let Some(hit) = self.deepest_mapped_in(child, x, y) {
                 return Some(hit);
             }
         }
-        self.runtime_rect(&node.id).map(|r| (b, r))
+        self.runtime_rect(&node.id).map(|_| node)
     }
 
     /// Match the design/preview painter's tabs rule when choosing a scene
@@ -251,49 +262,17 @@ impl PreviewSession {
     /// `pub(in crate::preview)` so `mod.rs`'s test-only `node_rect`
     /// accessor can reach it from the parent module.
     ///
-    /// Merge note (responsive-m1a into main): jian-core's `node_rect`
-    /// now bakes a non-viewport-normalized root's own authored origin
-    /// into every rect under it (see `op-pen-loader`'s `compute_layout`
-    /// for the full mechanism) — jian's own convention calls this
-    /// "absolute scene coordinates" and its own runtimes hit-test
-    /// directly against it. OpenPencil's PreviewSession keeps a SECOND,
-    /// separate coordinate frame ("runtime space", root-relative) for
-    /// `Runtime::dispatch_pointer` and friends, which `scene_to_runtime`
-    /// above maps into via this function. Subtract the root's authored
-    /// origin back out so `runtime_rect` keeps returning root-relative
-    /// space regardless of jian-core's own internal convention.
+    /// Use the same scene geometry as Runtime::rebuild_spatial. Subtracting
+    /// the authored root origin here shifts taps away from their targets;
+    /// the spatial index already includes that origin and scroll offsets.
     pub(in crate::preview) fn runtime_rect(&self, id: &str) -> Option<Rect> {
         let doc = self.runtime.document.as_ref()?;
         let key = doc.tree.by_id.get(id).copied()?;
-        let r = self.runtime.layout.node_rect(key)?;
-        let (ox, oy) = self.root_authored_origin_of(doc, key);
+        let r = self.runtime.node_scene_rect(key)?;
         Some(Rect {
-            origin: Point2D::new(r.origin.x - ox, r.origin.y - oy),
+            origin: Point2D::new(r.origin.x, r.origin.y),
             size: Point2D::new(r.size.width, r.size.height),
         })
-    }
-
-    /// Walk `key` up to its tree root and return that root's authored
-    /// `(x, y)`, or `(0, 0)` when the root is viewport-normalized (its
-    /// origin is already baked out of `node_rect` by jian-core) or has
-    /// no authored position.
-    fn root_authored_origin_of(
-        &self,
-        doc: &jian_core::document::RuntimeDocument,
-        key: jian_core::document::tree::NodeKey,
-    ) -> (f32, f32) {
-        let mut cur = key;
-        while let Some(parent) = doc.tree.nodes.get(cur).and_then(|n| n.parent) {
-            cur = parent;
-        }
-        if self.runtime.layout.is_origin_normalized(cur) {
-            return (0.0, 0.0);
-        }
-        doc.tree
-            .nodes
-            .get(cur)
-            .map(|root| op_pen_loader::root_authored_origin(&root.schema))
-            .unwrap_or((0.0, 0.0))
     }
 
     /// Advance focus to the next focusable widget (Tab). `focus_next` now
@@ -301,6 +280,7 @@ impl PreviewSession {
     /// same as `dispatch_text_input`) — fire-and-forget here, same as the
     /// pre-Result behavior: a declined focus move just doesn't move.
     pub fn focus_next(&mut self) {
+        self.sync_binding_input();
         let _ = self.runtime.focus_next();
         self.seed_focused_widget_state();
     }
@@ -308,6 +288,7 @@ impl PreviewSession {
     /// Advance focus to the previous focusable widget (Shift+Tab). See
     /// `focus_next`'s doc for the `CoreResult` note.
     pub fn focus_previous(&mut self) {
+        self.sync_binding_input();
         let _ = self.runtime.focus_previous();
         self.seed_focused_widget_state();
     }

@@ -305,6 +305,17 @@ fn tile_image_uses_repeating_svg_pattern() {
 }
 
 #[test]
+fn css_repeat_svg_retains_top_left_pattern_origin() {
+    let mut image = SceneNode::leaf("css-repeat", NodeKind::Other("image".into()));
+    image.bounds = Rect::xywh(10.0, 20.0, 240.0, 160.0);
+    image.image_src = Some("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAS".into());
+    image.image_fit = crate::layout_scene::SceneImageFit::CssRepeat;
+    let body = serialize_node_svg(&scene_with(vec![image]), "css-repeat").expect("svg");
+    assert!(body.contains(r#"x="10" y="20" width="32" height="18""#), "{body}");
+    assert!(body.contains("patternUnits=\"userSpaceOnUse\""), "{body}");
+}
+
+#[test]
 fn tile_image_reads_jpeg_and_webp_intrinsic_dimensions() {
     for (id, src) in [
         (

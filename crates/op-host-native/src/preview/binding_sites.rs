@@ -10,9 +10,9 @@ use jian_ops_schema::node::PenNode;
 /// One compiled non-`bind:value` binding on a promoted-document node.
 /// Re-evaluated against the live state graph each overlay pass
 /// (`PreviewSession::apply_binding_sites`) so event writes
-/// (`set $app.*`) become visible. Spec-2 slice: only `content` is
-/// applied to the scene today; other props are collected so the count
-/// is honest but are skipped at apply time.
+/// (`set $app.*`) become visible. The overlay applies `content`,
+/// `visible`, `checked`, and widget `value`; unsupported properties
+/// remain collected but are not applied.
 pub(super) struct BindingSite {
     pub(super) node_id: String,
     pub(super) prop: String,

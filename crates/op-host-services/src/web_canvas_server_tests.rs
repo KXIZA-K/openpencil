@@ -612,6 +612,42 @@ fn post_file_save_keeps_document_wrapper_validation_errors() {
 }
 
 #[test]
+fn post_file_save_fences_restart_and_keeps_disk_and_editor_unchanged() {
+    let original = r#"{"version":"1.0.0","children":[]}"#;
+    let path = write_temp_op("save-authority", original);
+    let previous = WebCanvasState::new_with_path(EditorState::new(), 3100, Some(path.clone()));
+    let mut state = WebCanvasState::new_with_path(EditorState::new(), 3100, Some(path.clone()));
+    state.managed_token = Some("test-managed-token".into());
+    let original_doc = serde_json::to_value(&state.editor.doc).unwrap();
+    let request = |generation: &str, version: u64| serde_json::json!({
+        "document": { "version": "1.0.0", "children": [], "name": "saved" },
+        "baseGeneration": generation, "baseVersion": version,
+    }).to_string();
+    for body in [
+        request(&previous.generation, 0),
+        request(&state.generation, 1),
+        format!(r#"{{"document":{original}}}"#),
+        request("invalid", 0),
+    ] {
+        let reply = handle_web_canvas_request("POST", "/api/file/save", &body, &mut state);
+        assert!(reply.status.starts_with("409") || reply.status.starts_with("400"), "{}", reply.body);
+        assert_eq!(state.version, 0);
+        assert_eq!(serde_json::to_value(&state.editor.doc).unwrap(), original_doc);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+    }
+    let valid = request(&state.generation, 0);
+    let reply = handle_web_canvas_request("POST", "/api/file/save", &valid, &mut state);
+    assert!(reply.status.starts_with("200"), "{}", reply.body);
+    assert_eq!(state.version, 1);
+    let saved = std::fs::read_to_string(&path).unwrap();
+    let replay = handle_web_canvas_request("POST", "/api/file/save", &valid, &mut state);
+    assert!(replay.status.starts_with("409"), "{}", replay.body);
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), saved);
+    assert_eq!(state.version, 1);
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
 fn sync_reset_reloads_current_path_when_daemon_has_backing_file() {
     use op_editor_core::PenNodeExt;
 

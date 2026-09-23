@@ -146,3 +146,53 @@ fn ambiguous_current_interface_completion_is_not_a_new_screen() {
         );
     }
 }
+
+#[test]
+fn thai_existing_layout_edit_with_design_room_name_stays_modify() {
+    // Production regression: the room name contains "Design" and the edit
+    // later mentions a "screen". Neither is an instruction to create one.
+    let prompt = "ปรับเฉพาะ layout ของ 5 screens ที่เลือกใน Test Design v17 ห้ามสร้างใหม่หรือแทนที่ทั้งเอกสาร: 1) SOS Disclaimer n225 ข้อความล้นขอบจอ ให้มีความกว้างจำกัดตาม container และ wrap ภาษาไทยได้ทุกสถานะ ไม่ลดจนอ่านไม่ออก รักษาข้อความว่าเป็น mock ไม่มีโทร/แจ้งญาติจริง 2) ตอนนี้ bindings.visible ซ่อนได้จริงแต่รักษาพื้นที่ layout เดิม ทำให้ map n1025 สูง260ที่ปิดแล้วทิ้งช่องว่างใหญ่ก่อน checklist ให้ปรับเป็น overlay/absolute panel ซ้อนภายใน screen ไม่กินพื้นที่แนวตั้งเมื่อปิด มีปุ่มเปิด n1000/ปิด n1034 และ visible binding เดิมครบ 3) ปุ่มยกเลิก SOS n1043 แสดงเฉพาะ sosStep1 ให้จัดตำแหน่งที่ไม่ทิ้งช่องว่างใหญ่เมื่อซ่อนและไม่ทับเนื้อหาเมื่อแสดง ใช้ schema ที่รองรับจริง ตรวจ layout parent ก่อนแก้ ห้ามใช้ display/height binding ที่ runtime ยังไม่รองรับ รักษาทุก screen route, checkbox events/checked bindings, progress สูตรเดิม, native switch และปุ่ม navigation เดิม Progress เป็นบั๊กรันไทม์ที่กำลังแก้ ไม่ต้องเปลี่ยนสูตรหรือ hardcode ค่า ลงมือแก้และบันทึก revision ใหม่";
+    assert!(!requests_new_whole_screen(prompt));
+    assert!(!has_new_screen_creation_signal(prompt));
+    assert_eq!(
+        classify_intent_for_standard_route(&Scripted, &state_with_selected_card(), prompt, None),
+        DesignIntent::Modify
+    );
+}
+
+#[test]
+fn creation_verb_must_target_screen_not_unrelated_edit_context() {
+    for prompt in [
+        "Fix Test Design v17. Wrap disclaimer inside screen",
+        "Resize screen header in Test Design",
+        "Update Test Design spacing around the selected mobile card inside screen",
+        "Create button inside screen",
+        "Create a button inside screen",
+        "Fix layout in screen-1 of Test Design",
+        "ปรับ Test Design โดยรักษาข้อความภาษาไทยและพฤติกรรมเดิมของทุกปุ่มให้อยู่ภายใน screen",
+    ] {
+        assert!(!requests_new_whole_screen(prompt), "{prompt}");
+        assert!(!has_new_screen_creation_signal(prompt), "{prompt}");
+    }
+    for prompt in [
+        "Draw search page",
+        "Please design onboarding screens",
+        "Mock up checkout screen",
+        "Design a sign-in screen",
+        "Create new appointment details page",
+        "Fix the card later. Create a checkout screen",
+    ] {
+        assert!(requests_new_whole_screen(prompt), "{prompt}");
+        assert!(has_new_screen_creation_signal(prompt), "{prompt}");
+    }
+}
+
+#[test]
+fn compact_move_and_update_parse_without_repeating_subtrees() {
+    let response = r#"[{"op":"move","id":"map","parent":"screen"},{"op":"update","id":"map","data":{"x":16,"y":230}}]"#;
+    let parsed = parse_modify_response(response);
+    assert!(parsed.diagnostic.is_none());
+    assert_eq!(parsed.nodes.len(), 2);
+    assert_eq!(parsed.nodes[0].1["op"], "move");
+    assert_eq!(parsed.nodes[0].1["parent"], "screen");
+}

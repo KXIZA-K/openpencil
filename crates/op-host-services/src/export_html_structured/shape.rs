@@ -106,7 +106,7 @@ fn write_background(style: &mut String, n: &SceneNode, rect: Rect) {
         "background-image",
         &format!("url(\"{}\")", escape_html(src)),
     );
-    css::decl(style, "background-position", "center");
+    css::decl(style, "background-position", if n.image_fit == SceneImageFit::CssRepeat { "0 0" } else { "center" });
     match n.image_fit {
         // `Fill` and `Crop` both cover the box and centre the overflow;
         // the crop's own affine transform is not expressible here, and a
@@ -123,7 +123,7 @@ fn write_background(style: &mut String, n: &SceneNode, rect: Rect) {
             css::decl(style, "background-size", "100% 100%");
             css::decl(style, "background-repeat", "no-repeat");
         }
-        SceneImageFit::Tile => {
+        SceneImageFit::Tile | SceneImageFit::CssRepeat => {
             // Guaranteed present by the caller's expressibility check —
             // a tile whose cell size is unknown cannot keep its repeat
             // frequency and takes the raster path instead.

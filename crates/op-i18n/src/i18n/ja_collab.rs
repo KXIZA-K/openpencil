@@ -2,6 +2,9 @@
 
 pub fn lookup(key: &str) -> Option<&'static str> {
     Some(match key {
+        "ai.history.older" => "以前のメッセージを読み込む",
+        "ai.history.loading" => "履歴を読み込み中…",
+        "ai.history.retry" => "履歴を読み込めません · 再試行",
         "collab.topbar.collaborate" => "共同編集",
         "collab.topbar.starting" => "共同編集を開始しています…",
         "collab.topbar.joining" => "参加しています…",

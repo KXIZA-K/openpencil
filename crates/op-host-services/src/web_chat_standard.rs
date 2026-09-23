@@ -30,6 +30,9 @@ use crate::web_canvas_server::{SseHub, WebCanvasState};
 mod error;
 use error::WebChatStandardError;
 
+#[path = "web_chat_modify_response.rs"]
+mod modify_response;
+
 #[path = "web_chat_standard_events.rs"]
 mod events;
 use events::{
@@ -503,25 +506,20 @@ fn stream_modify_route<W: Write>(
         system_prompt: plan.system_prompt,
         user_message: plan.user_message,
         max_output_tokens: 8192,
+        // Structured edits need content, not a reasoning-only token budget.
+        thinking: op_ai::chat_provider::ThinkingMode::Disabled,
         ..Default::default()
     };
-    let mut full_response = String::new();
-    let mut stream_error: Option<String> = None;
-    for delta in provider.send(request) {
-        match delta {
-            ChatDelta::TextDelta(s) => full_response.push_str(&s),
-            ChatDelta::Thinking(_) | ChatDelta::ToolUse { .. } => {}
-            ChatDelta::Error(msg) => {
-                stream_error = Some(msg);
-                break;
-            }
-            ChatDelta::Done { .. } => break,
-        }
-    }
+    let full_response = match modify_response::collect(provider.send(request)) {
+        Ok(text) => text,
+        Err(error) => return write_error_event(out, &error.to_string()),
+    };
 
     let nodes = crate::chat_intent::parse_modify_nodes(&full_response);
+    if let Err(error) = crate::chat_interaction_validation::validate_modifications(&nodes) {
+        return write_error_event(out, &format!("Invalid design interaction: {error}. No changes were applied."));
+    }
     if !nodes.is_empty() {
-        write_delta_event(out, &format!("\n{full_response}"))?;
         let (applied, tick) = {
             let mut guard = state.lock().unwrap_or_else(|p| p.into_inner());
             // `apply_design_modification` writes a batch straight into the
@@ -562,7 +560,12 @@ fn stream_modify_route<W: Write>(
             hub.broadcast(tick);
         }
         if applied > 0 {
-            write_delta_event(out, "\n\n<!-- APPLIED -->")?;
+            // The model's edit protocol is not a user-facing chat response.
+            // Report success only after the actual mutation, retaining the
+            // marker that prevents clients offering to apply the turn twice.
+            write_delta_event(out, &format!(
+                "\n\nApplied {applied} design change(s). Review the canvas or run the prototype to check the result.\n\n<!-- APPLIED -->"
+            ))?;
         } else {
             return write_error_event(
                 out,
@@ -572,9 +575,7 @@ fn stream_modify_route<W: Write>(
         return write_done_event(out);
     }
 
-    let message = if let Some(err) = stream_error {
-        err
-    } else {
+    let message = {
         let trimmed = full_response.trim();
         let hint = if trimmed.is_empty() {
             "The model returned an empty response.".to_string()

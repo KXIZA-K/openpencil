@@ -6,7 +6,6 @@ use jian_ops_schema::node::base::{NumberOrExpression, PenNodeBase};
 use jian_ops_schema::node::container::{ContainerProps, CornerRadius, LayoutMode};
 use jian_ops_schema::node::image::{ImageFitMode, ImageNode};
 use jian_ops_schema::node::path::{PathFillRule, PathNode};
-use jian_ops_schema::node::text::TextAlign;
 use jian_ops_schema::node::{FrameNode, ImageSrc, PenNode};
 use jian_ops_schema::sizing::SizingBehavior;
 use jian_ops_schema::style::{BlendMode, PenFill, SolidFillBody};
@@ -24,6 +23,9 @@ use crate::{
 mod snapshot_stack;
 #[path = "snapshot_text.rs"]
 mod text_run;
+#[path = "snapshot_values.rs"]
+mod values;
+use values::{matrix_rotation, parse_px, parse_text_align};
 
 const MAX_SNAPSHOT_BYTES: usize = 32 * 1024 * 1024;
 
@@ -192,6 +194,7 @@ struct SnapshotCtx<'a> {
     /// instead of re-rendering the stored list on every call.
     warned: BTreeSet<String>,
     next_id: usize,
+    source_ids: BTreeSet<String>,
     node_count: usize,
     output_truncated: bool,
     tainted_images: usize,
@@ -213,6 +216,7 @@ impl<'a> SnapshotCtx<'a> {
             warnings: Vec::new(),
             warned: Default::default(),
             next_id: 0,
+            source_ids: BTreeSet::new(),
             node_count: 0,
             output_truncated: false,
             tainted_images: 0,
@@ -230,6 +234,24 @@ impl<'a> SnapshotCtx<'a> {
         self.next_id += 1;
         self.node_count += 1;
         Some(id)
+    }
+
+    // Optional source identity is namespaced away from legacy snapshot_N IDs.
+    // Callers without it retain byte-identical allocation and import behavior.
+    fn allocate_node_id(&mut self, object: &Map<String, Value>) -> Option<String> {
+        let fallback = self.allocate_id()?;
+        let Some(value) = object.get("sourceNodeId") else { return Some(fallback) };
+        let valid = value.as_str().filter(|id| {
+            !id.is_empty() && id.len() <= 128
+                && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+        });
+        if let Some(id) = valid {
+            if self.source_ids.insert(id.to_string()) { return Some(format!("studio_{id}")); }
+        }
+        self.warn_once(ImportWarning::SnapshotRejected {
+            reason: "invalid or duplicate sourceNodeId".into(),
+        });
+        None
     }
 
     /// Record `warning` unless an identical rendered message is already
@@ -285,10 +307,12 @@ impl<'a> SnapshotCtx<'a> {
         parent_rect: Option<Rect>,
         root_name: Option<&str>,
     ) -> Option<PenNode> {
-        let id = self.allocate_id()?;
+        let id = self.allocate_node_id(object)?;
         let styles = style_map(object);
         let mut container = self.container_from_styles(&styles, rect);
         container.layout = Some(LayoutMode::None);
+        // Browser child rects already include padding/borders; do not offset twice.
+        container.padding = None;
         container.width = Some(SizingBehavior::Number(rect.w));
         container.height = Some(SizingBehavior::Number(rect.h));
         // The gradient-text idiom: `background-clip: text` paints this box's
@@ -394,7 +418,7 @@ impl<'a> SnapshotCtx<'a> {
         rect: Rect,
         parent_rect: Rect,
     ) -> Option<PenNode> {
-        let id = self.allocate_id()?;
+        let id = self.allocate_node_id(object)?;
         let styles = style_map(object);
         let visual = self.container_from_styles(&styles, rect);
         let object_fit = match styles.get("object-fit").map(String::as_str) {
@@ -493,7 +517,7 @@ impl<'a> SnapshotCtx<'a> {
         let rect = Rect::from_field(object, "vectorRect")
             .filter(|rect| rect.w > 0.0 && rect.h > 0.0)
             .unwrap_or(rect);
-        let id = self.allocate_id()?;
+        let id = self.allocate_node_id(object)?;
         let styles = style_map(object);
         let mut base = self.base(id, Some("svg".into()), rect, Some(parent_rect));
         // Opacity only, deliberately: `rect` came out of the capture's root
@@ -742,39 +766,6 @@ fn color_from_border(border: &str) -> Option<String> {
         }
     }
     border.split_whitespace().find_map(parse_css_color)
-}
-
-fn parse_px(value: &str) -> Option<f64> {
-    value
-        .trim()
-        .strip_suffix("px")
-        .unwrap_or(value.trim())
-        .parse::<f64>()
-        .ok()
-        .filter(|value| value.is_finite())
-}
-
-fn parse_text_align(value: &str) -> Option<TextAlign> {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "left" | "start" => Some(TextAlign::Left),
-        "center" => Some(TextAlign::Center),
-        "right" | "end" => Some(TextAlign::Right),
-        "justify" => Some(TextAlign::Justify),
-        _ => None,
-    }
-}
-
-fn matrix_rotation(value: &str) -> Option<f64> {
-    let body = value.trim().strip_prefix("matrix(")?.strip_suffix(')')?;
-    let values: Vec<f64> = body
-        .split(',')
-        .map(|part| part.trim().parse::<f64>())
-        .collect::<Result<_, _>>()
-        .ok()?;
-    if values.len() != 6 || !values.iter().all(|value| value.is_finite()) {
-        return None;
-    }
-    Some(values[1].atan2(values[0]).to_degrees())
 }
 
 /// The single glyph colour a `background-clip: text` fill collapses to: a

@@ -105,6 +105,7 @@ impl ChatSessions {
                     fresh
                 });
             tab.thread_id = Some(thread_id);
+            tab.pending_thread_creation = false;
             tab.title = title;
             // `new_chat()` is used above only to reset the local transcript,
             // but it also raises this host-command flag. Hydration is a
@@ -124,8 +125,21 @@ impl ChatSessions {
                 }
             }
             tab.messages = durable_messages;
-            tab.transcript_pinned = true;
+            // Hydration is not a user send. Keep each conversation's reading
+            // position and follow-latest choice when room events refresh it.
+            // Fresh conversations already start pinned through new_chat().
             hydrated.push(tab);
+        }
+        // A creation request and the room event stream are independent. Until
+        // a durable snapshot acknowledges a local tab, an older snapshot must
+        // not remove that tab or its unsent draft. Once acknowledged, ordinary
+        // server removal/archive semantics apply again.
+        for tab in &self.tabs {
+            if tab.pending_thread_creation && tab.thread_id.is_some()
+                && !hydrated.iter().any(|known| known.thread_id == tab.thread_id)
+            {
+                hydrated.push(tab.clone());
+            }
         }
         self.active = active_id
             .and_then(|id| {
@@ -173,7 +187,9 @@ impl ChatSessions {
         fresh.selected_model = from.selected_model;
         fresh.agent_team_size = from.agent_team_size;
         self.tabs.push(fresh);
-        self.active = self.tabs.len() - 1;
+        // A new conversation shares the floating panel's current geometry,
+        // just like selecting an existing conversation.
+        self.switch_to(self.tabs.len() - 1);
         self.active
     }
 
@@ -314,6 +330,39 @@ mod tests {
     use crate::chat_title::DEFAULT_CHAT_TITLE;
 
     #[test]
+    fn pending_managed_creation_preserves_draft_until_durable_acknowledgement() {
+        let mut sessions = ChatSessions::default();
+        sessions.enable_managed_thread_mode("Team Chat");
+        let existing = || vec![("a".into(), "A".into(), vec![])];
+        sessions.hydrate_managed_threads(existing());
+        sessions.expand();
+        sessions.panel_width = 480.0;
+        sessions.new_tab();
+        assert!(!sessions.is_minimized());
+        assert_eq!(sessions.panel_width, 480.0);
+        sessions.thread_id = Some("pending".into());
+        sessions.pending_thread_creation = true;
+        sessions.set_input_text("unsent draft");
+        for _ in 0..3 {
+            sessions.hydrate_managed_threads(existing());
+            assert_eq!(sessions.tab_count(), 2);
+            assert_eq!(sessions.thread_id.as_deref(), Some("pending"));
+            assert_eq!(sessions.input.text(), "unsent draft");
+            assert!(sessions.pending_thread_creation);
+            assert!(!sessions.pending_new_chat);
+        }
+        sessions.switch_to(0);
+        let mut confirmed = existing();
+        confirmed.push(("pending".into(), "New Chat 1".into(), vec![]));
+        sessions.hydrate_managed_threads(confirmed);
+        assert_eq!(sessions.thread_id.as_deref(), Some("a"));
+        assert_eq!(sessions.tabs()[1].input.text(), "unsent draft");
+        assert!(!sessions.tabs()[1].pending_thread_creation);
+        sessions.hydrate_managed_threads(existing());
+        assert_eq!(sessions.tab_count(), 1, "Acknowledged threads are not resurrected after archive");
+    }
+
+    #[test]
     fn default_has_one_tab_at_index_zero() {
         let s = ChatSessions::default();
         assert_eq!(s.tab_count(), 1);
@@ -373,6 +422,34 @@ mod tests {
         sessions.switch_to(1);
         assert!(!sessions.pending_new_chat);
         assert_eq!(sessions.tab_count(), 2);
+    }
+
+    #[test]
+    fn managed_refresh_preserves_each_threads_reading_position_and_draft() {
+        let mut sessions = ChatSessions::default();
+        let threads = || vec![
+            ("pthr_a".into(), "A".into(), vec![crate::chat::ChatMessage::user("one")]),
+            ("pthr_b".into(), "B".into(), vec![crate::chat::ChatMessage::user("two")]),
+        ];
+        sessions.hydrate_managed_threads(threads());
+        sessions.switch_to(0);
+        sessions.transcript_pinned = false;
+        sessions.transcript_scroll.offset = 123.0;
+        sessions.set_input_text("unsent A");
+        sessions.switch_to(1);
+        sessions.transcript_pinned = true;
+        sessions.set_input_text("unsent B");
+        for _ in 0..3 {
+            sessions.hydrate_managed_threads(threads());
+            assert_eq!(sessions.active_index(), 1);
+            assert!(sessions.transcript_pinned);
+            assert_eq!(sessions.input.text(), "unsent B");
+            sessions.switch_to(0);
+            assert!(!sessions.transcript_pinned);
+            assert_eq!(sessions.transcript_scroll.offset, 123.0);
+            assert_eq!(sessions.input.text(), "unsent A");
+            sessions.switch_to(1);
+        }
     }
 
     #[test]

@@ -340,6 +340,7 @@ fn build_text_node(
     let (state, bindings, events) = parse_interactivity(obj);
 
     Some(PenNode::Text(TextNode {
+        text_rasterization: None,
         base,
         width,
         height,

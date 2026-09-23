@@ -186,6 +186,11 @@ impl ChatState {
     /// in-flight worker tied to the previous conversation.
     pub fn new_chat(&mut self) {
         self.messages.clear();
+        self.history_before = None;
+        self.history_loading = false;
+        self.history_error = false;
+        self.pending_history = false;
+        self.pending_thread_creation = false;
         self.title = DEFAULT_CHAT_TITLE.to_string();
         self.input.set_text("");
         self.pending_send = None;

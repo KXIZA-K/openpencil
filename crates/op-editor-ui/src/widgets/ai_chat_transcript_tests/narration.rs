@@ -93,3 +93,61 @@ fn an_unclosed_marker_stays_literal() {
     assert_eq!(spans[0].style, SpanStyle::Body);
     assert_eq!(spans[0].text, "a ** dangling marker");
 }
+
+#[test]
+fn headings_emphasis_and_nested_strong_have_distinct_styles() {
+    use crate::widgets::ai_chat_transcript_richtext::{layout_rich, SpanStyle};
+    let lines = layout_rich("## โครงการ\n\n*emphasis* and ***both***", 60);
+    assert_eq!(lines[0].spans[0].text, "โครงการ");
+    assert_eq!(lines[0].spans[0].style, SpanStyle::Heading);
+    assert!(lines
+        .iter()
+        .flat_map(|l| &l.spans)
+        .any(|s| s.text == "emphasis" && s.style == SpanStyle::Emphasis));
+    assert!(lines
+        .iter()
+        .flat_map(|l| &l.spans)
+        .any(|s| s.text == "both" && s.style == SpanStyle::StrongEmphasis));
+}
+
+#[test]
+fn fenced_code_preserves_indentation_blank_lines_and_literal_markers() {
+    use crate::widgets::ai_chat_transcript_richtext::{layout_rich, SpanStyle};
+    let lines = layout_rich("````ts\n  const label = \"**not bold**\";\n\n```\n````", 60);
+    assert_eq!(lines.len(), 3);
+    assert_eq!(lines[0].spans[0].text, "  const label = \"**not bold**\";");
+    assert!(lines[1].spans.is_empty());
+    assert_eq!(lines[2].spans[0].text, "```");
+    assert!(lines.iter().all(|l| l.code_block_width > 0.0));
+    assert!(lines
+        .iter()
+        .flat_map(|l| &l.spans)
+        .all(|s| s.style == SpanStyle::Code));
+}
+
+#[test]
+fn streaming_unclosed_fence_is_code_until_the_end() {
+    use crate::widgets::ai_chat_transcript_richtext::{layout_rich, SpanStyle};
+    let lines = layout_rich("```rust\n  let x = 1;", 60);
+    assert_eq!(lines.len(), 1);
+    assert_eq!(lines[0].spans[0].text, "  let x = 1;");
+    assert_eq!(lines[0].spans[0].style, SpanStyle::Code);
+}
+
+#[test]
+fn ordered_lists_quotes_escapes_and_html_remain_readable_without_execution() {
+    use crate::widgets::ai_chat_transcript_richtext::layout_rich;
+    let lines = layout_rich(
+        "3. Third\n4. Fourth\n\n> Quoted\n\n\\*literal\\* <script>alert(1)</script>",
+        60,
+    );
+    let text: String = lines
+        .iter()
+        .flat_map(|l| &l.spans)
+        .map(|s| s.text.as_str())
+        .collect();
+    assert!(text.contains("3. Third"));
+    assert!(text.contains("4. Fourth"));
+    assert!(text.contains("*literal* <script>alert(1)</script>"));
+    assert!(lines.iter().any(|l| l.quote));
+}

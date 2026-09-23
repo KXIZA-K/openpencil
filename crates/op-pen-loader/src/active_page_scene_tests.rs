@@ -11,6 +11,81 @@ fn state_from(src: &str) -> EditorState {
 }
 
 #[test]
+fn source_text_rasterization_survives_save_and_both_scene_paths() {
+    let state = state_from(r#"{"version":"1.0.0","children":[
+      {"id":"gray","type":"text","content":"Same label","textRasterization":"grayscale"},
+      {"id":"auto","type":"text","content":"Same label"}
+    ]}"#);
+    let saved = serde_json::to_string(&state.doc).unwrap();
+    let restored = state_from(&saved);
+    for scene in [editor_state_to_layout_scene(&restored), editor_state_to_active_page_layout_scene(&restored)] {
+        assert!(scene.pages[0].children[0].text_grayscale);
+        assert!(!scene.pages[0].children[1].text_grayscale);
+    }
+    assert_eq!(serde_json::to_string(&restored.doc).unwrap(), saved);
+}
+
+#[test]
+fn html_ledger_layout_is_consistent_across_editor_and_preview_without_affecting_vectors() {
+    let state = state_from(
+        r#"{
+      "version":"1.0.0",
+      "conversion":{"entries":[{"kind":"screen","key":"html-snapshot:v1:fixture","nodeId":"html"}]},
+      "pages":[{"id":"page","name":"Mixed","children":[
+        {"id":"html","type":"frame","width":100.5,"height":60.25},
+        {"id":"vector","type":"frame","x":200,"width":100.5,"height":60.25}
+      ]}]
+    }"#,
+    );
+    let original = serde_json::to_string(&state.doc).unwrap();
+    for scene in [
+        editor_state_to_layout_scene(&state),
+        editor_state_to_active_page_layout_scene(&state),
+    ] {
+        assert_eq!(scene.pages[0].children[0].bounds.size.x, 100.5);
+        assert_eq!(scene.pages[0].children[0].bounds.size.y, 60.25);
+        assert_eq!(scene.pages[0].children[1].bounds.size.x, 101.0);
+        assert_eq!(scene.pages[0].children[1].bounds.size.y, 60.0);
+        assert_eq!(scene.pages[0].children[0].css_paint_origin, Some(op_editor_core::render_backend::Point2D::ZERO));
+        assert_eq!(scene.pages[0].children[1].css_paint_origin, None);
+    }
+    let preview =
+        crate::adapter::pen_documents_to_payload_for_preview(&state.doc, &state.doc, false);
+    assert_eq!(preview.payload.pages[0].children[0].w, 100.5);
+    assert_eq!(preview.payload.pages[0].children[1].w, 101.0);
+    assert_eq!(
+        serde_json::to_string(&state.doc).unwrap(),
+        original,
+        "Projection must not mutate the source document"
+    );
+}
+
+#[test]
+fn css_paint_origin_is_root_relative_and_stops_at_transformed_subtrees() {
+    let state = state_from(r#"{
+      "version":"1.0.0",
+      "conversion":{"entries":[{"kind":"screen","key":"html-snapshot:v1:fixture","nodeId":"html"}]},
+      "children":[{"id":"html","type":"frame","x":10.25,"y":20.5,"width":300,"height":200,"children":[
+        {"id":"plain","type":"rectangle","x":4.2,"y":8.6,"width":20.5,"height":10.25},
+        {"id":"rotated","type":"frame","rotation":20,"width":100,"height":50,"children":[
+          {"id":"nested","type":"rectangle","width":20,"height":10}
+        ]}
+      ]}]
+    }"#);
+    for preserve in [false, true] {
+        let mut state = state.clone();
+        state.editor_ui.preserve_authored_geometry = preserve;
+        for scene in [editor_state_to_layout_scene(&state), editor_state_to_active_page_layout_scene(&state)] {
+            let root = &scene.pages[0].children[0];
+            assert_eq!(root.css_paint_origin, Some(op_editor_core::render_backend::Point2D::new(10.25, 20.5)));
+            assert_eq!(root.children[0].css_paint_origin, root.css_paint_origin);
+            assert_eq!(root.children[1].css_paint_origin, None);
+            assert_eq!(root.children[1].children[0].css_paint_origin, None);
+        }
+    }
+}
+
+#[test]
 fn interactive_scene_keeps_page_indices_but_builds_only_active_children() {
     let mut state = state_from(
         r#"{

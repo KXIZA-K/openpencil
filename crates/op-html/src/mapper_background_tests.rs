@@ -168,6 +168,14 @@ fn repeating_layers_stay_tiles() {
     );
 }
 
+#[test]
+fn css_default_repeat_retains_top_left_sampling_contract() {
+    let (layer, warnings) = geometry(&[("background-repeat", "repeat")], (390.0, 340.0));
+    assert_eq!(layer.mode, Some(ImageFillMode::CssRepeat));
+    assert!(warnings.is_empty(), "{warnings:?}");
+    assert!(!layer.position_dropped);
+}
+
 /// An `auto` axis means `node` is the containing block, not the element's box.
 /// A crop transform derived from it decals the bitmap outside the node, so the
 /// layer must degrade to a whole-box fill instead of vanishing.

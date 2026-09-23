@@ -232,8 +232,8 @@ fn export_raster_applies_flex_layout_from_editor_state() {
 
 #[test]
 fn page_bounds_covers_layout_resolved_child_geometry() {
-    use op_editor_ui::layout_scene::NodeKind;
     use op_editor_ui::Rect;
+    use op_editor_ui::layout_scene::NodeKind;
     // A frame at (10,10) 200x100 with a child the layout pass
     // resolved to the frame's full width — page_bounds must cover
     // the resolved child bounds, not authored coords.
@@ -388,7 +388,7 @@ fn export_node_raster_paints_svg_path_d_stroke() {
 }
 
 #[test]
-fn export_raster_paints_only_authored_stroke_sides() {
+fn export_raster_paints_only_authored_stroke_sides_with_center_alignment() {
     let mut node = SceneNode::leaf("bottom-border", NodeKind::Frame);
     node.bounds = Rect::xywh(0.0, 0.0, 40.0, 20.0);
     node.stroke = Some(SceneStroke {
@@ -422,10 +422,18 @@ fn export_raster_paints_only_authored_stroke_sides() {
         bottom[3] > 200,
         "bottom edge should paint the authored stroke, got {bottom:?}"
     );
-    let below = pixel_at(&decoded, 22, 23);
+    // The fixture authors CENTER, not INSIDE: a 4 px bottom stroke spans
+    // doc y=18..22, including two pixels below the authored y=20 edge.
+    // Match the canvas painter's explicit alignment contract.
+    let above = pixel_at(&decoded, 22, 19);
     assert_eq!(
-        below[3], 0,
-        "sided strokes should stay inside the authored bounds, got {below:?}"
+        above[3], 0,
+        "centered bottom stroke must not extend above its band, got {above:?}"
+    );
+    let below = pixel_at(&decoded, 22, 23);
+    assert!(
+        below[3] > 200,
+        "centered bottom stroke extends below the edge, got {below:?}"
     );
     let _ = std::fs::remove_file(&tmp);
 }
@@ -643,14 +651,16 @@ fn render_raster_bytes_rejects_oversized_outputs() {
     assert!(matches!(err, ExportError::OutputTooLarge { .. }), "{err:?}");
     assert!(err.to_string().contains("exceeds the size cap"), "{err}");
     // Sanity: a normal surface still renders.
-    assert!(render_raster_bytes(
-        Rect::xywh(0.0, 0.0, 64.0, 64.0),
-        RasterFormat::Png,
-        1.0,
-        0.0,
-        |_| {},
-    )
-    .is_ok());
+    assert!(
+        render_raster_bytes(
+            Rect::xywh(0.0, 0.0, 64.0, 64.0),
+            RasterFormat::Png,
+            1.0,
+            0.0,
+            |_| {},
+        )
+        .is_ok()
+    );
 }
 
 /// Styled-run smoke: the shared text painter (canvas_viewport_text)

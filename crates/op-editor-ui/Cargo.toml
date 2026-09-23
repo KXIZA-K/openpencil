@@ -14,6 +14,8 @@ path = "src/lib.rs"
 # Widget facade internals: glam Vec2 as Point2D, bitflags for flags.
 glam = { version = "0.29", default-features = false, features = ["std"] }
 bitflags = "2"
+# Parse chat Markdown as text events; HTML rendering and CLI features stay off.
+pulldown-cmark = { version = "0.13.4", default-features = false }
 # Every Widget exposes an `accesskit::Node` so the host can build a
 # unified accessibility tree. Pinned to 0.24 to match the hosts.
 accesskit = "0.24"

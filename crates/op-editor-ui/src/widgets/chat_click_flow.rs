@@ -60,6 +60,21 @@ mod conversation_tests {
     use super::*;
 
     #[test]
+    fn history_click_queues_once_without_creating_or_switching_threads() {
+        let mut state = EditorState::default();
+        state.chat.history_before = Some(51);
+        state.chat.set_input_text("draft");
+        apply_chat_hit(&mut state, AIChatHit::LoadHistory, 0);
+        assert!(state.chat.history_loading);
+        assert!(std::mem::take(&mut state.chat.pending_history));
+        apply_chat_hit(&mut state, AIChatHit::LoadHistory, 0);
+        assert!(!state.chat.pending_history);
+        assert!(!state.chat.pending_new_chat);
+        assert_eq!(state.chat.input.text(), "draft");
+        assert_eq!(state.chat.tab_count(), 1);
+    }
+
+    #[test]
     fn selecting_a_conversation_closes_only_the_picker() {
         let mut state = EditorState::default();
         state.chat.minimize();
@@ -114,6 +129,14 @@ pub fn apply_chat_hit(state: &mut EditorState, hit: AIChatHit, now_ms: u64) -> C
         // Panel chrome that hit no control — blank press: blur every
         // input (the chat's own textarea included, DOM parity).
         AIChatHit::Inside => ChatClickStep::BlankPress,
+        AIChatHit::LoadHistory => {
+            if state.chat.history_before.is_some() && !state.chat.history_loading {
+                state.chat.pending_history = true;
+                state.chat.history_loading = true;
+                state.chat.history_error = false;
+            }
+            ChatClickStep::Dirty
+        }
         // Same shared entry point the Asset Center card uses.
         AIChatHit::ClearPinnedStyle => {
             if state.editor_ui.clear_pinned_style_guide() {

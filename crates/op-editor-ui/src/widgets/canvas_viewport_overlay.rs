@@ -180,7 +180,7 @@ pub(crate) fn paint_node_stroke(
             .sides
             .filter(|sides| !stroke_sides_are_uniform(*sides))
         {
-            paint_sided_rect_stroke(cx, world_rect, stroke.color, sides, zoom);
+            paint_sided_rect_stroke(cx, world_rect, stroke.color, sides, zoom, stroke.align);
         } else {
             let w = stroke.width * zoom;
             let (rect, r) = align_stroke_rect(world_rect, r, w, stroke.align);
@@ -270,17 +270,25 @@ fn paint_sided_rect_stroke(
     color: crate::Color,
     sides: [f32; 4],
     zoom: f32,
+    align: SceneStrokeAlign,
 ) {
     let x0 = rect.origin.x;
     let y0 = rect.origin.y;
     let x1 = rect.origin.x + rect.size.x;
     let y1 = rect.origin.y + rect.size.y;
     let [top, right, bottom, left] = sides;
+    // Each side has its own half-width offset; using the uniform maximum
+    // would move thin borders away from the authored box edge.
+    let direction = match align {
+        SceneStrokeAlign::Inside => 1.0,
+        SceneStrokeAlign::Center => 0.0,
+        SceneStrokeAlign::Outside => -1.0,
+    };
     if top > 0.0 {
         let width = top * zoom;
         cx.backend.stroke_line(
-            Point2D::new(x0, y0 + width / 2.0),
-            Point2D::new(x1, y0 + width / 2.0),
+            Point2D::new(x0, y0 + direction * width / 2.0),
+            Point2D::new(x1, y0 + direction * width / 2.0),
             color,
             width,
         );
@@ -288,8 +296,8 @@ fn paint_sided_rect_stroke(
     if right > 0.0 {
         let width = right * zoom;
         cx.backend.stroke_line(
-            Point2D::new(x1 - width / 2.0, y0),
-            Point2D::new(x1 - width / 2.0, y1),
+            Point2D::new(x1 - direction * width / 2.0, y0),
+            Point2D::new(x1 - direction * width / 2.0, y1),
             color,
             width,
         );
@@ -297,8 +305,8 @@ fn paint_sided_rect_stroke(
     if bottom > 0.0 {
         let width = bottom * zoom;
         cx.backend.stroke_line(
-            Point2D::new(x0, y1 - width / 2.0),
-            Point2D::new(x1, y1 - width / 2.0),
+            Point2D::new(x0, y1 - direction * width / 2.0),
+            Point2D::new(x1, y1 - direction * width / 2.0),
             color,
             width,
         );
@@ -306,8 +314,8 @@ fn paint_sided_rect_stroke(
     if left > 0.0 {
         let width = left * zoom;
         cx.backend.stroke_line(
-            Point2D::new(x0 + width / 2.0, y0),
-            Point2D::new(x0 + width / 2.0, y1),
+            Point2D::new(x0 + direction * width / 2.0, y0),
+            Point2D::new(x0 + direction * width / 2.0, y1),
             color,
             width,
         );

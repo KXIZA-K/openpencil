@@ -317,6 +317,54 @@ fn document_post_without_base_version_keeps_legacy_behavior() {
 }
 
 #[test]
+fn document_post_from_before_restart_cannot_overwrite_new_incarnation() {
+    let mut previous_process = fresh_state();
+    assert!(previous_process.apply_document_push(SYNC_BODY, None).unwrap().applied);
+    let stale_version = previous_process.document_version_for_test();
+    let stale_body = SYNC_BODY.replacen("{", &format!(r#"{{"baseGeneration":"{}","# , previous_process.generation), 1);
+    // Another process restores different authoritative content and reaches the
+    // same local counter. A pre-restart client must not acquire write authority
+    // merely because that small integer has been reused (the ABA problem).
+    let mut restarted_process = fresh_state();
+    assert!(restarted_process.apply_document_push(SYNC_BODY_ALT, None).unwrap().applied);
+    let before = doc_fingerprint(&restarted_process);
+    let stale = restarted_process.apply_document_push(&stale_body, Some(stale_version)).unwrap();
+    assert!(!stale.applied, "A pre-restart version must not authorize a new process document write");
+    assert_eq!(doc_fingerprint(&restarted_process), before);
+    let current_body = SYNC_BODY.replacen("{", &format!(r#"{{"baseGeneration":"{}","# , restarted_process.generation), 1);
+    assert!(restarted_process.apply_document_push(&current_body, Some(before.0)).unwrap().applied);
+}
+
+#[test]
+fn generation_fence_is_checked_at_apply_time_and_rejects_invalid_wire_values() {
+    let mut state = fresh_state();
+    let old_generation = state.generation.clone();
+    let body = SYNC_BODY.replacen("{", &format!(r#"{{"baseGeneration":"{old_generation}","#), 1);
+    let prepared = PendingDocumentPush::parse(&body, state.mode).unwrap();
+    // Simulate changing authority after parsing, before the exclusive apply.
+    state.generation = fresh_state().generation;
+    let before = doc_fingerprint(&state);
+    assert!(!state.apply_prepared_document_push(prepared, None).unwrap().applied);
+    assert_eq!(doc_fingerprint(&state), before);
+    for field in [r#""baseGeneration":null,"#, r#""baseGeneration":23,"#, r#""baseGeneration":"bad","#, r#""baseGeneration":"00000000000000000000000000000000","baseGeneration":"00000000000000000000000000000000","#] {
+        let invalid = SYNC_BODY.replacen("{", &format!("{{{field}"), 1);
+        assert!(PendingDocumentPush::parse(&invalid, state.mode).is_err());
+    }
+}
+
+#[test]
+fn managed_document_push_requires_both_generation_and_version() {
+    let mut state = fresh_state();
+    state.managed_token = Some("test-token".into());
+    let before = doc_fingerprint(&state);
+    assert!(!state.apply_document_push(SYNC_BODY, Some(before.0)).unwrap().applied);
+    let body = SYNC_BODY.replacen("{", &format!(r#"{{"baseGeneration":"{}","#, state.generation), 1);
+    assert!(!state.apply_document_push(&body, None).unwrap().applied);
+    assert_eq!(doc_fingerprint(&state), before);
+    assert!(state.apply_document_push(&body, Some(before.0)).unwrap().applied);
+}
+
+#[test]
 fn document_post_restores_embedded_authored_geometry_mode() {
     let mut state = fresh_state();
     let body = r#"{

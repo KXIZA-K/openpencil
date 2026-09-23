@@ -19,7 +19,7 @@ use op_editor_core::chat::{ChatMessage, ChatRole, ChatTranscriptSelection};
 
 use super::ai_chat_transcript_cache::CanonicalTranscript;
 use super::ai_chat_transcript_design::{
-    applied_design_block_label, extract_design_json_blocks, paint_design_block,
+    applied_design_block_label, extract_applied_edit_json, extract_design_json_blocks, paint_design_block,
     place_design_blocks, DesignBlock,
 };
 pub(crate) use super::ai_chat_transcript_flow::normalize_narration_markdown;
@@ -221,7 +221,10 @@ pub(crate) fn build_item(
     let (visible_content, mut pending_design_blocks) = if is_user {
         (raw_visible_content, Vec::new())
     } else {
-        let extracted = extract_design_json_blocks(&raw_visible_content, msg.streaming);
+        let historical_edit = (!msg.streaming && msg.content.contains("<!-- APPLIED -->"))
+            .then(|| extract_applied_edit_json(&raw_visible_content)).flatten();
+        let extracted = historical_edit.unwrap_or_else(||
+            extract_design_json_blocks(&raw_visible_content, msg.streaming));
         // Suppress the in-chat design card WHILE STREAMING — no transient
         // "Generating design..." card (the "Pencil it out" checklist + the
         // live canvas already convey progress). Completed blocks still render.

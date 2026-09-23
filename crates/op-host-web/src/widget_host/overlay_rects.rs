@@ -12,14 +12,28 @@ use op_editor_ui::widgets::host_overlay_geometry as overlay_geometry;
 use op_editor_ui::{Point2D, Rect};
 
 impl WidgetHost {
-    /// The floating bottom-right StatusBar pill rect, or `None` when
+    /// The floating bottom-left StatusBar pill rect, or `None` when
     /// the canvas is too narrow to float it (matches the paint guard).
     pub(in crate::widget_host) fn status_bar_rect(
         &self,
         viewport_w: f32,
         viewport_h: f32,
     ) -> Option<Rect> {
-        canvas_geometry::status_bar_rect(&self.editor_state, viewport_w, viewport_h)
+        let mut rect = canvas_geometry::status_bar_rect(&self.editor_state, viewport_w, viewport_h)?;
+        let (left, top, _, _) = self.canvas_region(viewport_w, viewport_h);
+        rect.origin.x = left + canvas_geometry::STATUS_INSET;
+        // Narrow canvases (or a dragged chat) must keep zoom controls usable.
+        if let Some(chat) = self.ai_chat_rect(viewport_w, viewport_h) {
+            if !self.editor_state.chat.maximized
+                && rect.origin.x < chat.origin.x + chat.size.x
+                && rect.origin.x + rect.size.x > chat.origin.x
+                && rect.origin.y < chat.origin.y + chat.size.y
+                && rect.origin.y + rect.size.y > chat.origin.y
+            {
+                rect.origin.y = chat.origin.y - rect.size.y - 8.0;
+            }
+        }
+        (rect.origin.y >= top).then_some(rect)
     }
 
     /// Step the canvas zoom from a StatusBar `[-]` / `[+]` click,

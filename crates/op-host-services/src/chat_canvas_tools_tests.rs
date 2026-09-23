@@ -1,6 +1,149 @@
 use super::*;
 use op_ai::chat_provider::ChatToolExecutor;
 
+fn compact_move_state() -> EditorState {
+    let mut state = EditorState::new();
+    *state.active_children_mut() = serde_json::from_value(serde_json::json!([
+        {"type":"frame", "id":"screen", "width":390, "height":844, "children":[
+            {"type":"frame", "id":"location", "children":[
+                {"type":"frame", "id":"map", "bindings":{"visible":"$app.mapOpen ?? false"}, "children":[
+                    {"type":"text", "id":"label", "content":"Map"}
+                ]}
+            ]},
+            {"type":"text", "id":"checklist", "content":"Preserve"}
+        ]},
+        {"type":"frame", "id":"other", "children":[]}
+    ])).unwrap();
+    state
+}
+
+#[test]
+fn compact_move_preserves_subtree_then_updates_overlay_geometry() {
+    use serde_json::json;
+    let mut state = compact_move_state();
+    let before = serde_json::to_value(state.active_children()).unwrap();
+    let ops = vec![
+        (
+            "null".into(),
+            json!({"op":"move", "id":"map", "parent":"screen"}),
+        ),
+        (
+            "null".into(),
+            json!({"op":"update", "id":"map", "data":{"x":16,"y":230,"width":358,"height":260}}),
+        ),
+    ];
+    assert_eq!(
+        apply_design_modification(&mut state, &ops, &["screen".into()]),
+        (2, true)
+    );
+    let after = serde_json::to_value(state.active_children()).unwrap();
+    assert_eq!(after[0]["children"][0]["children"], json!([]));
+    let moved = &after[0]["children"][2];
+    assert_eq!(moved["id"], "map");
+    assert_eq!(moved["x"], 16.0);
+    assert_eq!(moved["y"], 230.0);
+    assert_eq!(moved["width"], 358.0);
+    assert_eq!(moved["height"], 260.0);
+    assert_eq!(
+        moved["children"],
+        before[0]["children"][0]["children"][0]["children"]
+    );
+    assert_eq!(
+        moved["bindings"],
+        before[0]["children"][0]["children"][0]["bindings"]
+    );
+    assert_eq!(after[0]["children"][1], before[0]["children"][1]);
+    assert_eq!(after[1], before[1]);
+}
+
+#[test]
+fn compact_move_rejects_out_of_scope_invalid_and_cyclic_batches_atomically() {
+    use serde_json::json;
+    for invalid in [
+        json!({"op":"move", "id":"map", "parent":"other"}),
+        json!({"op":"move", "id":"other", "parent":"screen"}),
+        json!({"op":"move", "id":"map", "parent":"missing"}),
+        json!({"op":"move", "id":"map", "parent":""}),
+        json!({"op":"move", "id":"map", "parent":"label"}),
+        json!({"op":"move", "id":"location", "parent":"map"}),
+        json!({"op":"move", "id":"map", "parent":"map"}),
+        json!({"op":"move", "id":"map", "parent":"screen", "index":-1}),
+        json!({"op":"move", "id":"map", "parent":"screen", "index":1.5}),
+    ] {
+        let mut state = compact_move_state();
+        let before = serde_json::to_value(state.active_children()).unwrap();
+        let ops = vec![
+            (
+                "null".into(),
+                json!({"op":"update", "id":"label", "data":{"content":"Must roll back"}}),
+            ),
+            ("null".into(), invalid.clone()),
+        ];
+        assert_eq!(
+            apply_design_modification(&mut state, &ops, &["screen".into()]),
+            (0, false),
+            "{invalid}"
+        );
+        assert_eq!(
+            serde_json::to_value(state.active_children()).unwrap(),
+            before,
+            "{invalid}"
+        );
+    }
+}
+
+#[test]
+fn compact_move_honors_explicit_sibling_index() {
+    let mut state = compact_move_state();
+    let ops = vec![(
+        "null".into(),
+        serde_json::json!({"op":"move", "id":"map", "parent":"screen", "index":0}),
+    )];
+    assert_eq!(
+        apply_design_modification(&mut state, &ops, &["screen".into()]),
+        (1, true)
+    );
+    assert_eq!(
+        state.active_children()[0].children().unwrap()[0].id_str(),
+        "map"
+    );
+}
+
+#[test]
+fn invalid_interaction_rejects_entire_modify_batch_without_partial_changes() {
+    use serde_json::json;
+    let mut state = EditorState::new();
+    state.active_children_mut().clear();
+    state.active_children_mut().push(
+        serde_json::from_value(json!({
+            "type":"frame", "id":"screen", "width":390, "height":844,
+            "children":[{"type":"text", "id":"label", "content":"Original"}]
+        }))
+        .unwrap(),
+    );
+    let before = serde_json::to_value(state.active_children()).unwrap();
+    let ops = vec![
+        (
+            "null".into(),
+            json!({"op":"update", "id":"label", "data":{"content":"Changed"}}),
+        ),
+        (
+            "null".into(),
+            json!({"op":"update", "id":"screen", "data":{
+                "events":{"onTap":[{"type":"set_state", "target":"label"}]}
+            }}),
+        ),
+    ];
+    assert_eq!(
+        apply_design_modification(&mut state, &ops, &["screen".into()]),
+        (0, false)
+    );
+    assert_eq!(
+        serde_json::to_value(state.active_children()).unwrap(),
+        before
+    );
+}
+
 #[test]
 fn chat_tool_defs_match_ts_crud_subset_and_auth_levels() {
     let defs = chat_tool_defs();
@@ -120,7 +263,7 @@ fn execute_update_unknown_node_reports_tool_error() {
 
 #[test]
 fn apply_modification_replaces_existing_tree_and_backfills_image_src() {
-    use op_editor_core::{walkers::find_node, NodeId, PenNodeExt};
+    use op_editor_core::{NodeId, PenNodeExt, walkers::find_node};
 
     let mut state = EditorState::new();
     state.active_children_mut().clear();

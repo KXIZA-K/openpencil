@@ -215,6 +215,8 @@ pub(crate) fn node_payload_to_scene(
         id: node.id.clone(),
         kind: str_to_kind(&node.kind),
         bounds,
+        css_paint_origin: node.css_paint_origin.map(|[x, y]| Point2D::new(x, y)),
+        text_grayscale: node.text_grayscale,
         aggregate_bounds_cache,
         // Carried so the image and canonical fill-stack painters can apply
         // direct paint opacity; legacy fill/stroke/gradient/shadow fields
@@ -475,6 +477,7 @@ fn image_fit_to_scene(value: Option<&str>) -> SceneImageFit {
         Some("fit") => SceneImageFit::Fit,
         Some("crop") => SceneImageFit::Crop,
         Some("tile") => SceneImageFit::Tile,
+        Some("css_repeat") => SceneImageFit::CssRepeat,
         Some("stretch") => SceneImageFit::Stretch,
         _ => SceneImageFit::Fill,
     }

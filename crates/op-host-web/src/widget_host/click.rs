@@ -149,6 +149,9 @@ impl WidgetHost {
                 // pointer move before the next paint can't cross-pair the
                 // previous tab's geometry with this tab's messages.
                 self.force_rotate_chat_owner();
+                if let Some(id) = self.editor_state.chat.active().thread_id.as_deref() {
+                    crate::platform_chat_bridge::thread_selected(id);
+                }
                 self.mark_dirty();
                 true
             }

@@ -96,7 +96,10 @@ pub fn text_edit_layout(backend: &mut dyn RenderBackend, node: &SceneNode) -> Te
     // widest line fits, preserving the imported layout. Wrapping text
     // breaks lines instead, so it is left untouched.
     let box_w = node.bounds.size.x;
-    if !node.text_wrap && box_w > 0.0 {
+    // Captured HTML already supplies browser-resolved fragments and font sizes.
+    // CSS overflow does not imply permission to shrink text, and measuring a
+    // fallback family here must not silently override that source typography.
+    if node.css_paint_origin.is_none() && !node.text_wrap && box_w > 0.0 {
         let widest = lines
             .iter()
             .map(|l| measure_line_width(backend, l, font_size, weight, letter_spacing))
@@ -475,6 +478,18 @@ mod tests {
         let node = text_node("hi", 200.0);
         let layout = text_edit_layout(&mut b, &node);
         assert!((layout.font_size - 20.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn captured_css_text_never_uses_fallback_shrink_to_fit() {
+        let mut backend = UniformBackend;
+        let mut node = text_node("hello world", 60.0);
+        node.css_paint_origin = Some(Point2D::new(10.25, 20.5));
+        node.letter_spacing = 1.25;
+        let layout = text_edit_layout(&mut backend, &node);
+        assert_eq!(layout.font_size, 20.0);
+        assert_eq!(layout.letter_spacing, 1.25);
+        assert_eq!(layout.lines, vec!["hello world"]);
     }
 
     #[test]

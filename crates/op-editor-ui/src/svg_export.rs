@@ -175,7 +175,7 @@ fn emit_node_defs(out: &mut String, n: &SceneNode) {
             n.corner_radius.max(0.0),
         );
     }
-    if n.image_fit == SceneImageFit::Tile {
+    if matches!(n.image_fit, SceneImageFit::Tile | SceneImageFit::CssRepeat) {
         if let Some(src) = n.image_src.as_deref() {
             emit_image_pattern(out, n, src, &id);
         }
@@ -561,7 +561,7 @@ fn emit_image(out: &mut String, n: &SceneNode) {
     } else {
         String::new()
     };
-    if n.image_fit == SceneImageFit::Tile {
+    if matches!(n.image_fit, SceneImageFit::Tile | SceneImageFit::CssRepeat) {
         let _ = write!(
             out,
             r#"<rect id="{}" x="{}" y="{}" width="{}" height="{}" fill="url(#image-pattern-{id})" opacity="{}"{clip}/>"#,
@@ -578,7 +578,7 @@ fn emit_image(out: &mut String, n: &SceneNode) {
         SceneImageFit::Fit => "xMidYMid meet",
         SceneImageFit::Crop | SceneImageFit::Fill => "xMidYMid slice",
         SceneImageFit::Stretch => "none",
-        SceneImageFit::Tile => unreachable!("tile images return above"),
+        SceneImageFit::Tile | SceneImageFit::CssRepeat => unreachable!("tile images return above"),
     };
     let _ = write!(
         out,
@@ -600,8 +600,9 @@ fn emit_image_pattern(out: &mut String, n: &SceneNode, src: &str, id: &str) {
     // fall back to one bounds-sized cell instead of inventing a repeat scale.
     let (tile_w, tile_h) = image_metadata::intrinsic_dimensions(n, src)
         .unwrap_or((r.size.x.max(1.0), r.size.y.max(1.0)));
-    let start_x = r.origin.x + (r.size.x - tile_w) * 0.5;
-    let start_y = r.origin.y + (r.size.y - tile_h) * 0.5;
+    let centered = n.image_fit != SceneImageFit::CssRepeat;
+    let start_x = r.origin.x + if centered { (r.size.x - tile_w) * 0.5 } else { 0.0 };
+    let start_y = r.origin.y + if centered { (r.size.y - tile_h) * 0.5 } else { 0.0 };
     let _ = write!(
         out,
         r#"<pattern id="image-pattern-{id}" patternUnits="userSpaceOnUse" x="{start_x}" y="{start_y}" width="{tile_w}" height="{tile_h}" viewBox="0 0 {tile_w} {tile_h}"><image width="{tile_w}" height="{tile_h}" href="{}" preserveAspectRatio="none"/></pattern>"#,

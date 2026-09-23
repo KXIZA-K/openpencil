@@ -1,5 +1,126 @@
 use super::*;
 
+struct ModifyStreamProvider {
+    stop: StopReason,
+}
+
+struct InvalidInteractionProvider;
+
+impl ChatProvider for InvalidInteractionProvider {
+    fn provider_label(&self) -> &str { "invalid-interaction-regression" }
+    fn send(&self, _: ChatRequest) -> Box<dyn Iterator<Item = ChatDelta> + Send> {
+        Box::new([
+            ChatDelta::TextDelta(r#"[{"op":"update","id":"mobile","data":{"events":{"onClick":[{"pop":null}]}}}]"#.into()),
+            ChatDelta::Done { stop_reason: StopReason::EndTurn },
+        ].into_iter())
+    }
+}
+
+#[test]
+fn modify_route_reports_invalid_interaction_without_applied_or_mutation() {
+    let state = Mutex::new(WebCanvasState::new(compact_fixture(), 3100));
+    let before = serde_json::to_value(&state.lock().unwrap().editor.doc).unwrap();
+    let mut out = Vec::new();
+    stream_modify_route(
+        &mut out,
+        crate::chat_intent::ModifyPlan {
+            system_prompt: String::new(), user_message: "wire button".into(),
+            target_frame_ids: vec!["mobile".into()],
+        },
+        &InvalidInteractionProvider, &state, &SseHub::default(), None,
+    ).unwrap();
+    assert_eq!(serde_json::to_value(&state.lock().unwrap().editor.doc).unwrap(), before);
+    let output = String::from_utf8(out).unwrap();
+    assert!(output.contains("Invalid design interaction"), "{output}");
+    assert!(output.contains("No changes were applied"), "{output}");
+    assert!(!output.contains("APPLIED"), "{output}");
+}
+
+impl ChatProvider for ModifyStreamProvider {
+    fn provider_label(&self) -> &str {
+        "modify-regression"
+    }
+    fn send(&self, request: ChatRequest) -> Box<dyn Iterator<Item = ChatDelta> + Send> {
+        assert_eq!(
+            request.thinking,
+            op_ai::chat_provider::ThinkingMode::Disabled
+        );
+        Box::new(
+            [
+                ChatDelta::TextDelta(
+                    r#"[{"op":"update","id":"mobile","data":{"name":"Edited"}}]"#.into(),
+                ),
+                ChatDelta::Done {
+                    stop_reason: self.stop,
+                },
+            ]
+            .into_iter(),
+        )
+    }
+}
+
+#[test]
+fn modify_route_disables_reasoning_and_applies_only_complete_streams() {
+    for stop in [
+        StopReason::EndTurn,
+        StopReason::MaxTokens,
+        StopReason::Aborted,
+    ] {
+        let state = Mutex::new(WebCanvasState::new(compact_fixture(), 3100));
+        let before = serde_json::to_value(&state.lock().unwrap().editor.doc).unwrap();
+        let mut out = Vec::new();
+        stream_modify_route(
+            &mut out,
+            crate::chat_intent::ModifyPlan {
+                system_prompt: String::new(),
+                user_message: "rename".into(),
+                target_frame_ids: vec!["mobile".into()],
+            },
+            &ModifyStreamProvider { stop },
+            &state,
+            &SseHub::default(),
+            None,
+        )
+        .unwrap();
+        let after = serde_json::to_value(&state.lock().unwrap().editor.doc).unwrap();
+        if stop == StopReason::EndTurn {
+            assert_eq!(after["children"][0]["name"], "Edited");
+            let output = String::from_utf8(out).unwrap();
+            assert!(output.contains("APPLIED"));
+            assert!(output.contains("Applied 1 design change(s)"));
+            assert!(!output.contains("Edited"), "Raw model JSON must not appear in chat: {output}");
+        } else {
+            assert_eq!(
+                before, after,
+                "incomplete output must not mutate the canvas"
+            );
+            assert!(!String::from_utf8(out).unwrap().contains("APPLIED"));
+        }
+    }
+}
+
+#[test]
+fn rejected_modify_does_not_publish_raw_json_or_success_summary() {
+    let state = Mutex::new(WebCanvasState::new(compact_fixture(), 3100));
+    let before = serde_json::to_value(&state.lock().unwrap().editor.doc).unwrap();
+    let mut out = Vec::new();
+    stream_modify_route(
+        &mut out,
+        crate::chat_intent::ModifyPlan {
+            system_prompt: String::new(), user_message: "rename".into(),
+            target_frame_ids: vec!["desktop".into()],
+        },
+        &ModifyStreamProvider { stop: StopReason::EndTurn },
+        &state, &SseHub::default(), None,
+    ).unwrap();
+    let output = String::from_utf8(out).unwrap();
+    assert!(output.contains("No changes were applied"));
+    assert!(!output.contains("Applied 1 design"));
+    assert!(!output.contains("APPLIED"));
+    assert!(!output.contains("Edited"));
+    assert_eq!(serde_json::to_value(&state.lock().unwrap().editor.doc).unwrap(), before);
+}
+
 fn compact_fixture() -> EditorState {
     EditorState::from_document(
         serde_json::from_value(serde_json::json!({

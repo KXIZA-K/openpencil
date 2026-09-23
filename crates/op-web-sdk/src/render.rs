@@ -68,7 +68,7 @@ use wasm_bindgen::JsCast;
 use op_editor_core::Viewport as DocViewport;
 use op_editor_ui::theme::Theme;
 use op_editor_ui::RenderBackend;
-use op_host_web::canvaskit::{init_backend, CanvasKitBackend};
+use op_host_web::canvaskit::{display_dpr, init_backend, CanvasKitBackend};
 
 use crate::dirty_state::{DirtyState, FailureAction};
 use crate::Viewer;
@@ -166,6 +166,7 @@ thread_local! {
     /// reference back to its own closure. `start_raf_pump` overwrites this
     /// on every `attach_canvas`; `detach` cancels + drops it.
     static PUMP: RefCell<Option<Rc<PumpHandle>>> = const { RefCell::new(None) };
+    static IMAGE_READY: RefCell<Option<(web_sys::HtmlCanvasElement, Closure<dyn FnMut(web_sys::Event)>)>> = const { RefCell::new(None) };
 }
 
 // ---------------------------------------------------------------------------
@@ -241,6 +242,14 @@ impl Viewer {
             *slot.borrow_mut() = Some(shared.clone());
         });
 
+        let weak = Rc::downgrade(&shared);
+        let on_image_ready = Closure::wrap(Box::new(move |_: web_sys::Event| {
+            if let Some(shared) = weak.upgrade() {
+                mark_and_arm(&shared);
+            }
+        }) as Box<dyn FnMut(web_sys::Event)>);
+        canvas.add_event_listener_with_callback("op-image-ready", on_image_ready.as_ref().unchecked_ref())?;
+        IMAGE_READY.with(|slot| *slot.borrow_mut() = Some((canvas, on_image_ready)));
         start_raf_pump(shared);
         Ok(())
     }
@@ -257,6 +266,11 @@ impl Viewer {
     /// / PumpHandle` ownership cycle. See the module doc for the full drop
     /// chain.
     pub fn detach(&self) {
+        IMAGE_READY.with(|slot| {
+            if let Some((canvas, listener)) = slot.borrow_mut().take() {
+                let _ = canvas.remove_event_listener_with_callback("op-image-ready", listener.as_ref().unchecked_ref());
+            }
+        });
         let shared = RENDER.with(|slot| slot.borrow_mut().take());
         if let Some(shared) = shared {
             // State-machine side of detach: the pending schedule is being
@@ -485,6 +499,11 @@ fn start_raf_pump(shared: Rc<RenderShared>) {
         };
 
         if paint_frame(shared) {
+            // Paint discovers deferred work; keep draining its bounded batches
+            // until submitted. Async SVG completion wakes us via its event.
+            if op_editor_ui::image_runtime::has_pending_decodes() {
+                shared.state.mark_dirty();
+            }
             if shared.state.finish_paint_success(gen) {
                 // Newer content arrived during the paint and no frame is
                 // pending for it — arm one now. `finish_paint_success`
@@ -567,6 +586,12 @@ fn paint_frame(shared: &RenderShared) -> bool {
     let vp = b.viewport;
     let w = b.logical_w;
     let h = b.logical_h;
+    if let Some(window) = web_sys::window() {
+        let dpr = display_dpr(window.device_pixel_ratio() as f32, vp.zoom);
+        if (b.backend.dpi_scale() - dpr).abs() > f32::EPSILON {
+            b.backend.resize_for_display(w as u32, h as u32, dpr);
+        }
+    }
     b.backend.begin_frame();
     crate::viewer_host::paint_scene(&mut b.backend, &scene_rc, vp, Theme::dark(), w, h);
     b.backend.end_frame();

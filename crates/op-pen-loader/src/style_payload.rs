@@ -25,6 +25,8 @@ pub(crate) fn base_payload(base: &PenNodeBase, kind: &str) -> NodePayload {
     NodePayload {
         id: base.id.clone(),
         schema_id: base.id.clone(),
+        css_paint_origin: None,
+        text_grayscale: false,
         kind: kind.to_string(),
         name: base.name.clone().unwrap_or_else(|| base.id.clone()),
         x: base.x.unwrap_or(0.0) as f32,
@@ -170,6 +172,7 @@ pub(crate) fn image_fill_mode_to_payload(mode: Option<&ImageFillMode>) -> String
         Some(ImageFillMode::Fit) => "fit",
         Some(ImageFillMode::Crop) => "crop",
         Some(ImageFillMode::Tile) => "tile",
+        Some(ImageFillMode::CssRepeat) => "css_repeat",
         Some(ImageFillMode::Stretch) => "stretch",
         Some(ImageFillMode::Fill) | None => "fill",
     }

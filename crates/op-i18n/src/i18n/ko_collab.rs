@@ -2,6 +2,9 @@
 
 pub fn lookup(key: &str) -> Option<&'static str> {
     Some(match key {
+        "ai.history.older" => "이전 메시지 불러오기",
+        "ai.history.loading" => "기록 불러오는 중…",
+        "ai.history.retry" => "기록을 불러오지 못했습니다 · 다시 시도",
         "collab.topbar.collaborate" => "협업",
         "collab.topbar.starting" => "협업을 시작하는 중…",
         "collab.topbar.joining" => "참여하는 중…",

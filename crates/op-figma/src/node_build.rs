@@ -184,6 +184,7 @@ pub fn text_node(
         StyleFontStyle::Italic => TextFontStyle::Italic,
     });
     PenNode::Text(TextNode {
+        text_rasterization: None,
         base,
         width: Some(width),
         height: Some(height),

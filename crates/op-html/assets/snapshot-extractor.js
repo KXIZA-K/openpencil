@@ -10,6 +10,15 @@
   var requestedRoot =
     options && options.root && options.root.nodeType === 1 ? options.root : null;
 
+  // Optional source binding hook. The standalone capture remains unchanged;
+  // callers can attach stable identities without matching rendered text.
+  function annotate(node, source, fragment) {
+    if (node && options && typeof options.annotate === "function") {
+      options.annotate(node, source, fragment || null);
+    }
+    return node;
+  }
+
   var MAX_NODES = 20000;
   var MAX_IMAGE_EDGE = 2048;
   var MAX_IMAGE_DATA_BYTES = 24 * 1024 * 1024;
@@ -280,13 +289,13 @@
     }
     if (!takeNode()) return [];
     return [
-      {
+      annotate({
         kind: "text",
         rect: pageRect(rect),
         text: text,
         lines: bands || 1,
         styles: textPaintStyles(parentComputed, TEXT_STYLE_KEYS),
-      },
+      }, textNode, { start: 0, end: textNode.textContent.length }),
     ];
   }
 
@@ -376,16 +385,17 @@
       // single-line path.
       if (start > 0 || !textNode.previousSibling) text = text.replace(/^ /, "");
       if (end < content.length || !textNode.nextSibling) text = text.replace(/ $/, "");
+      var sourceStart = start;
       start = end;
       if (!text.trim() || rect.width < 0.5 || rect.height < 0.5) continue;
       if (!takeNode()) return [];
-      out.push({
+      out.push(annotate({
         kind: "text",
         rect: pageRect(rect),
         text: text,
         lines: 1,
         styles: styles,
-      });
+      }, textNode, { start: sourceStart, end: end }));
     }
     if (typeof range.detach === "function") range.detach();
     // All-or-nothing: a partial split would silently drop the tail text.
@@ -865,6 +875,9 @@
     // leave the second half starting mid-line for no visible reason. Its
     // text is excluded by the segment walker.
     if (computed.display === "none") return true;
+    // Source-aware importers can retain authored component/slot boundaries.
+    // This changes capture grouping only, never the browser's computed layout.
+    if (options && typeof options.preserveElement === "function" && options.preserveElement(node)) return false;
     if (computed.display !== "inline") return isFoldableTextChip(node, computed);
     return Array.prototype.every.call(node.childNodes, isInlineFlow);
   }
@@ -1036,14 +1049,14 @@
       if (segment.href) out.href = segment.href;
       return out;
     });
-    return {
+    return annotate({
       kind: "text",
       rect: pageRect(rect),
       text: text,
       lines: lines || 1,
       styles: textPaintStyles(blockComputed, TEXT_STYLE_KEYS),
       segments: emitted,
-    };
+    }, parent, { folded: true });
   }
 
   // Emit one run of consecutive inline-flow siblings: mixed content (bare
@@ -1096,12 +1109,12 @@
     if (computed.position === "fixed") {
       fixedDepth += 1;
       try {
-        return buildElementBody(element, tag, computed, rect);
+        return annotate(buildElementBody(element, tag, computed, rect), element);
       } finally {
         fixedDepth -= 1;
       }
     }
-    return buildElementBody(element, tag, computed, rect);
+    return annotate(buildElementBody(element, tag, computed, rect), element);
   }
 
   function buildElementBody(element, tag, computed, rect) {
@@ -1180,6 +1193,13 @@
     return;
   }
   var root = buildRoot(target);
+  // Whole-page capture is opt-in: explicit element picks keep their original
+  // border box. The CSS canvas is not the body's box (which may be empty).
+  var pageCanvas = !requestedRoot && options && options.pageCanvas;
+  if (!root && pageCanvas) {
+    root = annotate({ kind: "element", tag: "body", rect: pageRect(target.getBoundingClientRect()),
+      styles: elementStyles(window.getComputedStyle(target)), children: [] }, target);
+  }
   if (!root) {
     console.error(
       requestedRoot
@@ -1202,11 +1222,35 @@
     return "rgb(255, 255, 255)";
   }
 
+  var background = pageBackground();
+  if (pageCanvas) {
+    var htmlStyle = window.getComputedStyle(document.documentElement);
+    var rootTransparent = htmlStyle.backgroundColor === "transparent" || /, *0\)$/.test(htmlStyle.backgroundColor);
+    var propagateBody = rootTransparent && htmlStyle.backgroundImage === "none";
+    var backgroundStyle = window.getComputedStyle(propagateBody ? target : document.documentElement);
+    // Flatten only the solid page backdrop over the browser's white base,
+    // never the document content. This preserves alpha on dark editor chrome.
+    var pixel = document.createElement("canvas"); pixel.width = pixel.height = 1;
+    var context = pixel.getContext("2d");
+    context.fillStyle = "white"; context.fillRect(0, 0, 1, 1);
+    var backgroundVisible = htmlStyle.display !== "none" && backgroundStyle.display !== "none";
+    context.fillStyle = backgroundVisible ? backgroundStyle.backgroundColor : "transparent"; context.fillRect(0, 0, 1, 1);
+    var rgba = context.getImageData(0, 0, 1, 1).data;
+    background = "rgb(" + rgba[0] + ", " + rgba[1] + ", " + rgba[2] + ")";
+    var backdropImage = backgroundVisible && backgroundStyle.backgroundImage !== "none";
+    if (propagateBody) root.styles["background-color"] = "rgba(0, 0, 0, 0)";
+    root = annotate({ kind: "element", tag: "div", rect: { x: 0, y: 0,
+      w: round(Math.max(window.innerWidth, document.documentElement.scrollWidth)),
+      h: round(Math.max(window.innerHeight, document.documentElement.scrollHeight)) },
+      styles: { "background-color": background }, children: [root] }, target,
+      { pageCanvas: true, backdropImage: backdropImage });
+  }
+
   var snapshot = {
     version: 1,
     source: window.location.href,
     title: document.title,
-    background: pageBackground(),
+    background: background,
     viewport: {
       width: round(window.innerWidth),
       height: round(window.innerHeight),
@@ -1214,6 +1258,11 @@
     root: root,
   };
   if (truncated) snapshot.truncated = true;
+  // Embedded conversion consumes the snapshot without clipboard/download side effects.
+  if (options && typeof options.onSnapshot === "function") {
+    options.onSnapshot(snapshot);
+    return;
+  }
   var output = JSON.stringify(snapshot, null, 2);
 
   if (navigator.clipboard && navigator.clipboard.writeText) {

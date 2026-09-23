@@ -47,6 +47,7 @@ fn normalize_fill_item(value: &mut serde_json::Value) {
                 "fill" => Some("fill"),
                 "stretch" => Some("stretch"),
                 "tile" => Some("tile"),
+                "css_repeat" => Some("css_repeat"),
                 _ => None,
             });
         if let Some(mode) = mode {

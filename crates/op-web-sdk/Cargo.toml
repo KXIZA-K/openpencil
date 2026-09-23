@@ -15,6 +15,7 @@ op-editor-ui = { path = "../op-editor-ui" }
 op-editor-core = { path = "../op-editor-core" }
 op-pen-loader = { path = "../op-pen-loader", default-features = false }
 jian-ops-schema = { path = "../../vendor/jian/crates/jian-ops-schema" }
+jian-core = { path = "../../vendor/jian/crates/jian-core" }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1" }
 # Pin matches op-host-web — last wasm-bindgen-cli release compatible with
@@ -34,6 +35,8 @@ optional = true
 features = [
   "Document",
   "Element",
+  "Event",
+  "EventTarget",
   "HtmlCanvasElement",
   "Window",
 ]

@@ -43,6 +43,35 @@ pub(crate) struct DesignExtraction {
     pub blocks: Vec<PendingDesignBlock>,
 }
 
+/// Fold only complete, acknowledged edit protocol from historical assistant
+/// turns. Ordinary JSON and unacknowledged proposals remain visible as-is.
+pub(crate) fn extract_applied_edit_json(text: &str) -> Option<DesignExtraction> {
+    let trimmed = text.trim();
+    let code = trimmed.strip_prefix("```json")
+        .and_then(|rest| rest.strip_suffix("```"))
+        .unwrap_or(trimmed).trim();
+    let value: serde_json::Value = serde_json::from_str(code).ok()?;
+    let items = value.as_array()?;
+    if items.is_empty() || !items.iter().all(|item| {
+        let Some(object) = item.as_object() else { return false };
+        if !object.get("id").and_then(serde_json::Value::as_str)
+            .is_some_and(|id| !id.is_empty()) { return false; }
+        match object.get("op").and_then(serde_json::Value::as_str) {
+            Some("update") => object.get("data").is_some_and(serde_json::Value::is_object),
+            Some("delete") => true,
+            None => object_is_design_node(object),
+            _ => false,
+        }
+    }) { return None; }
+    Some(DesignExtraction {
+        visible_text: String::new(),
+        blocks: vec![PendingDesignBlock {
+            element_count: items.len(), label: String::new(), streaming: false,
+            applied: true, code: code.to_owned(),
+        }],
+    })
+}
+
 pub(crate) fn extract_design_json_blocks(text: &str, is_streaming: bool) -> DesignExtraction {
     let mut visible = Vec::new();
     let mut blocks = Vec::new();

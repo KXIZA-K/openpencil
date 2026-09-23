@@ -17,6 +17,8 @@ extern "C" {
 
     /// The bridge object: flat scalar-arg ops over a CanvasKit canvas.
     pub type OpCk;
+    #[wasm_bindgen(method, js_name = setTextGrayscale)]
+    pub(super) fn set_text_grayscale(this: &OpCk, grayscale: bool);
     #[wasm_bindgen(method, js_name = beginFrame)]
     pub(super) fn begin_frame(this: &OpCk);
     #[wasm_bindgen(method, js_name = endFrame)]
@@ -60,6 +62,11 @@ extern "C" {
         g: f32,
         b: f32,
         a: f32,
+    );
+    #[wasm_bindgen(method, js_name = fillDropShadow)]
+    pub(super) fn fill_drop_shadow(
+        this: &OpCk, x: f32, y: f32, w: f32, h: f32, radius: f32,
+        blur: f32, r: f32, g: f32, b: f32, a: f32,
     );
     #[wasm_bindgen(method, js_name = fillRoundRectPerCorner)]
     pub(super) fn fill_round_rect_per_corner(

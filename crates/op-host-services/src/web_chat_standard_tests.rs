@@ -614,11 +614,10 @@ fn modify_plan() -> crate::chat_intent::ModifyPlan {
 const MODIFY_RESPONSE: &str = r#"[{"type":"frame","id":"n217","name":"Renamed","x":0,"y":0,"width":100,"height":100,"children":[]}]"#;
 
 #[test]
-fn a_closed_write_barrier_still_streams_the_modify_reply_without_writing() {
+fn a_closed_write_barrier_reports_no_changes_without_publishing_edit_json() {
     // The modify route writes a batch straight into the editor, so during
     // shutdown it must degrade to `(0, false)` — no nodes applied, no version
-    // bump — while still streaming the model's answer back to the user. A
-    // refusal here would turn a shutdown into a visible chat error.
+    // bump — and explicitly tell the user that the edit was not applied.
     use crate::web_canvas_server::WriteBarrier;
 
     let barrier = WriteBarrier::default();
@@ -642,9 +641,11 @@ fn a_closed_write_barrier_still_streams_the_modify_reply_without_writing() {
 
     let streamed = String::from_utf8(out).expect("utf8 sse");
     assert!(
-        streamed.contains("Renamed"),
-        "the reply text must still reach the user: {streamed}"
+        streamed.contains("No changes were applied"),
+        "the refused mutation must be reported to the user: {streamed}"
     );
+    assert!(!streamed.contains("Renamed"));
+    assert!(!streamed.contains("APPLIED"));
     let live = state.lock().unwrap_or_else(|p| p.into_inner());
     assert_eq!(
         live.version, before,

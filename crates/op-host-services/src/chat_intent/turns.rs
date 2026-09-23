@@ -45,8 +45,7 @@ pub struct CliTurnPlan {
 /// TS `ai-chat-handlers.ts:721-722` — the modification progress step.
 pub(super) const MODIFY_STEP: &str =
     r#"<step title="Checking guidelines">Analyzing modification request...</step>"#;
-pub(super) const MODIFY_RETRY_REMINDER: &str =
-    "\n\nCRITICAL: Respond with ONLY I(...) JavaScript statements -- never prose, explanations, or numbered/bulleted lists. If you truly cannot make the change, return an empty program.";
+pub(super) const MODIFY_RETRY_REMINDER: &str = "\n\nCRITICAL: Respond with ONLY a compact JSON array of update/move/delete operations for existing nodes, or I(...) JavaScript statements when new nodes are needed. Never mix formats or return prose, explanations, or numbered/bulleted lists. If you truly cannot make the change, return an empty program.";
 
 pub(super) struct ModifyTurnParse {
     full_response: String,
@@ -125,7 +124,7 @@ pub(super) fn with_modify_retry_feedback(
         .or(failed.parse_diagnostic.as_deref())
         .unwrap_or("no applicable nodes were extracted");
     request.user_message.push_str(
-        "\n\nRETRY FEEDBACK:\nThe previous response produced no applicable edit. Rewrite the requested modification as valid I(parent, node) JavaScript.\nParser feedback: ",
+        "\n\nRETRY FEEDBACK:\nThe previous response produced no applicable edit. Rewrite it as compact JSON update/move/delete operations for existing nodes, or valid I(parent, node) JavaScript for new nodes.\nParser feedback: ",
     );
     request
         .user_message

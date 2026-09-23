@@ -15,6 +15,7 @@ use super::{Result, ServeMode, WebCanvasError, WebCanvasState, WebReply};
 /// outside the lock leaves only the install under it.
 pub(crate) struct PendingDocumentPush {
     pub(super) base_version: Option<u64>,
+    pub(super) base_generation: Option<String>,
     pub(super) editor_meta: op_pen_loader::EditorMeta,
     /// `None` for a metadata-only push (an active-page switch), which carries
     /// no document to install.
@@ -58,9 +59,11 @@ impl PendingDocumentPush {
         let request = crate::mcp_serve::parse_document_sync_request(body)?;
         let base_version = request.base_version;
         let editor_meta = request.resolved_editor_meta(request.embedded_editor_meta.clone());
+        let base_generation = request.base_generation;
         if request.metadata_only {
             return Ok(Self {
                 base_version,
+                base_generation,
                 editor_meta,
                 prepared: None,
             });
@@ -89,6 +92,7 @@ impl PendingDocumentPush {
             .map_err(|e| WebCanvasError::Document(e.to_string()))?;
         Ok(Self {
             base_version,
+            base_generation,
             editor_meta,
             prepared: Some(prepared),
         })
@@ -116,6 +120,7 @@ pub(crate) fn document_push_reply(
                 "ok": false,
                 "error": "version-conflict",
                 "version": outcome.current_version,
+                "generation": state.generation,
             })
             .to_string(),
         },

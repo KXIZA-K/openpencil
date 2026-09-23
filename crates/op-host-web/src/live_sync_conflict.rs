@@ -82,7 +82,12 @@ pub(super) fn preserve_local_document<C: RepaintContext + 'static>(
 /// documented semantic for a shared online tenant; a latch that requires a
 /// session to lift is not a stricter version of that, it is a hang.
 ///
-/// Outside both — a local or managed daemon with no session — the daemon is a
+/// IDS Studio embeds also share one room-scoped daemon document behind the
+/// Gateway's authenticated room routing. They use the local server protocol,
+/// not upstream online mode's separate account-tenant store. Treat that embed
+/// as sequenced without changing host authentication or storage modes.
+///
+/// Outside those cases — a local or managed daemon with no session — the daemon is a
 /// peer holding the operator's file, not an authority, and nothing preserves
 /// the losing edit. The latch stays and explicit resolution is untouched.
 pub(super) const fn auto_resolve_is_safe(
@@ -98,11 +103,22 @@ pub(super) const fn auto_resolve_is_safe(
 ///
 /// Learned once from `GET /api/mcp/server`'s `serveMode` (see
 /// [`probe_serve_mode`]) and cached, because it is a property of the
-/// deployment and cannot change without a reload. Defaults to `false` until
-/// the probe answers, so the conservative behaviour is what runs during
-/// start-up rather than the permissive one.
+/// deployment and cannot change without a reload. Standalone clients default
+/// to `false` until the probe answers. IDS Studio embeds opt into the same
+/// recovery policy independently; their Gateway room document is sequenced
+/// even though the underlying server retains its local file protocol.
 pub(super) fn server_is_authoritative() -> bool {
-    SERVER_AUTHORITATIVE.with(|flag| flag.get())
+    recovery_is_sequenced(
+        SERVER_AUTHORITATIVE.with(|flag| flag.get()),
+        crate::platform_chat_bridge::studio_managed(),
+    )
+}
+
+/// This is a client conflict-recovery policy, NOT an authorization grant.
+/// Studio membership and write permissions remain enforced by the Gateway.
+/// A standalone local editor retains explicit conflict resolution.
+const fn recovery_is_sequenced(online: bool, studio_embed: bool) -> bool {
+    online || studio_embed
 }
 
 thread_local! {
@@ -198,9 +214,27 @@ mod auto_resolve_tests {
 
 #[cfg(test)]
 mod server_authority_tests {
-    use super::{auto_resolve_is_safe, parse_server_authoritative};
+    use super::{auto_resolve_is_safe, parse_server_authoritative, recovery_is_sequenced};
 
     use op_editor_core::CollabConnectionPhase;
+
+    #[test]
+    fn studio_embed_recovers_without_switching_the_daemon_to_online_storage() {
+        assert!(recovery_is_sequenced(false, true));
+        assert!(recovery_is_sequenced(true, false));
+        assert!(recovery_is_sequenced(true, true));
+        assert!(!recovery_is_sequenced(false, false));
+        assert!(auto_resolve_is_safe(
+            true,
+            CollabConnectionPhase::Idle,
+            recovery_is_sequenced(false, true),
+        ));
+        assert!(!auto_resolve_is_safe(
+            false,
+            CollabConnectionPhase::Idle,
+            recovery_is_sequenced(false, true),
+        ));
+    }
 
     #[test]
     fn an_online_daemon_is_authoritative() {

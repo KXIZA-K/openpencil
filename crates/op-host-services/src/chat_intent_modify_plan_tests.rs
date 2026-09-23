@@ -53,6 +53,18 @@ fn variable_context_matches_ts_format() {
 }
 
 #[test]
+fn modify_plan_explains_overlay_flow_and_frontmost_sibling_order() {
+    let mut state = state_with_page();
+    state.set_single_selection(op_editor_core::NodeId::new("page-1"));
+    let plan = build_modify_plan(&state, "move the map above the content").expect("plan");
+    assert!(plan.system_prompt.contains(r#""role":"overlay""#));
+    assert!(plan.system_prompt.contains("x/y alone does not reliably escape auto-layout"));
+    assert!(plan.system_prompt.contains("index 0 is frontmost"));
+    assert!(plan.system_prompt.contains("close buttons and labels before decorative backgrounds"));
+    assert!(!plan.system_prompt.contains("Explicit x/y uses absolute positioning within the parent."));
+}
+
+#[test]
 fn modify_plan_targets_selection_when_present() {
     let mut state = state_with_page();
     state.selection.set = vec![op_editor_core::NodeId::new("page-1")];

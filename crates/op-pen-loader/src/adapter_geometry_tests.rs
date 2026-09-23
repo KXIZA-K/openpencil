@@ -7,6 +7,59 @@
 use super::*;
 
 #[test]
+fn css_layout_preserves_fractional_positions_and_flex_sizing() {
+    let loaded = load(
+        r#"{"version":"1.0.0","conversion":{"entries":[
+      {"kind":"screen","key":"html-snapshot:v1:fixture","nodeId":"root"}
+    ]},"children":[{
+      "type":"frame","id":"root","x":10.25,"y":20.5,
+      "width":301.5,"height":200,"layout":"none","children":[
+        {"type":"frame","id":"positioned","x":15.25,"y":42.8,
+         "width":101.5,"height":30.25,"layout":"horizontal","children":[
+          {"type":"rectangle","id":"fill","width":"fill_container","height":12.5}
+        ]}
+      ]}]}"#,
+    );
+    let parent = &loaded.payload.pages[0].children[0].children[0];
+    assert!((parent.x - 25.5).abs() < 0.001, "x={}", parent.x);
+    assert!((parent.y - 63.3).abs() < 0.001, "y={}", parent.y);
+    assert!((parent.w - 101.5).abs() < 0.001);
+    let fill = &parent.children[0];
+    assert!((fill.w - 101.5).abs() < 0.001, "fill width={}", fill.w);
+    assert!((fill.h - 12.5).abs() < 0.001);
+}
+
+#[test]
+fn css_layout_requires_exact_versioned_screen_and_root_mapping() {
+    for (kind, key, id, enabled) in [
+        ("screen", "html-snapshot:v1:fixture", "root", true),
+        ("component", "html-snapshot:v1:fixture", "root", false),
+        ("screen", "html-snapshot:v2:fixture", "root", false),
+        ("screen", "html-snapshot:v1:", "root", false),
+        ("screen", "route:/dashboard", "root", false),
+        ("screen", "html-snapshot:v1:fixture", "other", false),
+    ] {
+        let doc = serde_json::json!({
+            "version":"1.0.0",
+            "conversion":{"entries":[{"kind":kind,"key":key,"nodeId":id}]},
+            "children":[{"type":"frame","id":"root","width":100.5,"height":60.25}]
+        });
+        let loaded = load(&doc.to_string());
+        let root = &loaded.payload.pages[0].children[0];
+        assert_eq!(
+            root.w,
+            if enabled { 100.5 } else { 101.0 },
+            "{kind}/{key}/{id}"
+        );
+        assert_eq!(
+            root.h,
+            if enabled { 60.25 } else { 60.0 },
+            "{kind}/{key}/{id}"
+        );
+    }
+}
+
+#[test]
 fn preserving_geometry_keeps_authored_nested_positions() {
     let src = r##"{
       "version":"1.0.0",

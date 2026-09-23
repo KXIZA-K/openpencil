@@ -16,7 +16,7 @@ pub fn pen_document_to_payload(doc: &PenDocument) -> LoadedDoc {
         pages
             .iter()
             .enumerate()
-            .map(|(i, p)| build_page(&p.id, &p.name, &p.children, i))
+            .map(|(i, p)| build_page(&p.id, &p.name, &p.children, i, doc.conversion.as_ref()))
             .collect()
     } else if !doc.children.is_empty() {
         // Single-page fallback (TS shape: top-level `children`).
@@ -25,6 +25,7 @@ pub fn pen_document_to_payload(doc: &PenDocument) -> LoadedDoc {
             doc.name.as_deref().unwrap_or("Page 1"),
             &doc.children,
             0,
+            doc.conversion.as_ref(),
         )]
     } else {
         vec![PagePayload {
@@ -57,13 +58,14 @@ pub fn pen_document_to_payload_preserving_geometry(doc: &PenDocument) -> LoadedD
     let pages: Vec<PagePayload> = if let Some(pages) = &doc.pages {
         pages
             .iter()
-            .map(|p| build_page_preserving_geometry(&p.id, &p.name, &p.children))
+            .map(|p| build_page_preserving_geometry(&p.id, &p.name, &p.children, doc.conversion.as_ref()))
             .collect()
     } else if !doc.children.is_empty() {
         vec![build_page_preserving_geometry(
             "page-1",
             doc.name.as_deref().unwrap_or("Page 1"),
             &doc.children,
+            doc.conversion.as_ref(),
         )]
     } else {
         vec![PagePayload {
@@ -109,7 +111,7 @@ pub fn pen_documents_to_payload_for_preview(
         } else {
             let mut rects = BTreeMap::new();
             for root in roots {
-                compute_layout(root, &mut rects);
+                compute_layout(root, &mut rects, layout_doc.conversion.as_ref());
             }
             rects
         }
@@ -121,6 +123,7 @@ pub fn pen_documents_to_payload_for_preview(
             .map(|n| node_to_payload(n, &rects))
             .collect();
         mark_root_frame_clips(paint_roots, &mut children);
+        mark_css_paint_origins(layout_roots, &mut children, layout_doc.conversion.as_ref());
         PagePayload {
             id: id.to_string(),
             name: name.to_string(),

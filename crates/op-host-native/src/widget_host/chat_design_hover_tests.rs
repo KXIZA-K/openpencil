@@ -84,10 +84,9 @@ fn assert_chat_and_lower_hover_cleared(host: &WidgetHostNative) {
 }
 
 #[test]
-fn cursor_move_sets_chat_tab_hover_when_over_tab() {
-    // Seed two tabs so the tab row renders (tab row only paints when
-    // `tabs_snapshot.len() >= 1`). The default ChatSessions starts with
-    // one implicit tab; `new_tab()` adds a second.
+fn cursor_move_sets_active_conversation_hover_when_over_selector() {
+    // The compact selector represents the active conversation, not the
+    // first tab from the retired horizontal tab strip.
     let mut host = WidgetHostNative::new();
     host.editor_state_mut().chat.new_tab(); // now 2 tabs
     let viewport_w = 1440.0_f32;
@@ -97,27 +96,24 @@ fn cursor_move_sets_chat_tab_hover_when_over_tab() {
 
     let chat_rect = host.ai_chat_rect(viewport_w, viewport_h).unwrap();
 
-    // Verify that `tab_hover_at` agrees with our probe point before wiring.
-    // Tab 0 body starts at tab_row_left = rect.origin.x + PAD + CHEVRON_W + PILL_GAP
-    // (8 + 18 + 6 = 32 px from the panel left edge).  Center of the first tab
-    // body: x = tab_row_left + TAB_MAX_W / 2, y = rect.origin.y + HEADER_HEIGHT / 2.
-    let over_tab0 = Point2D::new(
-        chat_rect.origin.x + 32.0 + 60.0, // tab row left + half TAB_MAX_W
-        chat_rect.origin.y + 18.0,        // header mid
+    assert_eq!(host.editor_state().chat.active_index(), 1);
+    let over_selector = Point2D::new(
+        chat_rect.origin.x + 92.0,
+        chat_rect.origin.y + 18.0,
     );
     let panel = AIChatPlaceholder::from_editor(host.editor_state());
     assert_eq!(
-        panel.tab_hover_at(chat_rect, over_tab0),
-        Some(0),
-        "tab_hover_at must return tab index 0 for a point inside the first tab body"
+        panel.tab_hover_at(chat_rect, over_selector),
+        Some(1),
+        "closed conversation selector must hover the active conversation"
     );
 
     // Now drive the host cursor move and confirm the state field is updated.
-    assert!(host.apply_cursor_move(over_tab0.x, over_tab0.y));
+    assert!(host.apply_cursor_move(over_selector.x, over_selector.y));
     assert_eq!(
         host.editor_state().editor_ui.chat_tab_hover,
-        Some(0),
-        "apply_cursor_move must write chat_tab_hover = Some(0) when cursor is over tab 0"
+        Some(1),
+        "host cursor move must preserve the active conversation hover"
     );
 
     // Moving off the panel clears the hover.

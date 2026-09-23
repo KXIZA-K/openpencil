@@ -7,7 +7,7 @@ use std::cell::RefCell;
 use std::rc::{Rc, Weak};
 
 use op_editor_core::sync_gate::SyncGate;
-use op_editor_core::web_sync::WebSyncClient;
+use op_editor_core::web_sync::{WebSyncAuthority, WebSyncClient};
 
 use crate::repaint_ctx::RepaintContext;
 
@@ -21,6 +21,7 @@ pub(crate) struct SyncController {
     pub gate: SyncGate,
     pub client: WebSyncClient,
     pub push_busy: bool,
+    pub conflict_authority: Option<WebSyncAuthority>,
     /// A document identity already measured above the periodic push limit.
     /// WASM linear memory does not shrink after a giant temporary JSON string,
     /// so do not rebuild the same oversized snapshot every two seconds.
@@ -33,12 +34,74 @@ impl SyncController {
             gate: SyncGate::default(),
             client: WebSyncClient::new(),
             push_busy: false,
+            conflict_authority: None,
             oversize_identity: None,
         }
+    }
+
+    pub(crate) fn note_conflict_response(&mut self, body: &str, version: u64) {
+        self.conflict_authority = self.client.parse_authority(body).ok()
+            .filter(|authority| authority.version == version);
+        self.gate.note_conflict(version);
     }
 }
 
 pub(crate) type SharedSync = Rc<RefCell<SyncController>>;
+
+/// The baseline belongs to a document successfully applied and repainted,
+/// not to a version probe or a document still being fetched.
+pub(crate) fn applied_document_authority() -> Option<String> {
+    ACTIVE_SYNC.with(|slot| {
+        let sync = slot.borrow().as_ref()?.upgrade()?;
+        let sync = sync.try_borrow().ok()?;
+        if !sync.client.initialized() { return None; }
+        sync.client.fence_save_envelope("{}").ok()
+    })
+}
+
+pub(crate) fn fence_daemon_save(body: &str) -> Option<String> {
+    ACTIVE_SYNC.with(|slot| {
+        let sync = slot.borrow().as_ref()?.upgrade()?;
+        let sync = sync.try_borrow().ok()?;
+        sync.client.fence_save_envelope(body).ok()
+    })
+}
+
+pub(crate) fn note_daemon_save_conflict(response: &str) {
+    let Some(version) = WebSyncClient::parse_push_conflict(response) else { return; };
+    ACTIVE_SYNC.with(|slot| {
+        let Some(sync) = slot.borrow().as_ref().and_then(Weak::upgrade) else { return; };
+        if let Ok(mut sync) = sync.try_borrow_mut() {
+            sync.note_conflict_response(response, version);
+        };
+    });
+}
+
+#[cfg(test)]
+mod authority_tests {
+    use super::*;
+
+    #[test]
+    fn malformed_conflict_cannot_reuse_a_previous_authority() {
+        let mut sync = SyncController::new();
+        sync.client.sync(
+            r#"{"generation":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","version":7,"document":{"version":"1.0.0","children":[]}}"#,
+            |_, _| true,
+        ).unwrap();
+        sync.note_conflict_response(
+            r#"{"generation":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","version":1}"#, 1,
+        );
+        assert_eq!(sync.conflict_authority.as_ref().unwrap().version, 1);
+        assert_eq!(sync.gate.conflict(), Some(1));
+        sync.note_conflict_response(r#"{"version":1}"#, 1);
+        assert!(sync.conflict_authority.is_none());
+        assert_eq!(sync.gate.conflict(), Some(1));
+        sync.note_conflict_response(
+            r#"{"generation":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","version":2}"#, 1,
+        );
+        assert!(sync.conflict_authority.is_none());
+    }
+}
 
 /// Commit a successful daemon Save as a sync acknowledgement.
 ///

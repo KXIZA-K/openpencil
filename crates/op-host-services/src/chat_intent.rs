@@ -577,35 +577,58 @@ pub fn has_new_screen_creation_signal(prompt: &str) -> bool {
 /// verb the simple list excludes) and misroutes "create a button on the login
 /// page" (verb + page noun, but the page is a location, not the object).
 fn english_requests_new_screen(lower: &str) -> bool {
-    const NOUNS: &[&str] = &["page", "screen"];
+    const NOUNS: &[&str] = &["page", "pages", "screen", "screens"];
     const DEFINITE: &[&str] = &[
         "the", "this", "that", "these", "those", "current", "existing", "same",
     ];
     const INDEFINITE: &[&str] = &["a", "an", "another", "new", "fresh"];
-    let tokens: Vec<&str> = lower
-        .split(|c: char| !c.is_ascii_alphanumeric())
-        .filter(|t| !t.is_empty())
-        .collect();
-    let mut saw_noun = false;
-    for (i, tok) in tokens.iter().enumerate() {
-        if !NOUNS.contains(tok) {
-            continue;
-        }
-        saw_noun = true;
-        // The NEAREST determiner within 4 tokens before the noun decides
-        // (adjectives like "login" / "checkout" sit between it and the noun).
-        for j in (i.saturating_sub(4)..i).rev() {
-            if DEFINITE.contains(&tokens[j]) {
-                return false;
+    let mut local_creation = false;
+    for clause in lower.split(['.', ';', ':', '!', '?', '\n']) {
+        // Keep non-English words and identifiers intact. Dropping Thai text
+        // can make unrelated English words appear adjacent; "screen-1" is
+        // a route identifier, not the object of a creation verb.
+        let tokens: Vec<&str> = clause
+            .split_whitespace()
+            .map(|word| word.trim_matches(|c: char| !c.is_alphanumeric()))
+            .filter(|word| !word.is_empty())
+            .collect();
+        for (i, tok) in tokens.iter().enumerate() {
+            if !NOUNS.contains(tok) {
+                continue;
             }
-            if INDEFINITE.contains(&tokens[j]) {
-                return true;
+            let mut start = 0;
+            // A screen after a location preposition is where a smaller
+            // object is added, not the unit being created.
+            for j in (0..i).rev() {
+                if ["in", "on", "inside", "within", "of"].contains(&tokens[j]) {
+                    start = j + 1;
+                    break;
+                }
+                if i - j <= 4 && DEFINITE.contains(&tokens[j]) {
+                    return false;
+                }
+                if i - j <= 4 && INDEFINITE.contains(&tokens[j]) {
+                    return true;
+                }
+            }
+            // A bare-noun creation needs a command-position verb in the
+            // same clause. "Test Design" is a title, not a command. Keep
+            // the entire object phrase so long new-screen briefs still
+            // work ("Design a travel booking mobile app explore page").
+            for j in start..i {
+                let command_position = j == 0
+                    || ["please", "and", "then", "also", "now", "to", "you", "me"]
+                        .contains(&tokens[j - 1]);
+                if command_position {
+                    let tail = tokens[j..i].join(" ");
+                    local_creation |= DRAW_VERB_EN
+                        .iter()
+                        .any(|verb| tail == *verb || tail.starts_with(&format!("{verb} ")));
+                }
             }
         }
     }
-    // No determiner cue near a page noun: a strong creation verb still signals
-    // a new screen ("draw search page"); otherwise it's not a whole-screen req.
-    saw_noun && matches_any_word_phrase(lower, DRAW_VERB_EN)
+    local_creation
 }
 
 fn is_new_screen_veto(prompt: &str) -> bool {

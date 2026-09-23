@@ -94,7 +94,15 @@ impl CanvasKitBackend {
 }
 
 impl RenderBackend for CanvasKitBackend {
+    fn set_text_grayscale(&mut self, grayscale: bool) {
+        self.ck.set_text_grayscale(grayscale);
+    }
     fn begin_frame(&mut self) {
+        // Every CanvasKit consumer (editor, SDK, prototype player) must service
+        // deferred image work. Keeping this in editor-only repaint strands SDK
+        // image nodes at their placeholders indefinitely. Decode before paint,
+        // with the same per-frame budget as the editor's original pump.
+        self.drain_pending_decodes(2);
         self.ck.begin_frame();
         if (self.dpr - 1.0).abs() > f32::EPSILON {
             self.ck.scale(self.dpr, self.dpr);
@@ -112,6 +120,12 @@ impl RenderBackend for CanvasKitBackend {
     }
     fn fill_round_rect(&mut self, rect: Rect, radius: f32, color: Color) {
         ops::fill_round_rect(&self.ck, rect, radius, color);
+    }
+    fn fill_drop_shadow(&mut self, rect: Rect, radius: f32, blur: f32, color: Color) {
+        self.ck.fill_drop_shadow(
+            rect.origin.x, rect.origin.y, rect.size.x, rect.size.y,
+            radius, blur, color.r, color.g, color.b, color.a,
+        );
     }
     fn fill_round_rect_per_corner(&mut self, rect: Rect, radii: [f32; 4], color: Color) {
         ops::fill_round_rect_per_corner(&self.ck, rect, radii, color);
