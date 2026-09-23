@@ -33,32 +33,58 @@ pub(crate) use cleanup_mobile_chrome::{
 };
 #[path = "cleanup_mobile_dense.rs"]
 mod cleanup_mobile_dense;
-
-// Repair-pass submodules: this file keeps the public surface (`finalize_design`
-// / `run_cleanup_passes` / the `*_for_all_roots` drivers) plus the shared
-// predicates; each repair family lives in its own file and is re-imported here
-// so the drivers (and the test modules mounted below) see the same flat
-// namespace as before.
+// Repair-pass submodules keep the public cleanup drivers and shared predicates
+// flat, while each repair family lives in its own file.
+#[path = "category_grid_density.rs"]
+mod category_grid_density;
 #[path = "cleanup_bottom_nav_repairs.rs"]
 mod cleanup_bottom_nav_repairs;
 #[path = "cleanup_clip_row_stroke.rs"]
 mod cleanup_clip_row_stroke;
 #[path = "cleanup_container_geometry.rs"]
 mod cleanup_container_geometry;
+#[path = "cleanup_empty_content_bar.rs"]
+mod cleanup_empty_content_bar;
+#[path = "cleanup_equalize_siblings.rs"]
+mod cleanup_equalize_siblings;
+#[path = "cleanup_image_slots.rs"]
+pub(crate) mod cleanup_image_slots;
+#[path = "cleanup_overflow_prepass.rs"]
+mod cleanup_overflow_prepass;
 #[path = "cleanup_root_and_nav.rs"]
 mod cleanup_root_and_nav;
 #[path = "cleanup_root_transform.rs"]
 mod cleanup_root_transform;
+#[path = "cleanup_section_margins.rs"]
+mod cleanup_section_margins;
+use cleanup_overflow_prepass::run_overflow_prepass;
 #[path = "cleanup_section_sizing.rs"]
 mod cleanup_section_sizing;
+#[path = "cleanup_slide_padding.rs"]
+mod cleanup_slide_padding;
+#[path = "cleanup_status_bar.rs"]
+mod cleanup_status_bar;
+#[path = "motion_recipes.rs"]
+mod motion_recipes;
+#[path = "sibling_style_drift.rs"]
+mod sibling_style_drift;
+pub(crate) use cleanup_status_bar::{is_status_bar, is_status_bar_from_json};
+pub(crate) use sibling_style_drift::structural_signature;
+#[path = "finalize_enforce_status_bar.rs"]
+mod finalize_enforce_status_bar;
 
+use category_grid_density::repair_category_grid_density;
 use cleanup_bottom_nav_repairs::*;
 use cleanup_clip_row_stroke::*;
 use cleanup_container_geometry::*;
+use cleanup_equalize_siblings::*;
+use cleanup_image_slots::*;
 use cleanup_root_and_nav::*;
 use cleanup_root_patches::*;
 use cleanup_root_transform::*;
+use cleanup_section_margins::*;
 use cleanup_section_sizing::*;
+use cleanup_slide_padding::*;
 
 /// 递归统计 `node` 下的后代数(不含自身)。
 ///
@@ -82,28 +108,6 @@ pub fn descendant_count(state: &EditorState, root_id: &str) -> usize {
         .find(|n| n.id_str() == root_id)
         .map(count_descendants)
         .unwrap_or(0)
-}
-
-/// Explicit status-bar role or an English/Chinese name/id match identifies
-/// status-bar chrome. The role path keeps generated/custom-named bars stable;
-/// Chinese aliases cover direct local edits such as "顶部状态栏".
-pub(crate) fn is_status_bar(node: &PenNode) -> bool {
-    if node
-        .base()
-        .role
-        .as_deref()
-        .is_some_and(|role| role.eq_ignore_ascii_case("status-bar"))
-    {
-        return true;
-    }
-    let name = node.base().name.as_deref().unwrap_or("").to_lowercase();
-    let id = node.id_str().to_lowercase();
-    let hay = format!("{id} {name}");
-    hay.contains("status bar")
-        || hay.contains("status-bar")
-        || hay.contains("statusbar")
-        || hay.contains("状态栏")
-        || hay.contains("系统栏")
 }
 
 /// Pass ①:移动端重复状态栏去重。scaffold 注入了一个固定状态栏,
@@ -340,37 +344,6 @@ pub(crate) fn finalize_design_with_summary_and_policy(
     run_cleanup_passes_with_summary_and_policy(sink, plan, root_ids, summary, policy);
 }
 
-/// Env-gated (`OPENPENCIL_DEBUG_CLEANUP=1`) probe: log the named child's
-/// current height under `root_id`, tagged with the pass that just ran.
-fn debug_probe_child_height(sink: &dyn DocSink, root_id: &str, tag: &str) {
-    if std::env::var("OPENPENCIL_DEBUG_CLEANUP").is_err() {
-        return;
-    }
-    let Some(root) = sink
-        .state()
-        .active_children()
-        .iter()
-        .find(|n| n.id_str() == root_id)
-    else {
-        eprintln!("[CLEANUP-PROBE] {tag}: root {root_id} NOT FOUND");
-        return;
-    };
-    let Ok(v) = serde_json::to_value(root) else {
-        return;
-    };
-    for c in v
-        .get("children")
-        .and_then(|c| c.as_array())
-        .into_iter()
-        .flatten()
-    {
-        let name = c.get("name").and_then(|n| n.as_str()).unwrap_or("?");
-        if name.to_lowercase().contains("sidebar") {
-            eprintln!("[CLEANUP-PROBE] {tag}: {name} height={:?}", c.get("height"));
-        }
-    }
-}
-
 pub fn run_cleanup_passes(sink: &mut dyn DocSink, plan: &OrchestratorPlan, root_ids: &[&str]) {
     let mut summary = RepairSummary::default();
     run_cleanup_passes_with_summary(sink, plan, root_ids, &mut summary);
@@ -507,11 +480,16 @@ fn run_cleanup_passes_with_summary_and_policy(
         rid = apply_root_transform(sink, &rid, crate::ring_repair::wrap_ring_fragments);
         debug_probe_child_height(sink, &rid, "table_flush");
         counter.checkpoint(summary, CheckCategory::Structure, "chip+ring-extract");
+        super::cleanup_image_fallback::repair_map_placeholders(sink, &rid, summary, &mut counter);
+        // Chip/badge text contrast (DS P1-a): the specific, provable chip
+        // branch runs BEFORE the generic contrast repair so the chip-scoped
+        // proof (solid chip fill, chip shape) wins the repair and the generic
+        // pass then sees the fixed text as already readable.
+        crate::text_contrast_repair::repair_chip_text_contrast(sink, &rid);
+        counter.checkpoint(summary, CheckCategory::Layout, "chip-text-contrast");
         // Inter-section gap the planner would have set. Runs BEFORE the
-        // wrapper-inset pass below, which keys off whether the parent column
-        // gaps (`>= 12`): repairing the gap first lets that pass see the
-        // column the orchestrator path would have handed it, so both paths
-        // reach it in the same state.
+        // wrapper-inset pass below, which keys off the parent column's gaps
+        // (`>= 12`) — repairing the gap first hands both paths the same column.
         patch_root_section_gap(sink, &rid);
         debug_probe_child_height(sink, &rid, "root_gap");
         if policy.is_deck || (policy.roots_are_run_output && root_is_deck_board(sink, &rid)) {
@@ -523,6 +501,19 @@ fn run_cleanup_passes_with_summary_and_policy(
         // detectors, so it only ever fired for a user running
         // `lint_document` by hand.
         crate::text_contrast_repair::repair_text_contrast(sink, &rid);
+        crate::hero_bleed::enforce(sink, plan, &rid);
+        counter.checkpoint(summary, CheckCategory::Structure, "hero-bleed");
+        repair_category_grid_density(sink, &rid);
+        counter.checkpoint(summary, CheckCategory::Structure, "category-grid-density");
+        cleanup_empty_content_bar::remove_empty_content_bars(sink, &rid);
+        counter.checkpoint(summary, CheckCategory::Structure, "empty-content-bar");
+        motion_recipes::apply(sink, &rid);
+        counter.checkpoint(summary, CheckCategory::Structure, "motion-recipes");
+        // Section-margin ownership (DS P1.5) runs BEFORE the wrapper-double-inset
+        // stripper below: unifying first hands the stripper the group already
+        // normalized, and the floor afterwards then sees no flush content left.
+        unify_transparent_section_margins(sink, &rid);
+        counter.checkpoint(summary, CheckCategory::Layout, "unify-section-margins");
         // Transparent wrapper padding inside an already-padded/gapped column →
         // double inset: misaligned section edges + starved children (a padded
         // "Key Metrics" strip squeezed its KPI cards until label touched icon).
@@ -613,6 +604,18 @@ fn run_cleanup_passes_with_summary_and_policy(
         // the corrected tree, not the pre-repair one.
         crate::section_shell_fill_repair::repair_section_shell_fill_ownership(sink, rid);
         counter.checkpoint(summary, CheckCategory::Structure, "radial+stub+shell");
+        // Weak-model "image slots" authored as a childless frame/rect with one
+        // still-empty image fill become real Image nodes BEFORE the geometry
+        // passes below, so the slot resolves and validates like any other.
+        materialize_empty_image_fill_slots(sink, rid);
+        counter.checkpoint(summary, CheckCategory::Structure, "materialize-image-slots");
+        // Sibling-item scalar alignment (DS P1-a) runs AFTER slot
+        // materialization: an empty image-slot rect becomes an Image node
+        // above, so the structure comparison below sees the FINAL tree shape
+        // instead of treating the not-yet-materialized slot as drift. The
+        // paired style-drift vote runs right after it, behind its own
+        // Structure checkpoint, inside the shared driver.
+        equalize_siblings_and_style_drift(sink, rid, summary, &mut counter);
         // No-nav mobile screens share one deterministic closing contract:
         // 24-32px of bottom room. The repair reads the same resolved geometry
         // as the diagnostic and grows only root padding, never business nodes.
@@ -636,6 +639,10 @@ fn run_cleanup_passes_with_summary_and_policy(
                 }
             }
         }
+        // Overflow pre-pass: shift pinned controls back inside their parent and
+        // shrink single-line text that outgrew its rail, so the geometry loop
+        // below only sees what a move or a shrink cannot fix.
+        run_overflow_prepass(sink, rid, summary, &mut counter);
         let preserve_root_height = policy.preserve_requested_root_height
             || find_root(sink.state(), rid).is_some_and(|root| {
                 root_has_explicit_fit_content_height(root)
@@ -653,10 +660,19 @@ fn run_cleanup_passes_with_summary_and_policy(
         }
         debug_probe_child_height(sink, rid, "geometry");
         counter.checkpoint(summary, CheckCategory::Overflow, "geometry-validation");
-        // Geometry validation can change a repaired radial wrapper from its
-        // authored numeric width to `fill_container`. Re-run the centering pass
-        // against the final resolved bounds so absolute arc/label coordinates
-        // do not retain the pre-validation width and leave the ring off-centre.
+        // Deck/card safe-margin floor (P1-a pass 3 + P1.5 card gate, and the
+        // P2-b card vertical floor): AFTER geometry, evidence re-parsed from
+        // the current tree, so it stands down once section margins pulled
+        // content off the edge. The hook also runs the board text wrap
+        // (P2-c B) on the settled margins, checkpointed under Overflow.
+        enforce_slide_padding_floor_and_board_text_wrap(sink, rid, summary, &mut counter);
+        // Card trailing-void centre (DS P2-b B): after the floor, on settled
+        // margins; deck centring stays mounted earlier.
+        centre_card_board_content(sink, rid);
+        counter.checkpoint(summary, CheckCategory::Layout, "card-board-centre");
+        // Geometry validation can flip a repaired radial wrapper to
+        // `fill_container`; re-centre against the final resolved bounds so
+        // arc/label coordinates do not drift off-centre.
         crate::radial_repair::repair_radial_stacks(sink, rid);
         adjust_root_height_to_content(sink, rid, preserve_root_height);
         debug_probe_child_height(sink, rid, "adjust_root_height");
@@ -705,6 +721,14 @@ fn run_cleanup_passes_with_summary_and_policy(
     // point, so both the classic and loop-finalize paths pick it up.
     crate::unify_shared_status_bar::unify_shared_status_bar(sink);
 
+    // Finalize-time enforcement of the OS status-bar contract: every mobile
+    // screen root must carry exactly one canonical status bar (role="status-bar"
+    // with Levels child) as its first child. Runs after unify_shared_status_bar
+    // to enforce the contract even when root-seeding was escaped (model-built
+    // bar, fit_content root, or later batches). Three cases: missing → insert,
+    // non-canonical → replace, canonical → untouched.
+    finalize_enforce_status_bar::finalize_enforce_status_bar_contract(sink);
+
     // Establish final screen routes first. The cleanup-only semantic pass can
     // then persist only fact-proven back/card interactions against those real
     // routes, before the label-matching nav fallback. Keeping the semantic pass
@@ -719,68 +743,13 @@ fn run_cleanup_passes_with_summary_and_policy(
     // not `root_ids`) so it also links pre-existing screens from earlier turns.
     crate::wire_screen_navigation::wire_screen_navigation(sink);
     counter.checkpoint(summary, CheckCategory::Structure, "shared-chrome+nav");
+
+    super::cleanup_image_fallback::repair_image_fallback_policy(sink, summary, &mut counter);
 }
 
 #[cfg(test)]
-#[path = "cleanup_tests.rs"]
-mod tests;
-
+#[path = "motion_recipes_tests.rs"]
+mod motion_recipes_tests;
 #[cfg(test)]
-#[path = "cleanup_repair_summary_tests.rs"]
-mod tests_repair_summary;
-
-#[cfg(test)]
-#[path = "cleanup_repair_tier_tests.rs"]
-mod tests_repair_tier;
-
-#[cfg(test)]
-#[path = "cleanup_abandoned_duplicate_roots_tests.rs"]
-mod tests_abandoned_duplicate_roots;
-
-#[cfg(test)]
-#[path = "cleanup_mobile_dense_tests.rs"]
-mod tests_mobile_dense;
-
-#[cfg(test)]
-#[path = "cleanup_mobile_chrome_tests.rs"]
-mod tests_mobile_chrome;
-
-#[cfg(test)]
-#[path = "cleanup_mobile_bottom_nav_dedup_tests.rs"]
-mod tests_mobile_bottom_nav_dedup;
-
-#[cfg(test)]
-#[path = "cleanup_bottom_nav_tests.rs"]
-mod tests_bottom_nav;
-
-#[cfg(test)]
-#[path = "cleanup_nested_horizontal_padding_tests.rs"]
-mod tests_nested_horizontal_padding;
-
-#[cfg(test)]
-#[path = "cleanup_rail_wrapper_gutter_tests.rs"]
-mod tests_rail_wrapper_gutter;
-
-#[cfg(test)]
-#[path = "cleanup_absolute_container_tests.rs"]
-mod tests_absolute_container;
-
-#[cfg(test)]
-#[path = "cleanup_fill_container_content_tests.rs"]
-mod tests_fill_container_content;
-
-#[cfg(test)]
-#[path = "cleanup_clip_row_stroke_tests.rs"]
-mod tests_clip_row_stroke;
-
-#[cfg(test)]
-#[path = "cleanup_card_height_equalize_tests.rs"]
-mod tests_card_height_equalize;
-
-#[cfg(test)]
-#[path = "cleanup_desktop_dashboard_tests.rs"]
-mod tests_desktop_dashboard;
-
-#[cfg(test)]
-#[path = "cleanup_deck_geometry_tests.rs"]
-mod tests_deck_geometry;
+#[path = "cleanup_tests_mounts.rs"]
+mod test_modules;

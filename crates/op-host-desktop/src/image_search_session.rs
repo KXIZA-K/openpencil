@@ -5,72 +5,32 @@ use std::hash::Hash;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::sync::{Arc, Mutex};
 
-use jian_ops_schema::node::PenNode;
-use jian_ops_schema::style::{ImageFillBody, ImageFillMode, PenFill};
 use op_editor_core::agent_settings::ImageGenProfile;
-use op_editor_core::{
-    walkers, CollabDocumentMutation, CollabEditSource, CollabGateAction, CollabGateReason,
-    CollabUnsupportedFeature, EditorState, NodeId,
-};
+use op_editor_core::{walkers, EditorState, NodeId};
 // Provider plumbing shared with the web daemon (single-sourced in
 // op-host-services): keyword simplification, Openverse token exchange, and
 // image mime handling. The desktop keeps its own `fetch_image_data_url`
 // on top of `fetch_image_bytes` so the skia down-scale pass still runs.
-pub(crate) use op_host_services::web_image_search::{
-    fetch_openverse_token, normalize_image_mime_header, simplify_search_query,
-    WebOpenverseCredentials,
-};
-// Only the sibling test file exercises the sniffing directly.
+pub(crate) use op_host_services::web_image_search::WebOpenverseCredentials;
+// The provider fns themselves moved with the fetch ladder into
+// `op_image_enrich::net`; only the sibling test files still reach them
+// through this module's historical paths.
 #[cfg(test)]
-pub(crate) use op_host_services::web_image_search::sniff_image_mime;
+pub(crate) use op_host_services::web_image_search::{simplify_search_query, sniff_image_mime};
 
-const MAX_EMBEDDED_IMAGE_BYTES: usize = 4 * 1024 * 1024;
-
-/// Sentinel `src` written when EVERY search avenue failed (junk-only
-/// results, network error, empty corpus). The canvas paints it as the
-/// theme-adaptive dashed placeholder (see `canvas_viewport_image`), so a
-/// failed slot reads as "image goes here" instead of a bare grey box. The
-/// bound query stays on the node for manual re-search.
-pub(crate) const SEARCH_FAILED_PLACEHOLDER_SRC: &str = "placeholder://image-search-failed";
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct ImageSearchTarget {
-    pub node_id: NodeId,
-    /// Stock-search keyword (`image_search_query` ?? name ?? …).
-    pub query: String,
-    pub aspect_ratio: Option<ImageAspectRatio>,
-    /// AI-generation prompt bound to the node (`image_prompt`), if any. Used when
-    /// an image-gen model is configured; falls back to `query`.
-    pub prompt: Option<String>,
-    /// Explicit `G()` acquisition mode, or Auto for legacy/heuristic slots.
-    pub mode: ImageRequestMode,
-    /// Resolved numeric dimensions (for the gen provider's aspect mapping).
-    pub width: Option<f64>,
-    pub height: Option<f64>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ImageRequestMode {
-    Auto,
-    Search,
-    Generate,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) enum ImageAspectRatio {
-    Wide,
-    Tall,
-    Square,
-}
-
-impl ImageAspectRatio {
-    fn as_openverse_param(self) -> &'static str {
-        match self {
-            Self::Wide => "wide",
-            Self::Tall => "tall",
-            Self::Square => "square",
-        }
-    }
-}
+// Slot detection + result write-back moved to the shared `op-image-enrich`
+// crate (pure code motion) so the headless MCP `enrich_images` tool and this
+// desktop session share one predicate vocabulary; the desktop keeps its own
+// provider fetches, memoization, and job bookkeeping. The old paths are
+// re-exported so every existing importer and test stays stable.
+use op_ai::chat_provider::ChatProvider;
+use op_host_services::image_relevance_judge::{ChatVisionJudge, OpenAiCompatVisionJudge};
+use op_image_enrich::net::{ImageRelevanceJudge, NoJudge};
+pub(crate) use op_image_enrich::{
+    apply_result, collaboration_image_result_gate, collect_targets, collect_targets_with_scene,
+    image_request_mode, is_image_fallback, ImageAspectRatio, ImageRequestMode, ImageSearchTarget,
+    SEARCH_FAILED_PLACEHOLDER_SRC,
+};
 
 /// Desktop wrapper over the shared credential pair — adds the
 /// `EditorState` snapshot constructor the daemon side has no use for.
@@ -80,11 +40,20 @@ pub(crate) struct OpenverseCredentials(WebOpenverseCredentials);
 impl OpenverseCredentials {
     pub(crate) fn from_state(state: &EditorState) -> Option<Self> {
         let settings = &state.editor_ui.agent_settings;
-        WebOpenverseCredentials::from_parts(
-            &settings.openverse_client_id,
-            &settings.openverse_client_secret,
-        )
-        .map(Self)
+        let (client_id, client_secret) = if settings.openverse_client_id.trim().is_empty()
+            && settings.openverse_client_secret.trim().is_empty()
+        {
+            (
+                std::env::var("OPENPENCIL_OPENVERSE_CLIENT_ID").unwrap_or_default(),
+                std::env::var("OPENPENCIL_OPENVERSE_CLIENT_SECRET").unwrap_or_default(),
+            )
+        } else {
+            (
+                settings.openverse_client_id.clone(),
+                settings.openverse_client_secret.clone(),
+            )
+        };
+        WebOpenverseCredentials::from_parts(&client_id, &client_secret).map(Self)
     }
 
     pub(crate) fn as_web(&self) -> &WebOpenverseCredentials {
@@ -101,7 +70,7 @@ struct ImageSearchJob {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-struct SearchIntentKey {
+pub(crate) struct SearchIntentKey {
     query: String,
     aspect_ratio: Option<ImageAspectRatio>,
 }
@@ -112,6 +81,45 @@ enum SearchMemoEntry {
         waiters: Vec<mpsc::Sender<Option<String>>>,
     },
     Ready(String),
+}
+
+/// Which relevance judge a session resolved — logged once per session as
+/// `image-search judge: env | provider:<name> | none`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum JudgeChoice {
+    Env,
+    Provider(String),
+    None,
+}
+
+impl JudgeChoice {
+    fn log_label(&self) -> String {
+        match self {
+            JudgeChoice::Env => "env".to_string(),
+            JudgeChoice::Provider(name) => format!("provider:{name}"),
+            JudgeChoice::None => "none".to_string(),
+        }
+    }
+}
+
+/// Pick the relevance judge for one image-search session. The env-configured
+/// OpenAI-compatible judge wins when present; otherwise the user's selected
+/// chat provider backs a [`ChatVisionJudge`] (desktop users configure a
+/// vision-capable provider in the product, not env vars); otherwise
+/// [`NoJudge`] keeps the legacy one-result ladder byte-identical.
+pub(crate) fn resolve_judge(
+    provider: Option<Arc<dyn ChatProvider>>,
+    model: Option<String>,
+) -> (Box<dyn ImageRelevanceJudge>, JudgeChoice) {
+    if let Some(judge) = OpenAiCompatVisionJudge::from_env() {
+        return (Box::new(judge), JudgeChoice::Env);
+    }
+    if let Some(provider) = provider {
+        let choice = JudgeChoice::Provider(provider.provider_label().to_string());
+        let judge = ChatVisionJudge::new(provider).with_model(model);
+        return (Box::new(judge), choice);
+    }
+    (Box::new(NoJudge), JudgeChoice::None)
 }
 
 #[derive(Default)]
@@ -169,45 +177,18 @@ pub(crate) struct ImageSearchSession {
     /// document has enqueued the same intent. Matching the request id avoids
     /// that old completion consuming the new waiters (the classic ABA race).
     next_search_request_id: u64,
+    /// Lazily resolved relevance judge + which source won. `None` until the
+    /// app handler hands over the selected chat provider (`ensure_judge`) or
+    /// the first search actually spawns, whichever comes first — resolving
+    /// any earlier would lock in `none` for a user who configures a model
+    /// only after the window opens. Survives `reset()`: it is process-level
+    /// configuration, not document state.
+    judge: Option<(Arc<dyn ImageRelevanceJudge>, JudgeChoice)>,
 }
 
-/// Memo key for the authored stock-search intent.
-///
-/// This deliberately does NOT use `simplify_search_query`: that function is a
-/// lossy provider adapter (it drops words such as `album` / `cover` and caps
-/// the request at four keywords). Those transformations are useful for a
-/// photo corpus, but they must not make two distinct authored subjects share a
-/// cached image or make the stale-result guard treat a changed intent as the
-/// same intent. Case, punctuation, and repeated whitespace are canonicalized;
-/// every authored word remains part of identity. Aspect remains part of intent
-/// so a square cover never reuses a wide hero.
-fn search_intent_key(query: &str, aspect_ratio: Option<ImageAspectRatio>) -> SearchIntentKey {
-    SearchIntentKey {
-        query: canonical_search_intent_query(query),
-        aspect_ratio,
-    }
-}
-
-fn canonical_search_intent_query(query: &str) -> String {
-    let mut canonical = String::with_capacity(query.len());
-    let mut pending_separator = false;
-    for character in query.trim().to_lowercase().chars() {
-        if character.is_alphanumeric() {
-            if pending_separator && !canonical.is_empty() {
-                canonical.push(' ');
-            }
-            canonical.push(character);
-            pending_separator = false;
-        } else {
-            pending_separator = true;
-        }
-    }
-    if canonical.is_empty() {
-        query.trim().to_lowercase()
-    } else {
-        canonical
-    }
-}
+// Memo key for the authored stock-search intent — see
+// `intent::search_intent_key` (moved there with the other intent
+// fingerprints as pure code motion).
 
 impl ImageSearchSession {
     pub(crate) fn new() -> Self {
@@ -240,6 +221,37 @@ impl ImageSearchSession {
 
     pub(crate) fn is_pending(&self) -> bool {
         !self.jobs.is_empty()
+    }
+
+    /// Whether the relevance judge has been resolved for this session.
+    pub(crate) fn judge_resolved(&self) -> bool {
+        self.judge.is_some()
+    }
+
+    /// Resolve and install the relevance judge once; later calls are no-ops.
+    /// The choice is logged exactly once per session so the active judge
+    /// (env / provider / none) is observable on stderr.
+    pub(crate) fn ensure_judge(
+        &mut self,
+        provider: Option<Arc<dyn ChatProvider>>,
+        model: Option<String>,
+    ) {
+        if self.judge.is_some() {
+            return;
+        }
+        let (judge, choice) = resolve_judge(provider, model);
+        eprintln!("image-search judge: {}", choice.log_label());
+        self.judge = Some((Arc::from(judge), choice));
+    }
+
+    /// The judge for one spawn. Always `Some` after `ensure_judge`; the
+    /// `NoJudge` fallback only covers a spawn that somehow precedes
+    /// resolution, and keeps the legacy one-result ladder byte-identical.
+    fn judge_pair(&self) -> (Arc<dyn ImageRelevanceJudge>, bool) {
+        match &self.judge {
+            Some((judge, choice)) => (Arc::clone(judge), *choice != JudgeChoice::None),
+            None => (Arc::new(NoJudge), false),
+        }
     }
 
     /// Re-admit terminal stock-search failures for a bounded caller-managed
@@ -340,12 +352,19 @@ impl ImageSearchSession {
                 (ImageRequestMode::Search, _) | (ImageRequestMode::Auto, None) => {
                     let request_id = self.next_search_request_id;
                     self.next_search_request_id = self.next_search_request_id.wrapping_add(1);
+                    // A search is actually starting: if the app handler has
+                    // not handed over a provider by now, lock in env/none so
+                    // the choice is logged once and stable for the session.
+                    self.ensure_judge(None, None);
+                    let (judge, judge_enabled) = self.judge_pair();
                     spawn_job(
                         target,
                         credentials.clone(),
                         Arc::clone(&self.used_urls),
                         Arc::clone(&self.search_memo),
                         request_id,
+                        judge,
+                        judge_enabled,
                     )
                 }
             };
@@ -431,7 +450,10 @@ impl ImageSearchSession {
                     let url = url.unwrap_or_else(|| SEARCH_FAILED_PLACEHOLDER_SRC.to_string());
                     if apply_result(state, &job.node_id, &url) {
                         changed = true;
-                        if url == SEARCH_FAILED_PLACEHOLDER_SRC {
+                        if url == SEARCH_FAILED_PLACEHOLDER_SRC
+                            && walkers::find_node(state.active_children(), &job.node_id)
+                                .is_some_and(is_image_fallback)
+                        {
                             self.completed.insert(id);
                         }
                     } else {
@@ -462,12 +484,20 @@ fn spawn_job(
     used_urls: Arc<Mutex<HashSet<String>>>,
     search_memo: Arc<Mutex<HashMap<SearchIntentKey, SearchMemoEntry>>>,
     request_id: u64,
+    judge: Arc<dyn ImageRelevanceJudge>,
+    judge_enabled: bool,
 ) -> ImageSearchJob {
     let (tx, rx) = mpsc::channel();
     let node_id = target.node_id.clone();
     let aspect_ratio = target.aspect_ratio;
     let key = search_intent_key(&target.query, aspect_ratio);
     let intent = Some(intent_fingerprint(&target, None));
+    let judge_intent = target
+        .prompt
+        .as_deref()
+        .filter(|prompt| !prompt.trim().is_empty())
+        .unwrap_or(target.query.as_str())
+        .to_string();
     // One full search intent, one in-flight request and one session result.
     // Rebuilt nodes subscribe to the same pending request instead of racing
     // duplicate searches; completed intents return from the memo.
@@ -502,12 +532,26 @@ fn spawn_job(
         }
     }
     std::thread::spawn(move || {
-        let url = fetch_first_image_url_blocking(
-            &target.query,
-            aspect_ratio,
-            credentials.as_ref(),
-            &used_urls,
-        );
+        let url = if judge_enabled {
+            fetch_first_image_url_blocking_with_judge(
+                &target.query,
+                aspect_ratio,
+                credentials.as_ref().map(OpenverseCredentials::as_web),
+                &used_urls,
+                judge.as_ref(),
+                &judge_intent,
+            )
+        } else {
+            // No configured judge deliberately uses the old one-result path;
+            // this is the NoJudge behavior and keeps default output bytes
+            // unchanged.
+            fetch_first_image_url_blocking(
+                &target.query,
+                aspect_ratio,
+                credentials.as_ref().map(OpenverseCredentials::as_web),
+                &used_urls,
+            )
+        };
         publish_search_result(&search_memo, key, request_id, url);
     });
     ImageSearchJob {
@@ -594,101 +638,15 @@ fn spawn_unavailable_gen_job(target: ImageSearchTarget) -> ImageSearchJob {
     }
 }
 mod fetch;
-mod targets;
+mod intent;
 
-use fetch::fetch_first_image_url_blocking;
 pub(crate) use fetch::fetch_image_data_url;
-pub(crate) use targets::{collect_targets, image_request_mode};
-use targets::{
-    collect_targets_with_scene, current_intent_fingerprints, intent_fingerprint,
-    is_frame_placeholder_still_unfilled, is_image_area_rectangle_by_heuristic,
-};
+use fetch::{fetch_first_image_url_blocking, fetch_first_image_url_blocking_with_judge};
+pub(crate) use intent::{current_intent_fingerprints, intent_fingerprint, search_intent_key};
 
-fn collaboration_image_result_gate(state: &EditorState) -> Result<(), CollabGateReason> {
-    state.editor_ui.collab.gate(
-        CollabGateAction::Document(CollabDocumentMutation::Unsupported(
-            CollabUnsupportedFeature::ExternalAssets,
-        )),
-        CollabEditSource::ExternalSync,
-    )
-}
-
-pub(crate) fn apply_result(state: &mut EditorState, node_id: &NodeId, url: &str) -> bool {
-    if let Err(reason) = collaboration_image_result_gate(state) {
-        state.editor_ui.collab.set_notice(reason.notice_kind(), 0);
-        return false;
-    }
-    let url = url.trim();
-    if url.is_empty() {
-        return false;
-    }
-    let Some(node) = walkers::find_node_mut(state.active_children_mut(), node_id) else {
-        return false;
-    };
-    let is_unfilled_placeholder_frame = is_frame_placeholder_still_unfilled(node);
-    let is_unfilled_placeholder_rectangle = is_image_area_rectangle_by_heuristic(node);
-    let changed = match node {
-        PenNode::Image(image) => {
-            if image.src == url {
-                return false;
-            }
-            image.src = url.into();
-            true
-        }
-        PenNode::Frame(frame) if is_unfilled_placeholder_frame => {
-            frame.container.fill = Some(vec![PenFill::Image(ImageFillBody {
-                url: url.into(),
-                mode: Some(ImageFillMode::Crop),
-                original_size: None,
-                transform: None,
-                tile_scale: None,
-                explain: None,
-                opacity: None,
-                blend_mode: None,
-                exposure: None,
-                contrast: None,
-                saturation: None,
-                temperature: None,
-                tint: None,
-                highlights: None,
-                shadows: None,
-            })]);
-            frame.children = Some(Vec::new());
-            true
-        }
-        PenNode::Rectangle(rect) if is_unfilled_placeholder_rectangle => {
-            rect.container.fill = Some(vec![PenFill::Image(ImageFillBody {
-                url: url.into(),
-                mode: Some(ImageFillMode::Crop),
-                original_size: None,
-                transform: None,
-                tile_scale: None,
-                explain: None,
-                opacity: None,
-                blend_mode: None,
-                exposure: None,
-                contrast: None,
-                saturation: None,
-                temperature: None,
-                tint: None,
-                highlights: None,
-                shadows: None,
-            })]);
-            rect.children = Some(Vec::new());
-            true
-        }
-        _ => false,
-    };
-    if changed {
-        // This writes document content through raw `active_children_mut()`
-        // outside the command/history path, so bump the revision. The
-        // layer-panel row cache + save-dirty tracking key on
-        // `document_revision()`; the placeholder-frame/rectangle branches
-        // also clear `children`, which changes the visible layer rows.
-        state.mark_document_changed();
-    }
-    changed
-}
+// `apply_result` + the slot predicates + the target/mode/aspect types live in
+// the shared `op-image-enrich` crate now (see the re-export block at the top
+// of this file); the imports here cover only the desktop-local helpers.
 
 #[cfg(test)]
 #[path = "image_search_session_tests.rs"]

@@ -13,7 +13,7 @@ use serde_json::{Map, Value};
 
 use crate::color::parse_css_color;
 use crate::css::cascade::ComputedStyle;
-use crate::mapper::{container_props_from, MapCtx};
+use crate::mapper::{container_props_from, fill_glyph_color, MapCtx};
 use crate::{
     wrap_imported_document, HtmlDocumentResult, HtmlImportOptions, HtmlImportResult,
     MAX_OUTPUT_NODES,
@@ -27,7 +27,7 @@ mod text_run;
 mod values;
 use values::{matrix_rotation, parse_px, parse_text_align};
 
-const MAX_SNAPSHOT_BYTES: usize = 32 * 1024 * 1024;
+const MAX_SNAPSHOT_BYTES: usize = 48 * 1024 * 1024;
 
 pub const SNAPSHOT_EXTRACTOR_JS: &str = include_str!("../assets/snapshot-extractor.js");
 
@@ -58,7 +58,7 @@ pub enum SnapshotError {
 impl std::fmt::Display for SnapshotError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::TooLarge => formatter.write_str("snapshot JSON exceeds the 32 MiB input limit"),
+            Self::TooLarge => formatter.write_str("snapshot JSON exceeds the 48 MiB input limit"),
             Self::InvalidJson(detail) => write!(formatter, "invalid snapshot JSON: {detail}"),
             Self::NotAnObject => formatter.write_str("snapshot JSON must be an object"),
             Self::UnsupportedVersion(version) => {
@@ -240,13 +240,20 @@ impl<'a> SnapshotCtx<'a> {
     // Callers without it retain byte-identical allocation and import behavior.
     fn allocate_node_id(&mut self, object: &Map<String, Value>) -> Option<String> {
         let fallback = self.allocate_id()?;
-        let Some(value) = object.get("sourceNodeId") else { return Some(fallback) };
+        let Some(value) = object.get("sourceNodeId") else {
+            return Some(fallback);
+        };
         let valid = value.as_str().filter(|id| {
-            !id.is_empty() && id.len() <= 128
-                && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+            !id.is_empty()
+                && id.len() <= 128
+                && id
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
         });
         if let Some(id) = valid {
-            if self.source_ids.insert(id.to_string()) { return Some(format!("studio_{id}")); }
+            if self.source_ids.insert(id.to_string()) {
+                return Some(format!("studio_{id}"));
+            }
         }
         self.warn_once(ImportWarning::SnapshotRejected {
             reason: "invalid or duplicate sourceNodeId".into(),
@@ -309,7 +316,7 @@ impl<'a> SnapshotCtx<'a> {
     ) -> Option<PenNode> {
         let id = self.allocate_node_id(object)?;
         let styles = style_map(object);
-        let mut container = self.container_from_styles(&styles, rect);
+        let mut container = self.container_from_styles(&styles, rect, true);
         container.layout = Some(LayoutMode::None);
         // Browser child rects already include padding/borders; do not offset twice.
         container.padding = None;
@@ -323,11 +330,8 @@ impl<'a> SnapshotCtx<'a> {
         // gradient stop; per-glyph gradients are not paintable text fills).
         let saved_text_fill = self.text_fill_override.clone();
         if styles.get("background-clip").map(String::as_str) == Some("text") {
-            if let Some(color) = container
-                .fill
-                .take()
-                .and_then(|fills| fill_glyph_color(&fills))
-            {
+            if let Some(color) = container.fill.as_deref().and_then(fill_glyph_color) {
+                container.fill = None;
                 self.text_fill_override = Some(color);
             }
         }
@@ -420,7 +424,7 @@ impl<'a> SnapshotCtx<'a> {
     ) -> Option<PenNode> {
         let id = self.allocate_node_id(object)?;
         let styles = style_map(object);
-        let visual = self.container_from_styles(&styles, rect);
+        let visual = self.container_from_styles(&styles, rect, false);
         let object_fit = match styles.get("object-fit").map(String::as_str) {
             Some("cover") => Some(ImageFitMode::Crop),
             Some("contain") => Some(ImageFitMode::Fit),
@@ -483,6 +487,7 @@ impl<'a> SnapshotCtx<'a> {
             shadows: None,
             image_prompt: None,
             image_search_query: None,
+            video: None,
             state: None,
             bindings: None,
             events: None,
@@ -608,6 +613,7 @@ impl<'a> SnapshotCtx<'a> {
         &mut self,
         styles: &BTreeMap<String, String>,
         rect: Rect,
+        text_clip_will_transfer: bool,
     ) -> ContainerProps {
         let mut styles = styles.clone();
         styles.insert("width".into(), format!("{}px", rect.w));
@@ -629,7 +635,11 @@ impl<'a> SnapshotCtx<'a> {
             auto_margin_handled_by_parent: false,
             pending_base_outcome: Default::default(),
         };
-        let container = container_props_from(&computed, &mut map_context);
+        let container = if text_clip_will_transfer {
+            crate::mapper::text_scope::snapshot_container_props(&computed, &mut map_context)
+        } else {
+            container_props_from(&computed, &mut map_context)
+        };
         for warning in map_context.warnings {
             self.warn_once(warning);
         }
@@ -766,18 +776,6 @@ fn color_from_border(border: &str) -> Option<String> {
         }
     }
     border.split_whitespace().find_map(parse_css_color)
-}
-
-/// The single glyph colour a `background-clip: text` fill collapses to: a
-/// solid keeps its colour, a gradient contributes its first stop (a per-glyph
-/// gradient is not a paintable text fill in the schema).
-fn fill_glyph_color(fills: &[PenFill]) -> Option<String> {
-    fills.iter().find_map(|fill| match fill {
-        PenFill::Solid(body) => Some(body.color.clone()),
-        PenFill::LinearGradient(body) => body.stops.first().map(|stop| stop.color.clone()),
-        PenFill::RadialGradient(body) => body.stops.first().map(|stop| stop.color.clone()),
-        _ => None,
-    })
 }
 
 fn solid_fill(color: String) -> PenFill {

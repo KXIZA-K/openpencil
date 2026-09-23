@@ -100,52 +100,72 @@ impl<'a> AIChatPlaceholder<'a> {
         // carries no interactive sub-controls and cannot be dragged — a
         // single unambiguous target beats splitting a 64 px-tall strip
         // between drag intent, model switching and expand intent.
-        if self.state.is_minimized() {
+        if self.state.is_minimized() && !self.composer_only {
             return Some(AIChatHit::ToggleCollapse);
         }
-        if self.history_button_rect(rect).is_some_and(|button| button.contains(point)) {
-            return Some(if self.state.history_loading { AIChatHit::Inside } else { AIChatHit::LoadHistory });
+        if self
+            .history_button_rect(rect)
+            .is_some_and(|button| button.contains(point))
+        {
+            return Some(if self.state.history_loading {
+                AIChatHit::Inside
+            } else {
+                AIChatHit::LoadHistory
+            });
         }
         let can_use_model = !self.state.available_models.is_empty();
-        // Expanded: chevron + "New Chat" title group toggles collapse.
-        if (self.expanded_header_title_rect(rect)).contains(point) {
-            return Some(AIChatHit::ToggleCollapse);
-        }
-        // Hit rects must mirror the paint geometry exactly.
-        // Constants live in `ai_chat_panel_header` (imported above):
-        //   NEW_CHAT_D = 28, MAXIMIZE_GAP = 6, MAXIMIZE_W = 18, HEADER_HEIGHT = 36
-        let right_edge = rect.origin.x + rect.size.x - PAD;
-        let header_icon_y = rect.origin.y + (HEADER_HEIGHT - MAXIMIZE_W) / 2.0;
-        // New-chat circle (far right).
-        let new_chat_rect = Rect {
-            origin: Point2D::new(
-                right_edge - NEW_CHAT_D,
-                rect.origin.y + (HEADER_HEIGHT - NEW_CHAT_D) / 2.0,
-            ),
-            size: Point2D::new(NEW_CHAT_D, NEW_CHAT_D),
-        };
-        if (new_chat_rect).contains(point) {
-            return Some(AIChatHit::NewChat);
-        }
-        // Maximize / minimize icon (just left of new-chat).
-        let maximize_rect = Rect {
-            origin: Point2D::new(
-                right_edge - NEW_CHAT_D - MAXIMIZE_GAP - MAXIMIZE_W,
-                header_icon_y,
-            ),
-            size: Point2D::new(MAXIMIZE_W, MAXIMIZE_W),
-        };
-        if (maximize_rect).contains(point) {
-            return Some(AIChatHit::ToggleMaximize);
-        }
-        // One active-thread selector replaces the squeezed tab strip.
-        if !self.tabs_snapshot.is_empty() && thread_selector_rect(rect).contains(point) {
-            return Some(AIChatHit::ToggleThreadPicker);
-        }
-        // The picker is modal within the chat panel. A press elsewhere closes
-        // it without accidentally activating transcript or footer controls.
-        if self.thread_picker_open {
-            return Some(AIChatHit::ToggleThreadPicker);
+        // Composer-only: nothing above the composer exists except the
+        // focused card's slim header, whose two glyphs both mean "take
+        // me to the Agent tab".
+        if self.composer_only {
+            if self.state.focused {
+                use crate::widgets::ai_chat_panel::COMPOSER_HEADER_HEIGHT;
+                let header = Rect {
+                    origin: rect.origin,
+                    size: Point2D::new(rect.size.x, COMPOSER_HEADER_HEIGHT),
+                };
+                if header.contains(point) {
+                    return Some(AIChatHit::ToggleMaximize);
+                }
+            }
+        } else {
+            // Expanded: chevron + "New Chat" title group toggles collapse.
+            if (self.expanded_header_title_rect(rect)).contains(point) {
+                return Some(AIChatHit::ToggleCollapse);
+            }
+            // Hit rects must mirror the paint geometry exactly.
+            // Constants live in `ai_chat_panel_header` (imported above):
+            //   NEW_CHAT_D = 28, MAXIMIZE_GAP = 6, MAXIMIZE_W = 18, HEADER_HEIGHT = 36
+            let right_edge = rect.origin.x + rect.size.x - PAD;
+            let header_icon_y = rect.origin.y + (HEADER_HEIGHT - MAXIMIZE_W) / 2.0;
+            // New-chat circle (far right).
+            let new_chat_rect = Rect {
+                origin: Point2D::new(
+                    right_edge - NEW_CHAT_D,
+                    rect.origin.y + (HEADER_HEIGHT - NEW_CHAT_D) / 2.0,
+                ),
+                size: Point2D::new(NEW_CHAT_D, NEW_CHAT_D),
+            };
+            if (new_chat_rect).contains(point) {
+                return Some(AIChatHit::NewChat);
+            }
+            // Maximize / minimize icon (just left of new-chat).
+            let maximize_rect = Rect {
+                origin: Point2D::new(
+                    right_edge - NEW_CHAT_D - MAXIMIZE_GAP - MAXIMIZE_W,
+                    header_icon_y,
+                ),
+                size: Point2D::new(MAXIMIZE_W, MAXIMIZE_W),
+            };
+            if !self.column_pinned && (maximize_rect).contains(point) {
+                return Some(AIChatHit::ToggleMaximize);
+            }
+            if !self.tabs_snapshot.is_empty() && thread_selector_rect(rect).contains(point) {
+                return Some(AIChatHit::ToggleThreadPicker);
+            }
+            if self.thread_picker_open {
+                return Some(AIChatHit::ToggleThreadPicker);
+            }
         }
         // Must match `paint` exactly: paint draws the separator at
         // `bottom - input_h` and the input block one pixel below it
@@ -192,6 +212,21 @@ impl<'a> AIChatPlaceholder<'a> {
             return Some(AIChatHit::ToggleParallelAgentsPicker);
         }
         if (input_rect).contains(point) {
+            // Pre-flight MCP notice — the actual topmost band when it shows,
+            // and a button: clicking it opens Settings on the MCP tab. Every
+            // row below is measured from `rows_rect`, the input block with
+            // the notice already taken off the top, so their geometry is
+            // identical whether or not the notice is up.
+            if let Some(notice) = self.mcp_notice_row(rect) {
+                if crate::widgets::ai_chat_mcp_notice::notice_rect(notice).contains(point) {
+                    return Some(AIChatHit::OpenMcpSettings);
+                }
+            }
+            let notice_h = self.mcp_notice_row_h();
+            let input_rect = Rect {
+                origin: Point2D::new(input_rect.origin.x, input_rect.origin.y + notice_h),
+                size: Point2D::new(input_rect.size.x, (input_rect.size.y - notice_h).max(0.0)),
+            };
             // Topmost band of the input block, so it is tested first. Both
             // chips share the row, so both ✕ targets are probed here — the
             // rects come from the same `chip_row` paint draws from.
@@ -374,12 +409,18 @@ impl<'a> AIChatPlaceholder<'a> {
             // Examples grid hit-test (only rendered when no messages).
             // Clickable regardless of model connection — clicking an example
             // fills the input (sending separately requires a model) (#43).
+            // Pills the shrunk sheet dropped from paint (they would overlap
+            // the composer) are not click targets either.
+            let region = self.empty_state_region(rect);
+            let content_bottom = region.origin.y + region.size.y;
             for (index, (card, ex)) in example_card_rects(rect)
                 .iter()
                 .zip(self.examples.iter())
                 .enumerate()
             {
-                if (*card).contains(point) {
+                if crate::widgets::ai_chat_panel_paint::example_card_fits(card, content_bottom)
+                    && (*card).contains(point)
+                {
                     return Some(AIChatHit::Example {
                         index,
                         prompt: ex.prompt.clone(),
@@ -387,7 +428,7 @@ impl<'a> AIChatPlaceholder<'a> {
                 }
             }
         }
-        if self.state.maximized {
+        if self.state.maximized || self.column_pinned {
             return Some(AIChatHit::FocusInput);
         }
         Some(AIChatHit::DragHandle)
@@ -633,9 +674,14 @@ impl<'a> AIChatPlaceholder<'a> {
         if !self.state.messages.is_empty() || self.is_streaming() || self.state.is_minimized() {
             return None;
         }
-        example_card_rects(rect)
-            .iter()
-            .position(|card| (*card).contains(point))
+        // Same visibility predicate as paint: a pill dropped because it
+        // would overlap the composer is not hoverable either.
+        let region = self.empty_state_region(rect);
+        let content_bottom = region.origin.y + region.size.y;
+        example_card_rects(rect).iter().position(|card| {
+            crate::widgets::ai_chat_panel_paint::example_card_fits(card, content_bottom)
+                && (*card).contains(point)
+        })
     }
 
     /// Return the index of the tab the cursor is over (for the host to

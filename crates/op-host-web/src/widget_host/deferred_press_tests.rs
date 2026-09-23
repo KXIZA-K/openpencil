@@ -56,6 +56,7 @@ fn first_layer_row_point(host: &WidgetHost, viewport_h: f32) -> Point2D {
 #[test]
 fn chat_model_row_press_selects_and_closes_immediately() {
     let mut host = WidgetHost::new();
+    host.editor_state.editor_ui.entry_surface = op_editor_core::EntrySurface::Canvas;
     seed_two_chat_models(&mut host);
     host.editor_state.editor_ui.chat_model_picker.open = true;
     let chat_rect = host.ai_chat_rect(1200.0, 800.0).unwrap();
@@ -69,7 +70,7 @@ fn chat_model_row_press_selects_and_closes_immediately() {
         + ai_chat_model_picker::MODEL_GROUP_H
         + ai_chat_model_picker::MODEL_ROW_H / 2.0;
 
-    assert!(host.apply_press(picker.origin.x + 24.0, row_y, 1200.0, 800.0));
+    assert!(host.apply_press(picker.origin.x + 180.0, row_y, 1200.0, 800.0));
 
     assert_eq!(host.editor_state.chat.selected_model, 1);
     assert_eq!(host.editor_state.editor_ui.chat_selected_agent, 4);
@@ -84,6 +85,7 @@ fn chat_model_row_press_selects_and_closes_immediately() {
 #[test]
 fn chat_model_row_wins_over_variables_panel_and_preset_menu() {
     let mut host = WidgetHost::new();
+    host.editor_state.editor_ui.entry_surface = op_editor_core::EntrySurface::Canvas;
     seed_two_chat_models(&mut host);
     host.editor_state.editor_ui.variables_panel_open = true;
     host.editor_state.editor_ui.variables_preset_menu_open = true;
@@ -124,26 +126,15 @@ fn chat_model_row_wins_over_variables_panel_and_preset_menu() {
 #[test]
 fn right_press_on_model_picker_does_not_open_covered_layer_context_menu() {
     let mut host = WidgetHost::new();
+    host.editor_state.editor_ui.entry_surface = op_editor_core::EntrySurface::Canvas;
     seed_layer_for_context_menu(&mut host);
     seed_two_chat_models(&mut host);
     let viewport = (1200.0, 800.0);
-    let layer_point = first_layer_row_point(&host, viewport.1);
-    host.chat_drag = Some(ChatDragState {
-        grab_dx: 0.0,
-        grab_dy: 0.0,
-        pos_x: 0.0,
-        pos_y: 0.0,
-    });
+    host.editor_state.editor_ui.enter_chat_tab();
     host.editor_state.editor_ui.chat_model_picker.open = true;
-    let initial_picker = host
-        .chat_model_picker_rect(viewport.0, viewport.1)
-        .expect("initial picker rect");
-    host.chat_drag.as_mut().expect("chat drag").pos_y +=
-        layer_point.y - (initial_picker.origin.y + initial_picker.size.y / 2.0);
-    let picker = host
-        .chat_model_picker_rect(viewport.0, viewport.1)
-        .expect("picker rect");
-    assert!(picker.contains(layer_point));
+    let picker = host.chat_model_picker_rect(viewport.0, viewport.1).expect("picker");
+    let layer_point = Point2D::new(picker.origin.x + 48.0, picker.origin.y + 60.0);
+    assert!(host.layer_panel_rect(viewport.1).contains(layer_point));
 
     assert!(host.apply_right_press(layer_point.x, layer_point.y, viewport.0, viewport.1));
 
@@ -152,8 +143,10 @@ fn right_press_on_model_picker_does_not_open_covered_layer_context_menu() {
 }
 
 #[test]
-fn collapsing_chat_closes_model_picker() {
+fn touch_sheet_collapse_closes_model_picker() {
     let mut host = WidgetHost::new();
+    host.editor_state.editor_ui.entry_surface = op_editor_core::EntrySurface::Canvas;
+    host.editor_state.editor_ui.touch = true;
     seed_two_chat_models(&mut host);
     host.editor_state.editor_ui.chat_model_picker.open = true;
     host.editor_state
@@ -177,6 +170,7 @@ fn collapsing_chat_closes_model_picker() {
 #[test]
 fn hidden_chat_rect_closes_stale_model_picker_before_lower_press() {
     let mut host = WidgetHost::new();
+    host.editor_state.editor_ui.entry_surface = op_editor_core::EntrySurface::Canvas;
     host.editor_state.editor_ui.embed = op_editor_core::EmbedHost::VsCode;
     host.editor_state.editor_ui.chat_model_picker.open = true;
 
@@ -188,6 +182,7 @@ fn hidden_chat_rect_closes_stale_model_picker_before_lower_press() {
 #[test]
 fn chat_model_picker_visible_over_topbar_wins_press() {
     let mut host = WidgetHost::new();
+    host.editor_state.editor_ui.entry_surface = op_editor_core::EntrySurface::Canvas;
     seed_two_chat_models(&mut host);
     for idx in 2..10 {
         host.editor_state
@@ -231,6 +226,7 @@ fn chat_model_picker_visible_over_topbar_wins_press() {
 #[test]
 fn image_provider_option_press_defers_selection_until_release() {
     let mut host = WidgetHost::new();
+    host.editor_state.editor_ui.entry_surface = op_editor_core::EntrySurface::Canvas;
     host.editor_state.editor_ui.agent_settings.tab = AgentSettingsTab::Images;
     host.editor_state
         .editor_ui
@@ -309,6 +305,7 @@ fn image_provider_option_press_defers_selection_until_release() {
 #[test]
 fn font_weight_row_press_defers_selection_until_release() {
     let mut host = WidgetHost::new();
+    host.editor_state.editor_ui.entry_surface = op_editor_core::EntrySurface::Canvas;
     host.editor_state = op_editor_core::EditorState::sample();
     host.editor_state.editor_ui.font_weight_picker_open = true;
     let property_rect = Rect {

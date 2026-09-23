@@ -41,7 +41,14 @@ impl WidgetHost {
                     self.mark_dirty();
                     return;
                 }
+                if choice == FileMenuChoice::SaveAsTemplate {
+                    self.editor_state.editor_ui.file_menu_open = false;
+                    self.editor_state.editor_ui.file_menu.hover = None;
+                    self.mark_dirty();
+                    return;
+                }
                 self.editor_state.editor_ui.pending_file_action = Some(match choice {
+                    FileMenuChoice::Home => FileAction::Home,
                     FileMenuChoice::NewFile => FileAction::New,
                     FileMenuChoice::OpenFile => FileAction::Open,
                     FileMenuChoice::Save => FileAction::Save,
@@ -53,7 +60,7 @@ impl WidgetHost {
                     FileMenuChoice::OpenRecent(i) => FileAction::OpenRecent(i),
                     FileMenuChoice::ClearRecent => FileAction::ClearRecent,
                     // Handled above — it opens a panel, not a file action.
-                    FileMenuChoice::NewFromTemplate => return,
+                    FileMenuChoice::NewFromTemplate | FileMenuChoice::SaveAsTemplate => return,
                 });
                 self.editor_state.editor_ui.file_menu_open = false;
                 self.editor_state.editor_ui.file_menu.hover = None;

@@ -158,6 +158,25 @@ CARDS = [
      [f"dossier-linen-deck-{i:02d}.png" for i in range(1, 9)]),
     ("ledger-tick-deck",
      [f"ledger-tick-deck-{i:02d}.png" for i in range(1, 8)]),
+    ("brand-concept-sheet", "brand-concept-sheet.png"),
+    ("logo-qa-board", "logo-qa-board.png"),
+    ("event-invitation-card", "event-invitation-card.png"),
+    ("livestream-teaser-card", "livestream-teaser-card.png"),
+    ("hiring-poster-card", "hiring-poster-card.png"),
+    ("course-enroll-card", "course-enroll-card.png"),
+    ("conference-agenda-card", "conference-agenda-card.png"),
+    ("product-launch-card", "product-launch-card.png"),
+    ("annual-report-card", "annual-report-card.png"),
+    ("music-fest-poster-card", "music-fest-poster-card.png"),
+    ("book-club-invite-card", "book-club-invite-card.png"),
+    ("ai-support-pitch-deck",
+     [f"ai-support-pitch-deck-{i:02d}.png" for i in range(1, 11)]),
+    ("quarterly-review-deck",
+     [f"quarterly-review-deck-{i:02d}.png" for i in range(1, 12)]),
+    ("quicksort-lecture-deck",
+     [f"quicksort-lecture-deck-{i:02d}.png" for i in range(1, 8)]),
+    ("compound-effect-card", "compound-effect-card.png"),
+    ("analytics-metric-card", "analytics-metric-card.png"),
 ]
 
 # Gap between tiles, in source pixels — scaled down with everything else.
@@ -253,13 +272,21 @@ def bake(source: pathlib.Path | list[pathlib.Path] | Top) -> Image.Image:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--check", action="store_true")
+    parser.add_argument("card_ids", nargs="*")
     args = parser.parse_args()
+
+    known_ids = {card_id for card_id, _ in CARDS}
+    unknown_ids = sorted(set(args.card_ids) - known_ids)
+    if unknown_ids:
+        parser.error(f"unknown card id(s): {', '.join(unknown_ids)}")
+    requested = set(args.card_ids)
+    cards = [card for card in CARDS if not requested or card[0] in requested]
 
     if not args.check:
         DST.mkdir(parents=True, exist_ok=True)
 
     failed = False
-    for card_id, source_name in CARDS:
+    for card_id, source_name in cards:
         if isinstance(source_name, Top):
             names = [source_name.name]
         elif isinstance(source_name, list):

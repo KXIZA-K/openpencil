@@ -228,6 +228,9 @@ pub struct VisibleSections {
     pub layout_justify: LayoutJustifyValue,
     pub layout_align: LayoutAlignValue,
     pub size_options: bool,
+    /// Comfortable vertical slots for touch-only Size check rows. The
+    /// checkbox glyph stays compact; only row spacing and hit geometry grow.
+    pub touch_controls: bool,
     /// Per-dimension sizing modes. Numeric W/H editors remain visible
     /// and show the resolved snapshot size in every mode.
     pub size_fill_width: bool,
@@ -246,6 +249,8 @@ pub struct VisibleSections {
     /// the NEXT value (`!checked`). Ignored for non-toggle widgets.
     pub widget_checked: bool,
     pub image: bool,
+    /// Whether the selected image carries optional video metadata.
+    pub video: bool,
     /// Whether the image section paints the local-asset warning row
     /// (host asset check flagged the selected node's src).
     pub image_warning: bool,
@@ -287,6 +292,7 @@ impl VisibleSections {
         layout_justify: LayoutJustifyValue::Start,
         layout_align: LayoutAlignValue::Start,
         size_options: true,
+        touch_controls: false,
         size_fill_width: false,
         size_fill_height: false,
         size_hug_width: false,
@@ -297,6 +303,7 @@ impl VisibleSections {
         widget: None,
         widget_checked: false,
         image: false,
+        video: false,
         image_warning: false,
         opacity: true,
         compositing: true,

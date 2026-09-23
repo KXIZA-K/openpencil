@@ -20,6 +20,10 @@
   <a href="https://discord.gg/h9Fmyy6pVh"><img src="https://img.shields.io/badge/Discord-Join%20chat-5865F2?logo=discord&logoColor=white" alt="Discord" /></a>
 </p>
 
+<p align="center">
+  <a href="https://trendshift.io/repositories/24088?utm_source=repository-badge&amp;utm_medium=badge&amp;utm_campaign=badge-repository-24088" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/repositories/24088" alt="ZSeven-W%2Fopenpencil | Trendshift" width="250" height="55" /></a>
+</p>
+
 <br />
 
 <p align="center">
@@ -29,18 +33,18 @@
 </p>
 <p align="center"><sub>Clique na imagem para assistir ao vídeo de demonstração</sub></p>
 
-<br />
-
-<p align="center">
-  <a href="https://github.com/InnerAura/hyperweave" title="Star history rendered with HyperWeave">
-    <img src="./screenshot/openpencil-star-history.svg" alt="OpenPencil star history rendered by HyperWeave" width="100%" />
-  </a>
-</p>
-<p align="center">
-  <sub>The trend above is rendered with <a href="https://github.com/InnerAura/hyperweave"><b>HyperWeave</b></a> — an experimental SVG artifact layer for agents. &nbsp;<a href="https://github.com/InnerAura/hyperweave"><b>Explore&nbsp;→</b></a></sub>
-</p>
-
 ## Por que OpenPencil
+
+<a href="https://fluxionai.world/register?source=github&amp;campaign=github-openpencil&amp;promo=OPENPENCIL" title="Fluxion AI">
+  <img src="./screenshot/fluxion-ai-sponsor-banner.png" alt="Fluxion AI — reliable, cost-efficient access to GPT, Claude, and other leading AI models through one unified API" width="100%" />
+</a>
+
+### [OpenPencil × Fluxion AI | One unified API for GPT, Claude, and more](https://fluxionai.world/register?source=github&campaign=github-openpencil&promo=OPENPENCIL)
+
+Thanks to [Fluxion AI](https://fluxionai.world/register?source=github&campaign=github-openpencil&promo=OPENPENCIL) for sponsoring OpenPencil!
+
+- ⚡ **Reliable, cost-efficient access:** GPT, Claude, and other leading AI models through one unified API — save up to 70% compared with official API pricing.
+- 🎁 **OpenPencil user bonus:** get **$1 in API credits** when you [sign up through this link](https://fluxionai.world/register?source=github&campaign=github-openpencil&promo=OPENPENCIL).
 
 <table>
 <tr>
@@ -110,6 +114,8 @@ Exporte de um único arquivo `.op` para React + Tailwind, HTML + CSS, Vue, Svelt
 </table>
 
 ## Instalação
+
+**Compilar no Windows:** [BUILD_WINDOWS.pt.md](./docs/build_windows/BUILD_WINDOWS.pt.md)
 
 **macOS (Homebrew):**
 
@@ -391,6 +397,7 @@ O OpenPencil faz parte de uma família de ferramentas puro-Rust, nativas com IA 
 
 | Projeto | O que é |
 | ------- | ------- |
+| **[DSH OpenPencil](https://github.com/ZSeven-W/dsh-openpencil)** | Plugin DeepSeek Harness para OpenPencil — pré-visualizações `.op` de múltiplos quadros exatas, uma tela interativa e um editor gerenciado com ferramentas de design nativas para agentes, dentro de uma conversa. |
 | **[Zode](https://github.com/ZSeven-W/zode)** | Assistente de código open-source e nativo com IA para o seu terminal — uma TUI Rust rápida (`ratatui`) que lê seu código, executa comandos, busca arquivos e gerencia o git. Controla o OpenPencil via MCP. |
 | **[agent-rs](https://github.com/ZSeven-W/agent-rs)** | Um runtime assíncrono puro-Rust para entregar agentes LLM — multi-provedor, com suporte a ferramentas de ponta a ponta, permissões estruturadas, MCP real, zero `unsafe`. Alimenta o runtime de agente integrado do OpenPencil (`vendor/agent`) e o Zode. |
 | **[jian](https://github.com/ZSeven-W/jian)** | Framework de UI puro-Rust, GPU-Skia — widgets, layout, eventos e hot reload em uma única stack. Transforma um documento `.op` declarativo em um app nativo e controlável por IA, sem runtime JS, sem DOM, sem Electron. O framework de UI do OpenPencil (`vendor/jian`). |

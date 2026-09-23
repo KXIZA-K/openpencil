@@ -200,7 +200,7 @@ pub fn apply_property_action(
         | A::ToggleInstanceComponentPicker
         | A::SetInstanceComponent(_) => Handled,
         A::SetPropertyTab(tab) => {
-            state.editor_ui.property_tab = *tab;
+            state.editor_ui.set_property_tab(*tab);
             Handled
         }
         A::ToggleCompositingPicker(target) => {
@@ -448,6 +448,31 @@ pub fn apply_property_action(
                 Some(op_editor_core::editor_ui_state::FileAction::RelinkImage);
             Handled
         }
+        A::AddVideo => {
+            let _ = state.add_selected_video();
+            Handled
+        }
+        A::RemoveVideo => {
+            let _ = state.remove_selected_video();
+            Handled
+        }
+        A::ToggleVideoAutoplay
+        | A::ToggleVideoLoop
+        | A::ToggleVideoMuted
+        | A::ToggleVideoHoldLastFrame
+        | A::ToggleVideoClickToReplay => {
+            if let Some(field) = crate::widgets::property_panel_video::playback_field(action) {
+                let current = state.selected_video().is_some_and(|video| match field {
+                    op_editor_core::VideoPlaybackField::Autoplay => video.autoplay,
+                    op_editor_core::VideoPlaybackField::Loop => video.r#loop,
+                    op_editor_core::VideoPlaybackField::Muted => video.muted,
+                    op_editor_core::VideoPlaybackField::HoldLastFrame => video.hold_last_frame,
+                    op_editor_core::VideoPlaybackField::ClickToReplay => video.click_to_replay,
+                });
+                let _ = state.set_selected_video_playback(field, !current);
+            }
+            Handled
+        }
         A::ToggleFontWeightPicker => {
             let ui = &mut state.editor_ui;
             ui.font_weight_picker_open = !ui.font_weight_picker_open;
@@ -594,7 +619,9 @@ pub fn apply_property_action(
         }
         A::SetExportFormat(format) => {
             let ui = &mut state.editor_ui;
-            ui.export_format = *format;
+            if format.is_implemented() {
+                ui.export_format = *format;
+            }
             ui.export_format_picker_open = false;
             ui.export_picker_hover = None;
             Handled
@@ -758,7 +785,10 @@ pub fn apply_property_action(
         | A::ApplyGeneratedImage
         | A::RetryImageGenerate
         | A::OpenImageGenSettings => HostOwned,
-        // Clipboard / download / bundle export are platform IO.
+        // Clipboard / download / bundle export are platform IO. Compact touch
+        // layouts do not expose the Code panel, so direct action dispatch is
+        // inert there as well as through paint / hit-testing.
+        A::Codegen(_) if !state.editor_ui.code_property_tab_available() => Handled,
         A::Codegen(_) => HostOwned,
     }
 }

@@ -34,18 +34,28 @@ pub mod tree;
 // Step 2 compositions (built on top of the primitives, driven by
 // `op_editor_core::EditorState`).
 pub(crate) mod font_picker_cache;
+pub mod home_surface;
 pub mod layer_context_menu;
 pub mod layer_panel;
 pub(crate) mod layer_panel_cache;
 mod layer_panel_hit;
 #[cfg(test)]
 mod layer_panel_label_tests;
+mod layer_panel_metrics;
 mod layer_panel_paint;
 #[cfg(test)]
 mod layer_panel_tests;
+#[cfg(test)]
+mod layer_panel_touch_tests;
 mod layer_panel_walkers;
 pub mod path_anchor_context_menu;
 pub mod prompt_center_panel;
+pub use home_surface::{home_enter, HomeEnterBlock, HomeLayout, HomeSurface, HOME_TOPBAR_H};
+pub mod workspace_surface;
+pub use workspace_surface::{
+    family_has_strip, family_views, layout_for as workspace_layout_for, workspace_enter,
+    WorkspaceLayout, WorkspaceSurface,
+};
 pub(crate) mod prompt_center_previews;
 pub mod scene_template_panel;
 pub use scene_template_panel::{
@@ -58,6 +68,7 @@ mod asset_center_style_import_tests;
 mod asset_center_style_layout;
 #[cfg(test)]
 mod asset_center_tab_tests;
+mod asset_center_template_cards;
 mod panel_control_metrics;
 mod panel_controls;
 #[cfg(test)]
@@ -131,6 +142,9 @@ mod property_panel_text_tests;
 pub mod property_panel_typography;
 #[cfg(test)]
 mod property_panel_vector_fidelity_tests;
+pub mod property_panel_video;
+#[cfg(test)]
+mod property_panel_video_tests;
 pub mod property_panel_visibility;
 #[cfg(test)]
 mod property_panel_wash_tests;
@@ -146,11 +160,16 @@ pub(crate) mod scene_template_previews;
 mod scene_template_style_geometry;
 mod scene_template_style_import;
 mod scene_template_style_paint;
+mod scene_template_touch_density;
+#[cfg(test)]
+mod scene_template_touch_tests;
+mod scene_template_user_layout;
 pub mod text_input;
 pub(crate) mod text_input_backend;
 pub mod text_metrics;
 mod text_selection;
 pub mod toolbar;
+pub mod touch_overlay_geometry;
 
 // Step 3 — center canvas that renders document nodes as actual
 // visual primitives (frame fills, rect strokes, text strings).
@@ -201,6 +220,7 @@ pub mod collab_panel;
 pub mod collab_ui;
 pub mod cursor_hover_flow;
 pub mod drag_flow;
+mod drag_flow_index;
 pub mod host_canvas_geometry;
 pub mod host_frame_bookkeeping;
 pub mod host_overlay_geometry;
@@ -214,7 +234,9 @@ pub mod scroll_flow;
 
 // Step 4 — icon glyph drawer for editor chrome (lucide-flavored line art).
 pub mod icon_catalog;
+pub mod icon_catalog_aliases;
 pub mod icons;
+mod icons_lookup;
 #[cfg(test)]
 mod icons_tests;
 // Lucide d-string data — extracted as a sibling so `icons.rs` stays
@@ -237,7 +259,10 @@ pub mod agent_settings_acp;
 mod agent_settings_acp_helpers;
 mod agent_settings_acp_presets;
 pub mod agent_settings_builtin;
+mod agent_settings_builtin_empty;
+mod agent_settings_builtin_form;
 mod agent_settings_builtin_layout;
+mod agent_settings_builtin_model_menu;
 mod agent_settings_builtin_parts;
 #[cfg(test)]
 mod agent_settings_builtin_tests;
@@ -250,6 +275,9 @@ mod agent_settings_connect_tests;
 mod agent_settings_density_tests;
 #[cfg(test)]
 mod agent_settings_embed_tests;
+#[cfg(test)]
+mod agent_settings_external_cli_tests;
+mod agent_settings_focus_geometry;
 pub mod agent_settings_fonts;
 #[cfg(test)]
 mod agent_settings_form_action_tests;
@@ -268,6 +296,8 @@ mod agent_settings_panel_geometry;
 #[cfg(test)]
 mod agent_settings_panel_tests;
 pub mod agent_settings_press_entries;
+#[cfg(test)]
+mod agent_settings_press_entries_model_menu_tests;
 pub mod agent_settings_press_flow;
 pub mod agent_settings_press_focus;
 #[cfg(test)]
@@ -280,6 +310,7 @@ pub mod agent_settings_system;
 pub(crate) mod ai_chat_chip_row;
 mod ai_chat_hit;
 pub(crate) mod ai_chat_input_text;
+pub mod ai_chat_mcp_notice;
 pub mod ai_chat_model_picker;
 #[cfg(test)]
 mod ai_chat_model_picker_tests;
@@ -363,9 +394,14 @@ pub mod marquee_flow;
 pub(crate) mod menu_paint;
 pub mod missing_fonts_flow;
 pub mod missing_fonts_panel;
+pub mod mobile_chrome;
+#[cfg(test)]
+mod mobile_layout_tests;
+pub mod mobile_more_panel;
 pub mod property_panel_color_variables;
 #[cfg(test)]
 mod property_panel_color_variables_tests;
+pub mod save_name_dialog;
 pub(crate) mod settings_form;
 pub mod shape_picker;
 pub mod slides_panel;
@@ -376,6 +412,9 @@ pub mod status_bar;
 pub mod tooltip;
 pub mod top_bar;
 mod top_bar_geometry;
+#[cfg(test)]
+#[path = "top_bar_home_tests.rs"]
+mod top_bar_home_tests;
 mod top_bar_paint;
 #[cfg(test)]
 mod top_bar_tests;
@@ -383,6 +422,8 @@ mod top_bar_title;
 pub mod top_bar_tooltip;
 #[cfg(test)]
 mod top_bar_tooltip_tests;
+#[cfg(test)]
+mod top_bar_vscode_tests;
 mod top_bar_window_control;
 pub mod variables_panel;
 pub mod variables_panel_geometry_flow;
@@ -410,7 +451,7 @@ pub use canvas_viewport::{
     arc_handle_positions, path_handle_positions, rotate_point, rotation_corner_at_point,
     selection_handle_at_point, ArcHandle, CanvasNodeDragOverlay, CanvasViewport, SelectionHandle,
 };
-pub use canvas_viewport_paint::paint_scene_page;
+pub use canvas_viewport_paint::{paint_scene_page, paint_scene_page_without_video_badge};
 pub use canvas_viewport_widget::widget_text_inset_left;
 pub use preview_device_switcher::PreviewDeviceSwitcher;
 pub use scene_paint_options::{paint_scene_page_with, paint_scene_subtree, PaintSceneOptions};
@@ -446,10 +487,13 @@ pub use icon_picker_panel::{
 pub use import_menu::{ImportMenu, ImportMenuChoice, IMPORT_MENU_WIDTH};
 pub use locale_picker::{LocalePicker, LOCALE_PICKER_WIDTH};
 pub use missing_fonts_panel::{MissingFontsHit, MissingFontsPanel};
+pub use mobile_chrome::{MobileAppBar, MobileAppBarHit, MobileDock, MobileDockHit};
+pub use mobile_more_panel::MobileMoreEntry;
 pub use prompt_center_panel::{
     PromptCenterCard, PromptCenterHit, PromptCenterPanel, PROMPT_CENTER_MIN_H, PROMPT_CENTER_MIN_W,
     PROMPT_CENTER_VIEWPORT_H_RATIO, PROMPT_CENTER_VIEWPORT_W_RATIO,
 };
+pub use save_name_dialog::{SaveNameDialog, SaveNameDialogHit};
 pub use shape_picker::{ShapeChoice, ShapePicker, SHAPE_PICKER_WIDTH};
 pub use slides_panel::{
     SlidesPanel, SlidesPanelLayout, SlidesPanelTabs, SLIDES_TAB_ROW_HEIGHT, SLIDE_THUMB_RADIUS,

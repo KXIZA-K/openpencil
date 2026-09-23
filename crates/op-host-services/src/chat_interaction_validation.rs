@@ -30,8 +30,8 @@ pub(crate) fn validate_node(node: &Value) -> Result<(), ActionError> {
             let probe = serde_json::json!({hook: []});
             let parsed: jian_ops_schema::events::EventHandlers = serde_json::from_value(probe)
                 .map_err(|_| ActionError::Custom("Invalid event hook".into()))?;
-            let known = serde_json::to_value(parsed).map_err(|_| ActionError::Custom("Invalid event hook".into()))?;
-            if known.get(hook).is_none() {
+            let known = serde_json::to_value(&parsed).map_err(|_| ActionError::Custom("Invalid event hook".into()))?;
+            if parsed.extra.contains_key(hook) || known.get(hook).is_none() {
                 return Err(ActionError::Custom(format!("Unknown event hook '{hook}'")));
             }
             if !actions.is_null() { registry.borrow().parse_list(actions)?; }

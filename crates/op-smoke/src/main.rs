@@ -15,8 +15,9 @@
 //! Optional env overrides:
 //! - `OPENPENCIL_ORCHESTRATOR_MODEL` — default `claude-sonnet-4-6`.
 //! - `OPENPENCIL_LLM_PROVIDER` — `anthropic` (default), `openai-compat`,
-//!   or `antigravity` / `agy`. The Antigravity arm reuses the production
-//!   generation-only subprocess transport and the CLI's existing login.
+//!   `antigravity` / `agy`, or `claude` / `claude-code`. The CLI arms reuse
+//!   the production generation-only subprocess transport and the CLI's
+//!   existing login (no API key needed).
 //! - `OPENPENCIL_SMOKE_VALIDATION=1` — opt into the production lint
 //!   pre-validator and post-generation validation stage. The default remains
 //!   skipped so existing smoke traces are unchanged.
@@ -45,176 +46,30 @@
 use std::sync::Arc;
 
 mod audit_rubric;
+mod best_of;
+mod image_fill;
 mod llm_clients;
 mod loop_mode;
 mod loop_seed;
 mod modify_mode;
+mod smoke_support;
 
 use agent::provider::anthropic::AnthropicProvider;
 use agent::provider::openai_compat::{OpenAiCompatConfig, OpenAiCompatProvider};
-use op_ai::chat_provider::{ChatProvider, CliName};
-use op_editor_core::{EditorCommand, EditorState};
-use op_host_services::chat_provider_llm::ChatProviderLlmClient;
-use op_host_services::chat_subprocess::SubprocessProvider;
+use op_editor_core::EditorState;
 use op_orchestrator::{
-    AbortFlag, DesignRequest, DocSink, LlmClient, Orchestrator, PreValidator, Progress,
-    SkippedPreValidator, SkippedScreenshotProvider, SkippedVisionLlmClient, ValidationProviders,
+    AbortFlag, DesignRequest, LlmClient, Orchestrator, PreValidator, Progress, SkippedPreValidator,
+    SkippedScreenshotProvider, SkippedVisionLlmClient, ValidationProviders,
 };
 
 use crate::llm_clients::{DirectOpenAiClient, SmokeLlmClient};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SmokeProviderKind {
-    Anthropic,
-    OpenAiCompat,
-    Antigravity,
-}
-
-impl SmokeProviderKind {
-    fn parse(value: &str) -> Option<Self> {
-        match value.trim().to_ascii_lowercase().as_str() {
-            "anthropic" => Some(Self::Anthropic),
-            "openai" | "openai-compat" => Some(Self::OpenAiCompat),
-            "antigravity" | "agy" => Some(Self::Antigravity),
-            _ => None,
-        }
-    }
-
-    fn label(self) -> &'static str {
-        match self {
-            Self::Anthropic => "anthropic",
-            Self::OpenAiCompat => "openai-compat",
-            Self::Antigravity => "antigravity",
-        }
-    }
-}
-
-fn truthy_env_value(value: Option<&str>) -> bool {
-    value.is_some_and(|value| {
-        matches!(
-            value.trim().to_ascii_lowercase().as_str(),
-            "1" | "true" | "on"
-        )
-    })
-}
-
-fn antigravity_llm(model: &str) -> Box<dyn LlmClient> {
-    let provider = SubprocessProvider::for_cli_generation(CliName::Antigravity)
-        .expect("Antigravity has a production subprocess transport");
-    let provider: Arc<dyn ChatProvider> = Arc::new(provider);
-    Box::new(ChatProviderLlmClient::new(provider).with_model(Some(model.to_string())))
-}
-
-/// Inline `DocSink` — owns the canonical state directly, no channel hop.
-/// Every `apply` echoes the command kind + result so the smoke trace
-/// shows the orchestrator's mutations linearly.
-struct InlineDocSink {
-    state: EditorState,
-}
-
-impl DocSink for InlineDocSink {
-    fn state(&self) -> &EditorState {
-        &self.state
-    }
-
-    fn apply(&mut self, cmd: EditorCommand) -> bool {
-        let label = describe_cmd(&cmd);
-        let applied = self.state.apply(cmd);
-        eprintln!("[CMD] {label} → applied={applied}");
-        applied
-    }
-
-    fn begin_undo_batch(&mut self) {
-        eprintln!("[UNDO] begin");
-    }
-
-    fn end_undo_batch(&mut self) {
-        eprintln!("[UNDO] end");
-    }
-}
-
-/// One-line label for an `EditorCommand` variant. We don't dump the full
-/// payload (often kilobytes of node JSON) — just the variant + its key
-/// identifying field so the trace stays readable.
-fn describe_cmd(cmd: &EditorCommand) -> String {
-    match cmd {
-        EditorCommand::InsertSubtree {
-            nodes, parent_id, ..
-        } => {
-            format!("InsertSubtree(parent={parent_id:?}, nodes={})", nodes.len())
-        }
-        EditorCommand::UpdateNode { node_id, .. } => format!("UpdateNode({node_id:?})"),
-        EditorCommand::DeleteNode { node_id, .. } => format!("DeleteNode({node_id:?})"),
-        EditorCommand::MoveNode { node_id, .. } => format!("MoveNode({node_id:?})"),
-        EditorCommand::SetNodeLayoutProp {
-            node_id, property, ..
-        } => format!("SetNodeLayoutProp({node_id:?}, prop={property:?})"),
-        EditorCommand::SetNodeStrokeHex { node_id, hex } => {
-            format!("SetNodeStrokeHex({node_id:?}, {hex})")
-        }
-        EditorCommand::SetNodeStrokeWidth { node_id, .. } => {
-            format!("SetNodeStrokeWidth({node_id:?})")
-        }
-        EditorCommand::SetNodeFillHex { node_id, hex } => {
-            format!("SetNodeFillHex({node_id:?}, {hex})")
-        }
-        EditorCommand::RemoveNodeEffect { node_id, index } => {
-            format!("RemoveNodeEffect({node_id:?}, [{index}])")
-        }
-        other => {
-            let dbg = format!("{other:?}");
-            // Truncate the Debug output so massive payloads don't blow up the trace.
-            if dbg.len() > 120 {
-                format!("{}...", dbg.chars().take(117).collect::<String>())
-            } else {
-                dbg
-            }
-        }
-    }
-}
-
-/// Honor `OPENPENCIL_SMOKE_LIBRARY=<path>` by merging a harvested component
-/// library (`.lib.op`) into `state` before generation. Unset ⇒ no-op (`Ok`),
-/// preserving today's byte-for-byte behavior. On a load/parse error returns
-/// `Err(ExitCode)` so the caller aborts — a benchmark that asked for a library
-/// must not silently run without it. Shared by both smoke modes (orchestrator +
-/// loop) so the library is available whichever path runs.
-fn maybe_merge_smoke_library(state: &mut EditorState) -> Result<(), std::process::ExitCode> {
-    let path = match std::env::var("OPENPENCIL_SMOKE_LIBRARY") {
-        Ok(p) if !p.is_empty() => p,
-        _ => return Ok(()),
-    };
-    match op_pen_loader::merge_library_into_state(state, &path) {
-        Ok(report) => {
-            eprintln!(
-                "[SMOKE] library merged from {path}: +{} master(s), {} component(s) total, \
-                 +{} variable(s), +{} theme axis(es)",
-                report.masters_added,
-                report.component_count,
-                report.variables_added,
-                report.themes_added
-            );
-            Ok(())
-        }
-        Err(e) => {
-            eprintln!("[SMOKE] library load failed ({path}): {e}");
-            Err(std::process::ExitCode::from(5))
-        }
-    }
-}
-
-/// Map the chat `OPENPENCIL_SMOKE_*` thinking knobs onto a `ThinkingMode`.
-/// Default `Disabled` for ab-v9 parity with the orchestrator DIRECT path
-/// (reasoning models burn their output budget on `<think>` otherwise);
-/// `OPENPENCIL_SMOKE_KEEP_THINKING=1` keeps reasoning on.
-fn loop_thinking_mode() -> op_ai::chat_provider::ThinkingMode {
-    use op_ai::chat_provider::ThinkingMode;
-    if std::env::var("OPENPENCIL_SMOKE_KEEP_THINKING").is_ok() {
-        ThinkingMode::Enabled
-    } else {
-        ThinkingMode::Disabled
-    }
-}
+// `best_of` reaches `InlineDocSink` through the crate root, so the moved
+// items keep their original `crate::<item>` paths.
+pub(crate) use smoke_support::InlineDocSink;
+use smoke_support::{
+    antigravity_llm, claude_code_llm, loop_thinking_mode, maybe_merge_smoke_library,
+    truthy_env_value, SmokeProviderKind,
+};
 
 /// Headless agentic tool-loop branch (`OPENPENCIL_SMOKE_LOOP=1`).
 ///
@@ -308,6 +163,21 @@ async fn run_loop_mode(prompt: String) -> std::process::ExitCode {
         }
     };
 
+    // Image-fill post-loop step (OPENPENCIL_SMOKE_FILL_IMAGES=1): resolve
+    // pending image-search queries to real URLs from Openverse BEFORE the `.op`
+    // is persisted so the saved document contains the filled `src` values.
+    let image_config = image_fill::ImageFillConfig::from_env();
+    // On a plain thread, never inline: the fetch bridge builds its own small
+    // runtime, which panics with "Cannot start a runtime from within a runtime"
+    // when driven from this tokio-hosted main (measured on the first benchmark
+    // run, which lost its whole image pass to the abort).
+    std::thread::scope(|scope| {
+        scope.spawn(|| {
+            let mut guard = state.lock().expect("EditorState mutex poisoned");
+            image_fill::fill_images(&mut guard, &image_config, dump);
+        });
+    });
+
     let guard = state.lock().expect("EditorState mutex poisoned");
     let total_nodes = guard.active_children().len();
     eprintln!("[LOOP] finished in {elapsed:?}; top-level node(s)={total_nodes}");
@@ -350,10 +220,12 @@ async fn main() -> std::process::ExitCode {
                  providers:\n\
                    anthropic (default): OPENPENCIL_ANTHROPIC_API_KEY=...\n\
                    openai-compat: OPENPENCIL_LLM_BASE_URL=... OPENPENCIL_LLM_API_KEY=...\n\
-                   antigravity/agy: uses the logged-in agy CLI\n\n\
+                   antigravity/agy: uses the logged-in agy CLI\n\
+                   claude/claude-code: uses the logged-in claude CLI (model alias e.g. opus)\n\n\
                  common:\n\
                    OPENPENCIL_ORCHESTRATOR_MODEL=<model>\n\
                    OPENPENCIL_SMOKE_OUT=<result.op>\n\
+                   OPENPENCIL_SMOKE_PIN_STYLE_GUIDE=<style guide name>\n\
                    OPENPENCIL_SMOKE_VALIDATION=1"
             );
             return std::process::ExitCode::from(2);
@@ -382,7 +254,7 @@ async fn main() -> std::process::ExitCode {
     let Some(provider_kind) = SmokeProviderKind::parse(&provider_kind_raw) else {
         eprintln!(
             "error: unknown OPENPENCIL_LLM_PROVIDER={provider_kind_raw:?} \
-             (want anthropic|openai-compat|antigravity|agy)"
+             (want anthropic|openai-compat|antigravity|agy|claude|claude-code)"
         );
         return std::process::ExitCode::from(3);
     };
@@ -391,6 +263,7 @@ async fn main() -> std::process::ExitCode {
             SmokeProviderKind::Anthropic => "claude-sonnet-4-6".into(),
             SmokeProviderKind::OpenAiCompat => "gpt-4o-mini".into(),
             SmokeProviderKind::Antigravity => "gemini-3.6-flash-high".into(),
+            SmokeProviderKind::ClaudeCode => "opus".into(),
         });
 
     eprintln!("[SMOKE] provider={} model={model}", provider_kind.label());
@@ -451,6 +324,7 @@ async fn main() -> std::process::ExitCode {
             }
         }
         SmokeProviderKind::Antigravity => antigravity_llm(&model),
+        SmokeProviderKind::ClaudeCode => claude_code_llm(&model),
     };
 
     // `OPENPENCIL_SMOKE_STARTER=1` seeds the fresh-canvas starter frame so a
@@ -608,7 +482,7 @@ async fn main() -> std::process::ExitCode {
 
     let validation_enabled =
         truthy_env_value(std::env::var("OPENPENCIL_SMOKE_VALIDATION").ok().as_deref());
-    let request = DesignRequest {
+    let mut request = DesignRequest {
         prompt,
         model: Some(model),
         provider: None,
@@ -621,9 +495,49 @@ async fn main() -> std::process::ExitCode {
             .unwrap_or(1),
         validation_enabled,
         visual_ref_enabled: false,
-        pinned_style_guide: None,
+        // `OPENPENCIL_SMOKE_PIN_STYLE_GUIDE=<name>` fixes the style guide so an
+        // ablation can vary one contract (corpus, pass, tier) while the look
+        // stays constant; unset keeps the planner's own choice.
+        pinned_style_guide: std::env::var("OPENPENCIL_SMOKE_PIN_STYLE_GUIDE")
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty()),
+        reference_skeleton: None,
     };
     let abort = AbortFlag::new();
+    // Same three-way reference resolution the desktop / web design routes
+    // run (C1 M1), so a "参考 https://…" prompt exercises the real path here
+    // and the harness can validate it end to end.
+    match op_host_services::reference_context::resolve_reference_context(
+        llm.as_ref(),
+        &request.prompt,
+        request.model.clone(),
+        None,
+        &abort,
+    )
+    .await
+    {
+        Ok(Some(context)) => {
+            match context.skeleton.as_ref() {
+                Some(skeleton) => eprintln!(
+                    "[REFERENCE] host={} sections={} nav={:?} hero={:?}\n{}",
+                    context.source_host,
+                    skeleton.sections.len(),
+                    skeleton.nav_kind,
+                    skeleton.hero_kind,
+                    skeleton.render()
+                ),
+                None => eprintln!(
+                    "[REFERENCE] host={} (style only, no skeleton)",
+                    context.source_host
+                ),
+            }
+            request.reference_skeleton = context.skeleton;
+            request.design_md = Some(context.design_md);
+        }
+        Ok(None) => {}
+        Err(error) => eprintln!("[REFERENCE] unavailable: {error}"),
+    }
     // Preserve the historical skipped validator unless the caller explicitly
     // requests the production lint + validation path.
     let skipped_pre_validator = SkippedPreValidator;
@@ -642,6 +556,22 @@ async fn main() -> std::process::ExitCode {
         system_prompt: String::new(),
     };
 
+    // `OPENPENCIL_SMOKE_BEST_OF=N` (2..=4): N independent generations,
+    // geometry-scored, best one saved. The plain single-run path below
+    // stays byte-identical when the knob is unset.
+    let best_of_n = best_of::parse_best_of_count();
+    if best_of_n > 1 {
+        return best_of::run_best_of(
+            best_of_n,
+            &request,
+            &sink.state,
+            llm.as_ref(),
+            &abort,
+            &providers,
+        )
+        .await;
+    }
+
     let mut on_progress = |p: Progress| {
         eprintln!("[PROGRESS] {p:?}");
     };
@@ -658,6 +588,20 @@ async fn main() -> std::process::ExitCode {
         )
         .await;
     let elapsed = started.elapsed();
+
+    // Image-fill post step (OPENPENCIL_SMOKE_FILL_IMAGES=1), the same one the
+    // loop path runs: resolve pending image-search queries to real Openverse
+    // URLs BEFORE persisting, so the saved `.op` — and the render-shots pass
+    // that reads it — carries real pictures instead of grey placeholders.
+    // Scoped thread for the same reason as the loop path: the fetch bridge
+    // builds its own runtime and cannot be driven from this tokio main.
+    let image_config = image_fill::ImageFillConfig::from_env();
+    let dump_images = std::env::var("OPENPENCIL_SMOKE_DUMP").is_ok();
+    std::thread::scope(|scope| {
+        scope.spawn(|| {
+            image_fill::fill_images(&mut sink.state, &image_config, dump_images);
+        });
+    });
 
     // Persist the produced PenDocument when OPENPENCIL_SMOKE_OUT is set,
     // so the render / screenshot step can pick it up. Canonical
@@ -720,6 +664,10 @@ async fn main() -> std::process::ExitCode {
 #[cfg(test)]
 mod provider_tests {
     use super::*;
+    // The command-trace assertions below are the only remaining consumers of
+    // these two in this file; they live in `smoke_support` now.
+    use crate::smoke_support::describe_cmd;
+    use op_editor_core::EditorCommand;
 
     #[test]
     fn provider_parser_accepts_antigravity_aliases() {

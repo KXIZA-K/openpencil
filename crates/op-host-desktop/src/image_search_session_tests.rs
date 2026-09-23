@@ -20,7 +20,7 @@ use jian_ops_schema::node::{
     ContainerProps, FrameNode, ImageNode, PenNode, RectangleNode, TextContent, TextNode,
 };
 use jian_ops_schema::sizing::{SizingBehavior, SizingKeyword};
-use jian_ops_schema::style::{PenFill, SolidFillBody};
+use jian_ops_schema::style::{ImageFillBody, ImageFillMode, PenFill, SolidFillBody};
 
 fn image_node(id: &str, src: &str, query: Option<&str>) -> PenNode {
     PenNode::Image(ImageNode {
@@ -44,6 +44,7 @@ fn image_node(id: &str, src: &str, query: Option<&str>) -> PenNode {
         shadows: None,
         image_prompt: None,
         image_search_query: query.map(str::to_string),
+        video: None,
         state: None,
         bindings: None,
         events: None,
@@ -175,11 +176,33 @@ fn solid_fill() -> PenFill {
         blend_mode: None,
     })
 }
+
+fn image_fill(url: &str) -> PenFill {
+    PenFill::Image(ImageFillBody {
+        url: url.into(),
+        mode: Some(ImageFillMode::Crop),
+        original_size: None,
+        transform: None,
+        tile_scale: None,
+        explain: None,
+        opacity: None,
+        blend_mode: None,
+        exposure: None,
+        contrast: None,
+        saturation: None,
+        temperature: None,
+        tint: None,
+        highlights: None,
+        shadows: None,
+    })
+}
 // `#[path]` is required: this file is itself loaded through a `#[path]`
 // attribute, so it does not own an implicit `image_search_session_tests/`
 // module directory.
 #[path = "image_search_session_tests/collection.rs"]
 mod collection;
+#[path = "image_search_session_tests/judge.rs"]
+mod judge;
 #[path = "image_search_session_tests/lifecycle.rs"]
 mod lifecycle;
 #[path = "image_search_session_tests/memo.rs"]

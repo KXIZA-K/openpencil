@@ -9,7 +9,10 @@ use crate::widgets::ai_chat_hit::{AIChatHit, ChatResizeEdge};
 
 #[test]
 fn hit_test_resolves_input_focus() {
-    let s = EditorState::new();
+    let mut s = EditorState::new();
+    // The expanded panel only exists where the conversation lives:
+    // the rail's Agent tab. Elsewhere the chat is composer-only.
+    s.editor_ui.enter_chat_tab();
     let panel = AIChatPlaceholder::from_editor(&s);
     let rect = Rect::xywh(0.0, 0.0, AI_CHAT_WIDTH, AI_CHAT_HEIGHT);
     // Click near the textarea center → FocusInput.
@@ -20,6 +23,9 @@ fn hit_test_resolves_input_focus() {
 #[test]
 fn no_model_disables_send_hit() {
     let mut s = EditorState::new();
+    // The expanded panel only exists where the conversation lives:
+    // the rail's Agent tab. Elsewhere the chat is composer-only.
+    s.editor_ui.enter_chat_tab();
     s.chat.set_input_text("design a login page");
     let panel = AIChatPlaceholder::from_editor(&s);
     let rect = Rect::xywh(0.0, 0.0, AI_CHAT_WIDTH, AI_CHAT_HEIGHT);
@@ -36,7 +42,10 @@ fn no_model_still_allows_quick_action_cards() {
     // connection — clicking one fills the input (sending separately requires a
     // model). So with no model the first pill still hits `Example`, not the
     // panel drag handle. (#33: pills are full-width stacked; use first center.)
-    let s = EditorState::new();
+    let mut s = EditorState::new();
+    // The expanded panel only exists where the conversation lives:
+    // the rail's Agent tab. Elsewhere the chat is composer-only.
+    s.editor_ui.enter_chat_tab();
     let panel = AIChatPlaceholder::from_editor(&s);
     let rect = Rect::xywh(0.0, 0.0, AI_CHAT_WIDTH, AI_CHAT_HEIGHT);
     let pills = crate::widgets::ai_chat_panel_paint::example_card_rects(rect);
@@ -52,9 +61,61 @@ fn no_model_still_allows_quick_action_cards() {
     assert_eq!(panel.example_hover_at(rect, p), Some(0));
 }
 
+/// Keyboard-shrunk compact sheet: a pill whose rect would run under the
+/// bottom-anchored composer is dropped from hover and click hit-testing,
+/// matching paint (which drops it too instead of overlapping the composer).
+#[test]
+fn short_panel_drops_occluded_example_pills_from_hit_testing() {
+    let mut s = EditorState::new();
+    // The expanded panel only exists where the conversation lives:
+    // the rail's Agent tab. Elsewhere the chat is composer-only.
+    s.editor_ui.enter_chat_tab();
+    let panel = AIChatPlaceholder::from_editor(&s);
+    // Short rect — like the compact AI sheet with the software keyboard up:
+    // the raw pill stack runs past the composer block.
+    let rect = Rect::xywh(0.0, 0.0, AI_CHAT_WIDTH, 300.0);
+    let region = panel.empty_state_region(rect);
+    let content_bottom = region.origin.y + region.size.y;
+    let input = panel.input_rect(rect);
+    assert!(
+        content_bottom <= input.origin.y,
+        "empty-state region must end above the composer"
+    );
+    let pills = crate::widgets::ai_chat_panel_paint::example_card_rects(rect);
+    assert!(
+        pills[3].origin.y + pills[3].size.y > content_bottom,
+        "fixture: the last pill must overlap the composer for this test to bite"
+    );
+    let occluded = Point2D::new(
+        pills[3].origin.x + pills[3].size.x / 2.0,
+        pills[3].origin.y + pills[3].size.y / 2.0,
+    );
+    assert!(
+        !matches!(
+            panel.hit_test(rect, occluded),
+            Some(AIChatHit::Example { .. })
+        ),
+        "a dropped pill must not claim taps aimed at the composer"
+    );
+    assert_eq!(panel.example_hover_at(rect, occluded), None);
+    // Pills that still fit stay clickable.
+    let first = Point2D::new(
+        pills[0].origin.x + pills[0].size.x / 2.0,
+        pills[0].origin.y + pills[0].size.y / 2.0,
+    );
+    assert!(matches!(
+        panel.hit_test(rect, first),
+        Some(AIChatHit::Example { index: 0, .. })
+    ));
+    assert_eq!(panel.example_hover_at(rect, first), Some(0));
+}
+
 #[test]
 fn no_model_disables_model_picker_toggle() {
-    let s = EditorState::new();
+    let mut s = EditorState::new();
+    // The expanded panel only exists where the conversation lives:
+    // the rail's Agent tab. Elsewhere the chat is composer-only.
+    s.editor_ui.enter_chat_tab();
     let panel = AIChatPlaceholder::from_editor(&s);
     let rect = Rect::xywh(0.0, 0.0, AI_CHAT_WIDTH, AI_CHAT_HEIGHT);
     let p = Point2D::new(PAD + 8.0, toolbar_center_y());
@@ -65,6 +126,9 @@ fn no_model_disables_model_picker_toggle() {
 #[test]
 fn hit_test_resolves_send_at_right() {
     let mut s = EditorState::new();
+    // The expanded panel only exists where the conversation lives:
+    // the rail's Agent tab. Elsewhere the chat is composer-only.
+    s.editor_ui.enter_chat_tab();
     seed_available_model(&mut s);
     s.chat.set_input_text("design a login page");
     let panel = AIChatPlaceholder::from_editor(&s);
@@ -78,6 +142,9 @@ fn hit_test_resolves_send_at_right() {
 #[test]
 fn hit_test_resolves_stop_at_right_while_streaming() {
     let mut s = EditorState::new();
+    // The expanded panel only exists where the conversation lives:
+    // the rail's Agent tab. Elsewhere the chat is composer-only.
+    s.editor_ui.enter_chat_tab();
     s.chat
         .messages
         .push(op_editor_core::ChatMessage::assistant_streaming());
@@ -96,6 +163,9 @@ fn hit_test_resolves_stop_at_right_while_streaming() {
 #[test]
 fn streaming_textarea_click_is_consumed_without_focusing_like_ts_disabled_input() {
     let mut s = EditorState::new();
+    // The expanded panel only exists where the conversation lives:
+    // the rail's Agent tab. Elsewhere the chat is composer-only.
+    s.editor_ui.enter_chat_tab();
     s.chat
         .messages
         .push(op_editor_core::ChatMessage::assistant_streaming());
@@ -112,6 +182,9 @@ fn streaming_attachment_button_is_consumed_without_opening_picker_like_ts() {
     // NOT open the attachment picker — same behaviour as the TS disabled input.
     // #38: attach is now right-aligned (left of stop/send); use footer rect for robustness.
     let mut s = EditorState::new();
+    // The expanded panel only exists where the conversation lives:
+    // the rail's Agent tab. Elsewhere the chat is composer-only.
+    s.editor_ui.enter_chat_tab();
     s.chat
         .messages
         .push(op_editor_core::ChatMessage::assistant_streaming());
@@ -133,6 +206,9 @@ fn hit_test_resolves_bottom_toolbar_actions() {
     // #38: ⚡/📎/🎨 cluster is now right-aligned (left of stop/send).
     // Use footer_layout rects for robustness instead of hardcoded coords.
     let mut s = EditorState::new();
+    // The expanded panel only exists where the conversation lives:
+    // the rail's Agent tab. Elsewhere the chat is composer-only.
+    s.editor_ui.enter_chat_tab();
     seed_available_model(&mut s);
     s.chat.set_input_text("design a login page");
     let panel = AIChatPlaceholder::from_editor(&s);
@@ -173,6 +249,9 @@ fn footer_hover_maps_bottom_toolbar_actions() {
     // #38: ⚡/📎/🎨 cluster is now right-aligned (left of stop/send).
     // Use footer_layout rects for robustness instead of hardcoded coords.
     let mut s = EditorState::new();
+    // The expanded panel only exists where the conversation lives:
+    // the rail's Agent tab. Elsewhere the chat is composer-only.
+    s.editor_ui.enter_chat_tab();
     seed_available_model(&mut s);
     s.chat.set_input_text("design a login page");
     let panel = AIChatPlaceholder::from_editor(&s);
@@ -210,6 +289,9 @@ fn footer_hover_maps_bottom_toolbar_actions() {
 #[test]
 fn example_hover_maps_quick_action_cards() {
     let mut s = EditorState::new();
+    // The expanded panel only exists where the conversation lives:
+    // the rail's Agent tab. Elsewhere the chat is composer-only.
+    s.editor_ui.enter_chat_tab();
     seed_available_model(&mut s);
     let panel = AIChatPlaceholder::from_editor(&s);
     let rect = Rect::xywh(0.0, 0.0, AI_CHAT_WIDTH, AI_CHAT_HEIGHT);
@@ -228,6 +310,9 @@ fn footer_speed_chip_is_clickable_and_opens_parallel_agents_picker() {
     // "PARALLEL AGENTS" picker on click (ToggleParallelAgentsPicker), not CycleEffort.
     // Hover state still maps to SpeedChip for the button-wash.
     let mut s = EditorState::new();
+    // The expanded panel only exists where the conversation lives:
+    // the rail's Agent tab. Elsewhere the chat is composer-only.
+    s.editor_ui.enter_chat_tab();
     seed_available_model(&mut s);
     let panel = AIChatPlaceholder::from_editor(&s);
     let rect = Rect::xywh(0.0, 0.0, AI_CHAT_WIDTH, AI_CHAT_HEIGHT);
@@ -254,6 +339,9 @@ fn footer_speed_chip_is_clickable_and_opens_parallel_agents_picker() {
 #[test]
 fn multiline_input_expands_above_footer_toolbar() {
     let mut s = EditorState::new();
+    // The expanded panel only exists where the conversation lives:
+    // the rail's Agent tab. Elsewhere the chat is composer-only.
+    s.editor_ui.enter_chat_tab();
     s.chat.set_input_text(
         "是的是啊打撒但是 codex 是的撒的 sad 是的撒d大城市多少是多少啊打撒打撒的".repeat(3),
     );
@@ -270,6 +358,9 @@ fn multiline_input_expands_above_footer_toolbar() {
 #[test]
 fn hit_test_resolves_model_search_clear_button() {
     let mut s = EditorState::new();
+    // The expanded panel only exists where the conversation lives:
+    // the rail's Agent tab. Elsewhere the chat is composer-only.
+    s.editor_ui.enter_chat_tab();
     seed_available_model(&mut s);
     s.editor_ui.chat_model_picker.open = true;
     s.editor_ui.chat_model_picker_input.set_text("231");
@@ -297,6 +388,9 @@ fn hit_test_resolves_attachment_chip_at_painted_position() {
     // attachment row. The click must land where `paint` draws the
     // chip — a regression guard for hit-test / paint y-alignment.
     let mut s = EditorState::new();
+    // The expanded panel only exists where the conversation lives:
+    // the rail's Agent tab. Elsewhere the chat is composer-only.
+    s.editor_ui.enter_chat_tab();
     s.chat.add_attachment(op_editor_core::chat::ChatAttachment {
         name: "ref.png".into(),
         media_type: "image/png".into(),
@@ -321,6 +415,9 @@ fn hit_test_resolves_first_example_when_empty() {
     // old→new (#33): first pill is full-width at HEADER_HEIGHT + hint + gap.
     // Use the pill center computed from example_card_rects.
     let mut s = EditorState::new();
+    // The expanded panel only exists where the conversation lives:
+    // the rail's Agent tab. Elsewhere the chat is composer-only.
+    s.editor_ui.enter_chat_tab();
     seed_available_model(&mut s);
     let panel = AIChatPlaceholder::from_editor(&s);
     let rect = Rect::xywh(0.0, 0.0, AI_CHAT_WIDTH, AI_CHAT_HEIGHT);
@@ -343,6 +440,9 @@ fn hit_test_pill_resolves_anywhere_inside_pill_bounds() {
     // old→new (#33): was testing the "taller TS card height" (72px 2×2 grid).
     // old→new (#37): pill is now 40px tall (compact); any click inside resolves the example.
     let mut s = EditorState::new();
+    // The expanded panel only exists where the conversation lives:
+    // the rail's Agent tab. Elsewhere the chat is composer-only.
+    s.editor_ui.enter_chat_tab();
     seed_available_model(&mut s);
     let panel = AIChatPlaceholder::from_editor(&s);
     let rect = Rect::xywh(0.0, 0.0, AI_CHAT_WIDTH, AI_CHAT_HEIGHT);
@@ -363,8 +463,11 @@ fn hit_test_pill_resolves_anywhere_inside_pill_bounds() {
 }
 
 #[test]
-fn hit_test_header_returns_drag_handle() {
-    let s = EditorState::new();
+fn the_pinned_panel_header_is_not_a_drag_handle() {
+    let mut s = EditorState::new();
+    // The expanded panel only exists where the conversation lives:
+    // the rail's Agent tab. Elsewhere the chat is composer-only.
+    s.editor_ui.enter_chat_tab();
     let panel = AIChatPlaceholder::from_editor(&s);
     let rect = Rect::xywh(0.0, 0.0, AI_CHAT_WIDTH, AI_CHAT_HEIGHT);
     // old→new: the #27 header restyle fills most of the header with a pill
@@ -373,12 +476,13 @@ fn hit_test_header_returns_drag_handle() {
     // edge and the maximize button. Pick its midpoint.
     let selector = crate::widgets::ai_chat_panel_header::thread_selector_rect(rect);
     let p = Point2D::new(selector.origin.x + selector.size.x + 4.0, 18.0);
-    assert_eq!(panel.hit_test(rect, p), Some(AIChatHit::DragHandle));
+    assert_ne!(panel.hit_test(rect, p), Some(AIChatHit::DragHandle));
 }
 
 #[test]
 fn hit_test_header_selector_toggles_thread_picker() {
-    let s = EditorState::new();
+    let mut s = EditorState::new();
+    s.editor_ui.enter_chat_tab();
     let panel = AIChatPlaceholder::from_editor(&s);
     let rect = Rect::xywh(0.0, 0.0, AI_CHAT_WIDTH, AI_CHAT_HEIGHT);
     // Click at x=PAD+64 (well inside the tab zone, past the chevron).
@@ -406,7 +510,10 @@ fn open_thread_picker_row_switches_to_that_thread() {
 
 #[test]
 fn resize_edge_at_resolves_all_ts_handles_when_not_maximized() {
-    let s = EditorState::new();
+    let mut s = EditorState::new();
+    // The expanded panel only exists where the conversation lives:
+    // the rail's Agent tab. Elsewhere the chat is composer-only.
+    s.editor_ui.enter_chat_tab();
     let panel = AIChatPlaceholder::from_editor(&s);
     let rect = Rect::xywh(100.0, 80.0, AI_CHAT_WIDTH, AI_CHAT_HEIGHT);
     let mid_x = rect.origin.x + rect.size.x / 2.0;
@@ -441,17 +548,25 @@ fn resize_edge_at_resolves_all_ts_handles_when_not_maximized() {
 }
 
 #[test]
-fn hit_test_resolves_header_maximize_button() {
-    let s = EditorState::new();
+fn the_pinned_panel_has_no_maximize_button_left_to_hit() {
+    // The expanded panel only exists in the rail's Agent tab now, and a
+    // rail has no window to maximize — the glyph is neither painted nor
+    // clickable there, and the room it held went to the session
+    // selector.
+    let mut s = EditorState::new();
+    s.editor_ui.enter_chat_tab();
     let panel = AIChatPlaceholder::from_editor(&s);
     let rect = Rect::xywh(0.0, 0.0, AI_CHAT_WIDTH, AI_CHAT_HEIGHT);
     let p = Point2D::new(AI_CHAT_WIDTH - PAD - 50.0 + 9.0, 17.0);
-    assert_eq!(panel.hit_test(rect, p), Some(AIChatHit::ToggleMaximize));
+    assert_ne!(panel.hit_test(rect, p), Some(AIChatHit::ToggleMaximize));
 }
 
 #[test]
 fn maximized_panel_uses_minimize_icon_for_restore_button() {
     let mut s = EditorState::new();
+    // The expanded panel only exists where the conversation lives:
+    // the rail's Agent tab. Elsewhere the chat is composer-only.
+    s.editor_ui.enter_chat_tab();
     s.chat.maximized = true;
     let panel = AIChatPlaceholder::from_editor(&s);
 
@@ -461,6 +576,9 @@ fn maximized_panel_uses_minimize_icon_for_restore_button() {
 #[test]
 fn maximized_header_empty_space_is_not_a_drag_handle() {
     let mut s = EditorState::new();
+    // The expanded panel only exists where the conversation lives:
+    // the rail's Agent tab. Elsewhere the chat is composer-only.
+    s.editor_ui.enter_chat_tab();
     s.chat.maximized = true;
     let panel = AIChatPlaceholder::from_editor(&s);
     let rect = Rect::xywh(0.0, 0.0, AI_CHAT_WIDTH, AI_CHAT_HEIGHT);
@@ -471,7 +589,10 @@ fn maximized_header_empty_space_is_not_a_drag_handle() {
 
 #[test]
 fn hit_test_resolves_header_new_chat_button() {
-    let s = EditorState::new();
+    let mut s = EditorState::new();
+    // The expanded panel only exists where the conversation lives:
+    // the rail's Agent tab. Elsewhere the chat is composer-only.
+    s.editor_ui.enter_chat_tab();
     let panel = AIChatPlaceholder::from_editor(&s);
     let rect = Rect::xywh(0.0, 0.0, AI_CHAT_WIDTH, AI_CHAT_HEIGHT);
     let p = Point2D::new(AI_CHAT_WIDTH - PAD - 22.0 + 9.0, 17.0);
@@ -482,6 +603,7 @@ fn hit_test_resolves_header_new_chat_button() {
 fn managed_threads_keep_new_chat_target() {
     let mut s = EditorState::new();
     s.chat.enable_managed_thread_mode("Team Chat");
+    s.editor_ui.enter_chat_tab();
     let panel = AIChatPlaceholder::from_editor(&s);
     let rect = Rect::xywh(0.0, 0.0, AI_CHAT_WIDTH, AI_CHAT_HEIGHT);
     let right_edge = AI_CHAT_WIDTH - PAD;

@@ -7,6 +7,9 @@
 
 use super::*;
 
+/// Grace period after pan/zoom before full-quality painting resumes.
+pub(in crate::widget_host) const INTERACTION_HOT_MS: u64 = 150;
+
 impl WidgetHostNative {
     /// Drain a queued Component-Browser insert: place the chosen
     /// UIKit component at the viewport's centre (top-left = centre −
@@ -195,6 +198,17 @@ impl WidgetHostNative {
         self.now_ms < self.interaction_hot_until_ms
     }
 
+    /// Low-cost canvas paint mode for direct manipulation. Unlike
+    /// [`Self::fast_interaction_active`], this does not make the pan bitmap
+    /// cache eligible because edited geometry changes on every frame.
+    pub(in crate::widget_host) fn canvas_fast_interaction_active(&self) -> bool {
+        self.fast_interaction_active()
+            || self.node_drag.as_ref().is_some_and(|drag| drag.moved)
+            || self.handle_drag.is_some()
+            || self.rotate_drag.is_some()
+            || self.create_drag.is_some()
+    }
+
     /// Whether a top-bar hover tooltip is currently due to be on screen.
     ///
     /// The runner needs this SEPARATELY from
@@ -221,6 +235,13 @@ impl WidgetHostNative {
             self.layout_transition.as_ref(),
             self.now_ms,
         );
+        next = bookkeeping::fold_preview_deadline(
+            next,
+            self.preview
+                .as_ref()
+                .and_then(|preview| preview.next_wake_deadline_ms()),
+            self.now_ms,
+        );
         // Gesture-end full-quality repaint: wake once the
         // interactive-degrade window closes. Quantized UP to a 50 ms
         // grid so consecutive gesture ticks report the SAME deadline —
@@ -239,11 +260,6 @@ impl WidgetHostNative {
         // for the next wake here rather than dirtying the whole host.
         if let Some(at) = self.slide_thumbs.wake_deadline_ms() {
             next = bookkeeping::earliest(next, at);
-        }
-        // While previewing, keep the loop ticking (~30 fps) so the live
-        // runtime's caret blink + any time-driven widget state animates.
-        if self.preview.is_some() {
-            next = bookkeeping::earliest(next, self.now_ms.saturating_add(33));
         }
         // While a `git clone` runs, keep the loop ticking so
         // `poll_git_clone_job` drains the worker's result later.

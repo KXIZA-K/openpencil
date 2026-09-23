@@ -19,38 +19,634 @@
 //!
 //! ## Why the judgement is contrast, never the variable name
 //!
-//! It is tempting to say "a text fill must not use `$color-surface`". White on
+//! It is tempting to say "a text fill must not use `$--card`". White on
 //! a dark board is correct and common — the shipped deck template's closing
 //! slide does exactly that. The defect is the measured ratio, so that is what
 //! is measured; the variable name is never consulted.
 
 use crate::types::DocSink;
 
+use std::collections::HashMap;
+
+use jian_ops_schema::node::PenNode;
+use jian_ops_schema::style::PenFill;
+use jian_scene::layout_scene::SceneNode;
+use op_design_lint::node_util::{is_node_visible, node_fills, node_id, opacity, resolve_color_ref};
+use op_editor_core::{EditorCommand, EditorState, NodeId, PenNodeExt};
+
+#[path = "text_contrast_gradient.rs"]
+mod gradient;
+use gradient::{GradientSource, ResolvedGradient};
+
 /// Palette tokens allowed as a replacement, most-preferred first.
 ///
 /// All are emitted by `design_system` / `palette_harmonize`, so they exist in
-/// any generated document. `color-surface` is included on purpose: on a dark
+/// any generated document. `--card` is included on purpose: on a dark
 /// background it is the readable choice, and excluding it would leave dark
 /// boards unrepairable.
 /// These are the names `design_system` actually emits. An earlier version of
-/// this list was written from memory (`color-text`, `color-text-strong`) and
+/// this list was written from memory (made-up text token names) and
 /// matched NOTHING in a real document, so every repair silently no-opped —
 /// the unit tests passed because their fixture used the invented names too.
 const CANDIDATE_TOKENS: &[&str] = &[
-    "color-text-primary",
-    "color-text-body",
-    "color-text-muted",
-    "color-text-subtle",
-    "color-surface",
-    "color-bg-deep",
+    "--foreground",
+    "--secondary-foreground",
+    "--muted-foreground",
+    "--muted-foreground",
+    "--card",
+    "--background",
 ];
 
-/// Contrast a repair must reach before it is worth making. Matches the
-/// detector's own normal-text threshold rather than WCAG AA — raising the bar
-/// is a separate decision with measured noise implications (see the contrast
-/// threshold note), and this pass exists to fix invisible text, not to
-/// relitigate the threshold.
-const TARGET_RATIO: f64 = 2.0;
+/// Publication contrast target for every text repair. This matches the
+/// design-agent quality gate, while the public lint detector deliberately
+/// keeps its separately calibrated 2.5/2.0 informational thresholds.
+const TARGET_RATIO: f64 = 4.5;
+
+// ── chip/badge contrast branch (DS P1-a, pass 2) ────────────────────────────
+//
+// Measured 0814-08-14: a deck's dark card carried a light badge chip whose
+// light text was invisible on it (白底白字). The generic contrast repair
+// above measures text against the NEAREST solid ancestor, which for a chip is
+// the chip itself — so why a separate branch? Because the generic detector
+// also accepts a gradient's first stop as a background, and a chip whose fill
+// is a gradient/image makes "the background colour" unprovable. This branch
+// only fires where the chip-shape AND its solid background are provable from
+// the tree, and leaves every other text to the generic pass.
+
+/// Above this height a filled container is not a chip/badge.
+const CHIP_MAX_HEIGHT: f64 = 48.0;
+/// A chip may be at most this fraction of its parent's width.
+const CHIP_MAX_WIDTH_RATIO: f64 = 0.6;
+
+/// One text node whose measured background evidence fails the quality gate.
+struct ContrastOffender {
+    node_id: String,
+    background: Vec<String>,
+    /// The quality-gate threshold the text was measured against; the
+    /// replacement must clear it so the generic pass cannot re-flag it.
+    threshold: f64,
+}
+
+/// Re-point text that is invisible against its own chip/badge background.
+///
+/// Fires only when every link of the chain is provable: the text's nearest
+/// painted ancestor is chip-shaped (<= 48px tall, rounded or clipped, not the
+/// root, <= 60% of its parent's width), its fill is a resolved solid or
+/// gradient, and the measured ratio is below the publication quality gate's
+/// text target. The
+/// replacement colour comes from the document's own palette through the same
+/// preference order as [`best_token_above`]. Returns how many fills were
+/// re-pointed.
+pub(crate) fn repair_chip_text_contrast(sink: &mut dyn DocSink, root_id: &str) -> usize {
+    let Some(root) = sink
+        .state()
+        .active_children()
+        .iter()
+        .find(|node| node.id_str() == root_id)
+    else {
+        return 0;
+    };
+    let doc = document_for_lint(sink.state());
+    let variables = doc.variables.clone().unwrap_or_default();
+    let theme = op_design_lint::node_util::default_theme(doc.themes.as_ref());
+    let rects = resolved_rects(sink.state());
+
+    let mut offenders: Vec<ContrastOffender> = Vec::new();
+    collect_chip_offenders(
+        root,
+        &[],
+        &variables,
+        &theme,
+        &rects,
+        root_id,
+        &mut offenders,
+    );
+    let mut patches: Vec<(String, String)> = Vec::new();
+    for offender in &offenders {
+        let Some(token) =
+            best_token_above_colors(&offender.background, &variables, &theme, offender.threshold)
+        else {
+            continue;
+        };
+        patches.push((offender.node_id.clone(), token));
+    }
+    let applied = patches.len();
+    for (node_id, token) in patches {
+        sink.apply(EditorCommand::PatchNodeData {
+            node_id: NodeId::new(&node_id),
+            patch_json: format!(r#"{{"fill":[{{"type":"solid","color":"${token}"}}]}}"#),
+            page_id: None,
+        });
+    }
+    applied
+}
+
+fn collect_chip_offenders(
+    node: &PenNode,
+    ancestors: &[&PenNode],
+    variables: &op_design_lint::node_util::Variables,
+    theme: &op_design_lint::node_util::Theme,
+    rects: &HashMap<String, ResolvedRect>,
+    root_id: &str,
+    out: &mut Vec<ContrastOffender>,
+) {
+    if !is_node_visible(node) {
+        return;
+    }
+    if let PenNode::Text(text) = node {
+        if let Some(text_color) = resolved_text_color(text.fill.as_ref(), variables, theme) {
+            if let Some(background) =
+                nearest_chip_background(ancestors, variables, theme, rects, root_id)
+            {
+                if let Some(offender) = below_contrast_threshold(
+                    node_id(node),
+                    &text_color,
+                    background,
+                    TARGET_RATIO,
+                    rects,
+                ) {
+                    out.push(offender);
+                }
+            }
+        }
+    }
+    let mut next = ancestors.to_vec();
+    next.push(node);
+    for child in node_children_of(node) {
+        collect_chip_offenders(child, &next, variables, theme, rects, root_id, out);
+    }
+}
+
+fn node_children_of(node: &PenNode) -> &[PenNode] {
+    node.children().map(Vec::as_slice).unwrap_or(&[])
+}
+
+/// The chip background behind `node`, or `None` when the text's nearest
+/// painted ancestor is not a provable chip.
+fn nearest_chip_background(
+    ancestors: &[&PenNode],
+    variables: &op_design_lint::node_util::Variables,
+    theme: &op_design_lint::node_util::Theme,
+    rects: &HashMap<String, ResolvedRect>,
+    root_id: &str,
+) -> Option<LocatedBackground> {
+    let located = nearest_background(ancestors, variables, theme)?;
+    let index = located.source_index?;
+    let ancestor = ancestors[index];
+    let parent = index.checked_sub(1).map(|parent| ancestors[parent]);
+    is_chip_shape(ancestor, parent, rects, root_id).then_some(located)
+}
+
+enum FillKind {
+    /// No usable colour at all — the ancestor is transparent for this purpose.
+    Transparent,
+    /// A usable colour whose source is not a solid or linear/radial gradient.
+    Unprovable,
+    /// A usable solid colour (unresolved — may still be a `$ref`).
+    Solid(String),
+    /// Gradient stop colours (unresolved — may still be `$ref`s).
+    Gradient(GradientSource),
+}
+
+enum ResolvedFill {
+    Transparent,
+    Unprovable,
+    Solid([u8; 4]),
+    Gradient(ResolvedGradient),
+}
+
+struct LocatedBackground {
+    colors: Vec<String>,
+    gradient: Option<ResolvedGradient>,
+    source_node_id: Option<String>,
+    source_index: Option<usize>,
+}
+
+/// The first usable colour in a fill list, classified by source. Skips
+/// effectively-transparent fills the same way the detector's
+/// `first_solid_color` does (opacity 0 or `#RRGGBB00`).
+fn first_usable_fill_kind(fills: Option<&Vec<PenFill>>) -> FillKind {
+    let Some(fills) = fills else {
+        return FillKind::Transparent;
+    };
+    for fill in fills {
+        match fill {
+            PenFill::Solid(body) => {
+                if body.opacity == Some(0.0) || is_transparent_color(&body.color) {
+                    continue;
+                }
+                if body.color.is_empty() {
+                    continue;
+                }
+                return FillKind::Solid(body.color.clone());
+            }
+            PenFill::Image(body) => {
+                if body.opacity == Some(0.0) {
+                    continue;
+                }
+                return FillKind::Unprovable;
+            }
+            PenFill::LinearGradient(body) => {
+                if body.opacity == Some(0.0) {
+                    continue;
+                }
+                return FillKind::Gradient(GradientSource::linear(
+                    f64::from(body.angle.unwrap_or(0.0)),
+                    body.stops
+                        .iter()
+                        .map(|stop| (f64::from(stop.offset), stop.color.clone()))
+                        .collect(),
+                ));
+            }
+            PenFill::RadialGradient(body) => {
+                if body.opacity == Some(0.0) {
+                    continue;
+                }
+                return FillKind::Gradient(GradientSource::radial(
+                    f64::from(body.cx.unwrap_or(0.5)),
+                    f64::from(body.cy.unwrap_or(0.5)),
+                    body.stops
+                        .iter()
+                        .map(|stop| (f64::from(stop.offset), stop.color.clone()))
+                        .collect(),
+                ));
+            }
+            PenFill::MeshGradient(body) => {
+                if body.opacity == Some(0.0) {
+                    continue;
+                }
+                return FillKind::Unprovable;
+            }
+            PenFill::Shader(body) => {
+                if body.opacity == Some(0.0) {
+                    continue;
+                }
+                return FillKind::Unprovable;
+            }
+        }
+    }
+    FillKind::Transparent
+}
+
+/// Resolve the first visible fill into the evidence the contrast pass can
+/// prove. Images, meshes and shaders remain intentionally unprovable.
+fn resolve_fill_kind(
+    fills: Option<&Vec<PenFill>>,
+    variables: &op_design_lint::node_util::Variables,
+    theme: &op_design_lint::node_util::Theme,
+) -> ResolvedFill {
+    match first_usable_fill_kind(fills) {
+        FillKind::Transparent => ResolvedFill::Transparent,
+        FillKind::Unprovable => ResolvedFill::Unprovable,
+        FillKind::Solid(raw) => {
+            let Some(resolved) = resolve_color_ref(&raw, variables, theme) else {
+                return ResolvedFill::Transparent;
+            };
+            let Some(rgba) = parse_color_rgba(&resolved) else {
+                return ResolvedFill::Transparent;
+            };
+            if rgba[3] == 0 {
+                ResolvedFill::Transparent
+            } else {
+                ResolvedFill::Solid(rgba)
+            }
+        }
+        FillKind::Gradient(source) => gradient::resolve_gradient(source, variables, theme)
+            .map(ResolvedFill::Gradient)
+            .unwrap_or(ResolvedFill::Unprovable),
+    }
+}
+
+/// Find the nearest rendered background. A semi-transparent solid is
+/// composited over the next opaque solid ancestor; a missing background is
+/// the white canvas, while a non-provable paint causes the caller to skip the
+/// text.
+fn nearest_background(
+    ancestors: &[&PenNode],
+    variables: &op_design_lint::node_util::Variables,
+    theme: &op_design_lint::node_util::Theme,
+) -> Option<LocatedBackground> {
+    for (index, ancestor) in ancestors.iter().enumerate().rev() {
+        if opacity(ancestor) == 0.0 || !is_node_visible(ancestor) {
+            continue;
+        }
+        match resolve_fill_kind(node_fills(ancestor), variables, theme) {
+            ResolvedFill::Transparent => continue,
+            ResolvedFill::Unprovable => return None,
+            ResolvedFill::Gradient(colors) => {
+                return Some(LocatedBackground {
+                    colors: colors.colors(),
+                    gradient: Some(colors),
+                    source_node_id: Some(node_id(ancestor).to_string()),
+                    source_index: Some(index),
+                });
+            }
+            ResolvedFill::Solid(rgba) => {
+                let color = if rgba[3] == u8::MAX {
+                    rgb_hex(rgba)
+                } else {
+                    let under = nearest_opaque_solid_color(index, ancestors, variables, theme)
+                        .unwrap_or([u8::MAX; 4]);
+                    composite_over(rgba, under)
+                };
+                return Some(LocatedBackground {
+                    colors: vec![color],
+                    gradient: None,
+                    source_node_id: Some(node_id(ancestor).to_string()),
+                    source_index: Some(index),
+                });
+            }
+        }
+    }
+    Some(LocatedBackground {
+        colors: vec!["#FFFFFF".to_string()],
+        gradient: None,
+        source_node_id: None,
+        source_index: None,
+    })
+}
+
+fn nearest_opaque_solid_color(
+    from_index: usize,
+    ancestors: &[&PenNode],
+    variables: &op_design_lint::node_util::Variables,
+    theme: &op_design_lint::node_util::Theme,
+) -> Option<[u8; 4]> {
+    for ancestor in ancestors[..from_index].iter().rev() {
+        if opacity(ancestor) == 0.0 || !is_node_visible(ancestor) {
+            continue;
+        }
+        if let ResolvedFill::Solid(rgba) = resolve_fill_kind(node_fills(ancestor), variables, theme)
+        {
+            if rgba[3] == u8::MAX {
+                return Some(rgba);
+            }
+        }
+    }
+    None
+}
+
+fn resolved_text_color(
+    fills: Option<&Vec<PenFill>>,
+    variables: &op_design_lint::node_util::Variables,
+    theme: &op_design_lint::node_util::Theme,
+) -> Option<String> {
+    let raw = first_usable_solid_fill(fills)?;
+    resolve_contrast_color(&raw, variables, theme)
+}
+
+fn below_contrast_threshold(
+    node_id: &str,
+    text_color: &str,
+    background: LocatedBackground,
+    threshold: f64,
+    rects: &HashMap<String, ResolvedRect>,
+) -> Option<ContrastOffender> {
+    let colors = background_colors_at_text(&background, node_id, rects);
+    let best = colors
+        .iter()
+        .map(|color| op_design_lint::color::color_contrast(text_color, color))
+        .filter(|ratio| ratio.is_finite())
+        .max_by(|left, right| left.total_cmp(right))?;
+    (best < threshold).then(|| ContrastOffender {
+        node_id: node_id.to_string(),
+        background: colors,
+        threshold,
+    })
+}
+
+fn background_colors_at_text(
+    background: &LocatedBackground,
+    text_node_id: &str,
+    rects: &HashMap<String, ResolvedRect>,
+) -> Vec<String> {
+    if let (Some(gradient), Some(owner), Some(text)) = (
+        background.gradient.as_ref(),
+        background
+            .source_node_id
+            .as_deref()
+            .and_then(|id| rects.get(id)),
+        rects.get(text_node_id),
+    ) {
+        if let Some(sample) = gradient::sample_at_text(gradient, *owner, *text) {
+            return vec![sample];
+        }
+    }
+    background.colors.clone()
+}
+
+/// The text fill, when its first usable colour comes from a solid fill. A
+/// gradient text fill is unprovable and skipped, mirroring the chip rule.
+fn first_usable_solid_fill(fills: Option<&Vec<PenFill>>) -> Option<String> {
+    match first_usable_fill_kind(fills) {
+        FillKind::Solid(color) => Some(color),
+        _ => None,
+    }
+}
+
+/// True for a fully transparent colour, including `#RRGGBBAA` and `rgba()`.
+fn is_transparent_color(color: &str) -> bool {
+    parse_color_rgba(color).is_some_and(|rgba| rgba[3] == 0)
+}
+
+pub(crate) fn parse_color_rgba(color: &str) -> Option<[u8; 4]> {
+    const OPTIONS: op_util::hex_color::HexOptions = op_util::hex_color::HexOptions {
+        require_hash: true,
+        allow_rgb_shorthand: true,
+        allow_rgba_shorthand: false,
+        allow_alpha: true,
+    };
+    if let Some(rgba) = op_util::hex_color::parse_hex_rgba8(color, OPTIONS) {
+        return Some(rgba);
+    }
+
+    let lower = color.trim().to_ascii_lowercase();
+    let (body, has_alpha) = if let Some(body) = lower.strip_prefix("rgba(") {
+        (body.strip_suffix(')')?, true)
+    } else if let Some(body) = lower.strip_prefix("rgb(") {
+        (body.strip_suffix(')')?, false)
+    } else {
+        return None;
+    };
+    let parts: Vec<&str> = body.split(',').map(str::trim).collect();
+    if parts.len() != if has_alpha { 4 } else { 3 } {
+        return None;
+    }
+    let channel = |value: &str| -> Option<u8> {
+        let value = value.parse::<f64>().ok()?;
+        (value.is_finite() && (0.0..=255.0).contains(&value)).then_some(value.round() as u8)
+    };
+    let alpha = if has_alpha {
+        let value = parts[3].parse::<f64>().ok()?;
+        (value.is_finite() && (0.0..=1.0).contains(&value))
+            .then_some((value * 255.0).round() as u8)?
+    } else {
+        u8::MAX
+    };
+    Some([
+        channel(parts[0])?,
+        channel(parts[1])?,
+        channel(parts[2])?,
+        alpha,
+    ])
+}
+
+fn resolve_contrast_color(
+    raw: &str,
+    variables: &op_design_lint::node_util::Variables,
+    theme: &op_design_lint::node_util::Theme,
+) -> Option<String> {
+    let resolved = resolve_color_ref(raw, variables, theme)?;
+    let rgba = parse_color_rgba(&resolved)?;
+    Some(rgb_hex(rgba))
+}
+
+fn rgb_hex(rgba: [u8; 4]) -> String {
+    format!("#{:02X}{:02X}{:02X}", rgba[0], rgba[1], rgba[2])
+}
+
+/// Composite an RGBA foreground over an opaque background in sRGB channels.
+fn composite_over(foreground: [u8; 4], background: [u8; 4]) -> String {
+    let alpha = f64::from(foreground[3]) / 255.0;
+    let channel = |front: u8, back: u8| {
+        (f64::from(front) * alpha + f64::from(back) * (1.0 - alpha))
+            .round()
+            .clamp(0.0, 255.0) as u8
+    };
+    rgb_hex([
+        channel(foreground[0], background[0]),
+        channel(foreground[1], background[1]),
+        channel(foreground[2], background[2]),
+        u8::MAX,
+    ])
+}
+
+/// The chip-shape gate, every clause required:
+/// container, not the pass root, <= [`CHIP_MAX_HEIGHT`] tall, rounded or
+/// clipped, and no wider than [`CHIP_MAX_WIDTH_RATIO`] of its parent. Sizes
+/// read the authored numeric value first and fall back to the resolved
+/// layout; an unknown size fails the gate (narrow predicate).
+fn is_chip_shape(
+    node: &PenNode,
+    parent: Option<&PenNode>,
+    rects: &HashMap<String, ResolvedRect>,
+    root_id: &str,
+) -> bool {
+    if node.id_str() == root_id {
+        return false;
+    }
+    let props = match node {
+        PenNode::Frame(frame) => &frame.container,
+        PenNode::Group(group) => &group.container,
+        PenNode::Rectangle(rect) => &rect.container,
+        _ => return false,
+    };
+    let resolved = |node: &PenNode, axis: usize| -> Option<f64> {
+        let authored = if axis == 0 {
+            node.width_px()
+        } else {
+            node.height_px()
+        };
+        authored.or_else(|| {
+            rects
+                .get(node.id_str())
+                .map(|rect| if axis == 0 { rect.w } else { rect.h })
+        })
+    };
+    let Some(height) = resolved(node, 1) else {
+        return false;
+    };
+    if !(height > 0.0 && height <= CHIP_MAX_HEIGHT) {
+        return false;
+    }
+    if props.corner_radius.is_none() && props.clip_content != Some(true) {
+        return false;
+    }
+    let (Some(width), Some(parent)) = (resolved(node, 0), parent) else {
+        return false;
+    };
+    let Some(parent_width) = resolved(parent, 0).filter(|w| *w > 0.0) else {
+        return false;
+    };
+    width <= parent_width * CHIP_MAX_WIDTH_RATIO
+}
+
+/// Resolved absolute rect per node id through the SAME jian layout pass the
+/// geometry validation loop uses.
+#[derive(Clone, Copy, Debug)]
+struct ResolvedRect {
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+}
+
+fn resolved_rects(state: &EditorState) -> HashMap<String, ResolvedRect> {
+    let scene = op_pen_loader::editor_state_to_active_page_layout_scene(state);
+    let mut map = HashMap::new();
+    if let Some(page) = scene.active_page() {
+        collect_sizes(&page.children, &mut map);
+    }
+    map
+}
+
+fn collect_sizes(nodes: &[SceneNode], map: &mut HashMap<String, ResolvedRect>) {
+    for node in nodes {
+        let bounds = node.aggregate_bounds();
+        map.insert(
+            node.id.clone(),
+            ResolvedRect {
+                x: f64::from(bounds.origin.x),
+                y: f64::from(bounds.origin.y),
+                w: f64::from(bounds.size.x),
+                h: f64::from(bounds.size.y),
+            },
+        );
+        collect_sizes(&node.children, map);
+    }
+}
+
+fn collect_contrast_offenders(
+    node: &PenNode,
+    ancestors: &[&PenNode],
+    variables: &op_design_lint::node_util::Variables,
+    theme: &op_design_lint::node_util::Theme,
+    rects: &HashMap<String, ResolvedRect>,
+    out: &mut Vec<ContrastOffender>,
+) {
+    if !is_node_visible(node) {
+        return;
+    }
+    if matches!(node, PenNode::Text(_) | PenNode::IconFont(_)) {
+        if let Some(text_color) = resolved_text_color(node_fills(node), variables, theme) {
+            if let Some(background) = nearest_background(ancestors, variables, theme) {
+                let is_icon = matches!(node, PenNode::IconFont(_));
+                // Icons need the same palette-backed repair as text, but only
+                // when they are effectively indistinguishable from a solid
+                // ancestor. Gradients and the implicit page background do not
+                // provide the narrow evidence this contract requires.
+                if !is_icon || (background.gradient.is_none() && background.source_index.is_some())
+                {
+                    let threshold = if is_icon { 1.5 } else { TARGET_RATIO };
+                    if let Some(offender) = below_contrast_threshold(
+                        node_id(node),
+                        &text_color,
+                        background,
+                        threshold,
+                        rects,
+                    ) {
+                        out.push(offender);
+                    }
+                }
+            }
+        }
+    }
+    let mut next = ancestors.to_vec();
+    next.push(node);
+    for child in node_children_of(node) {
+        collect_contrast_offenders(child, &next, variables, theme, rects, out);
+    }
+}
 
 /// Repair invisible text under `root_id`. Returns how many fills were
 /// re-pointed.
@@ -64,16 +660,17 @@ pub(crate) fn repair_text_contrast(sink: &mut dyn DocSink, root_id: &str) -> usi
         return 0;
     };
     let doc = document_for_lint(sink.state());
-    let offenders = op_design_lint::detectors::typography::low_contrast_text(root, &doc);
-    if offenders.is_empty() {
-        return 0;
-    }
     let variables = doc.variables.clone().unwrap_or_default();
     let theme = op_design_lint::node_util::default_theme(doc.themes.as_ref());
+    let rects = resolved_rects(sink.state());
+    let mut offenders = Vec::new();
+    collect_contrast_offenders(root, &[], &variables, &theme, &rects, &mut offenders);
 
     let mut patches: Vec<(String, String)> = Vec::new();
     for offender in offenders {
-        let Some(token) = best_token(&offender.bg_color, &variables, &theme) else {
+        let Some(token) =
+            best_token_above_colors(&offender.background, &variables, &theme, offender.threshold)
+        else {
             continue;
         };
         // Leave it alone when the palette has nothing better than what is
@@ -95,19 +692,54 @@ pub(crate) fn repair_text_contrast(sink: &mut dyn DocSink, root_id: &str) -> usi
 /// [`TARGET_RATIO`] against `bg`.
 ///
 /// Deliberately not "the highest contrast available": on a light board that
-/// picks `color-bg-deep`, which is readable but semantically a background
+/// picks `--background`, which is readable but semantically a background
 /// token used as ink. Preference order encodes what the token MEANS, and the
 /// ratio only decides whether it is usable — so ink wins on light boards and
 /// the light tokens take over once ink stops being readable.
+#[cfg(test)]
 fn best_token(
     bg: &str,
     variables: &op_design_lint::node_util::Variables,
     theme: &op_design_lint::node_util::Theme,
 ) -> Option<String> {
+    best_token_above(bg, variables, theme, TARGET_RATIO)
+}
+
+/// [`best_token`] with a caller-chosen bar. Both finalizer branches pass the
+/// offender's own threshold so a repair cannot remain below the gate that
+/// selected it — same token list, same preference order, exact acceptance
+/// bar.
+#[cfg(test)]
+fn best_token_above(
+    bg: &str,
+    variables: &op_design_lint::node_util::Variables,
+    theme: &op_design_lint::node_util::Theme,
+    bar: f64,
+) -> Option<String> {
     CANDIDATE_TOKENS.iter().find_map(|token| {
         let hex = token_hex(token, variables, theme)?;
         let ratio = op_design_lint::color::color_contrast(&hex, bg);
-        (ratio.is_finite() && ratio >= TARGET_RATIO).then(|| (*token).to_string())
+        (ratio.is_finite() && ratio >= bar).then(|| (*token).to_string())
+    })
+}
+
+fn best_token_above_colors(
+    backgrounds: &[String],
+    variables: &op_design_lint::node_util::Variables,
+    theme: &op_design_lint::node_util::Theme,
+    bar: f64,
+) -> Option<String> {
+    if backgrounds.is_empty() {
+        return None;
+    }
+    CANDIDATE_TOKENS.iter().find_map(|token| {
+        let hex = token_hex(token, variables, theme)?;
+        let worst = backgrounds
+            .iter()
+            .map(|background| op_design_lint::color::color_contrast(&hex, background))
+            .filter(|ratio| ratio.is_finite())
+            .min_by(|left, right| left.total_cmp(right))?;
+        (worst >= bar).then(|| (*token).to_string())
     })
 }
 
@@ -145,3 +777,7 @@ fn document_for_lint(state: &op_editor_core::EditorState) -> jian_ops_schema::Pe
 #[cfg(test)]
 #[path = "text_contrast_repair_tests.rs"]
 mod text_contrast_repair_tests;
+
+#[cfg(test)]
+#[path = "text_contrast_gradient_tests.rs"]
+mod text_contrast_gradient_tests;

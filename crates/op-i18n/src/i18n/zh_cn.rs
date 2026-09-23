@@ -367,6 +367,7 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "ai.quickAction.foodAppDesc" => "App 首页设计",
         "ai.quickAction.bottomNavDesc" => "5 个 Tab 导航栏",
         "ai.quickAction.colorPaletteDesc" => "应用配色推荐",
+        "fileMenu.home" => "制图台",
         "fileMenu.newFile" => "新建文件",
         "fileMenu.openFile" => "打开文件...",
         "fileMenu.save" => "保存",
@@ -704,7 +705,7 @@ pub fn lookup(key: &str) -> Option<&'static str> {
             "已完成——计划中的 {{count}} 个区块已全部就位，最终布局也已检查。"
         }
         "ai.designProgress.completion.issues" => {
-            "本次已结束，但仍有问题——已完成 {{completed}} 项，{{failed}} 项需要处理。"
+            "本次已结束——已完成 {{completed}} 项，失败 {{failed}} 项。下方失败区块已标明具体原因。"
         }
         "figma.importNotWired" => ".fig 文件导入尚未接入",
         "dialog.loadErrorInvalidUtf8" => "文件不是有效的 UTF-8 文本:{{detail}}",

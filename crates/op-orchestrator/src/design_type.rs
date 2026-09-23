@@ -153,6 +153,52 @@ const SLIDES_WORDS: &[&str] = &[
     "路演",
 ];
 const MOBILE_WORDS: &[&str] = &["mobile", "手机", "phone", "移动端", "ios", "android"];
+
+/// `375×812` / `390x844` / `360 x 800` written into the brief is a phone
+/// frame even when the words around it are "App 首页" or "screen": a portrait
+/// board 320-480 wide is never a desktop or landing canvas.
+fn mentions_phone_dimensions(lower: &str) -> bool {
+    let chars: Vec<char> = lower.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        if !chars[i].is_ascii_digit() {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < chars.len() && chars[i].is_ascii_digit() {
+            i += 1;
+        }
+        let width: u32 = chars[start..i]
+            .iter()
+            .collect::<String>()
+            .parse()
+            .unwrap_or(0);
+        let mut j = i;
+        while j < chars.len() && chars[j] == ' ' {
+            j += 1;
+        }
+        if j < chars.len() && (chars[j] == 'x' || chars[j] == '×' || chars[j] == '*') {
+            j += 1;
+            while j < chars.len() && chars[j] == ' ' {
+                j += 1;
+            }
+            let hstart = j;
+            while j < chars.len() && chars[j].is_ascii_digit() {
+                j += 1;
+            }
+            let height: u32 = chars[hstart..j]
+                .iter()
+                .collect::<String>()
+                .parse()
+                .unwrap_or(0);
+            if (320..=480).contains(&width) && height > width {
+                return true;
+            }
+        }
+    }
+    false
+}
 /// Words that mean "social card series" on their own — a platform name or a
 /// delivery format, neither of which describes anything else we generate.
 const CARD_PLATFORM_WORDS: &[&str] = &[
@@ -251,7 +297,11 @@ pub fn detect_design_type(prompt: &str) -> DesignTypePreset {
     // ② 单组件:触发词命中 且 disqualifier 不命中。
     let trigger = contains_any(&lower, COMPONENT_TRIGGER_LATIN)
         || contains_any(&lower, COMPONENT_TRIGGER_CJK);
-    if trigger && !contains_any(&lower, COMPONENT_DISQUALIFIER) {
+    // Phone geometry is a screen contract even when a component trigger appears.
+    if trigger
+        && !contains_any(&lower, COMPONENT_DISQUALIFIER)
+        && !mentions_phone_dimensions(&lower)
+    {
         return COMPONENT;
     }
     // ③ 演示文稿。放在移动端之前:"手机端演示" 说的是内容形态是 deck,
@@ -260,7 +310,7 @@ pub fn detect_design_type(prompt: &str) -> DesignTypePreset {
         return SLIDES;
     }
     // ④ 移动端。
-    if contains_any(&lower, MOBILE_WORDS) {
+    if contains_any(&lower, MOBILE_WORDS) || mentions_phone_dimensions(&lower) {
         return MOBILE;
     }
     // ⑤ 数据型工作区 / dashboard。
@@ -319,17 +369,16 @@ mod tests {
         // The repair layer keys off DesignForm, and the one outcome that
         // would actively damage a card is being read as a 375-wide phone
         // screen (status-bar injection, bottom-nav chrome, mobile reflow).
-        // 1080 is far above the phone band, so it reads as a Page — which
-        // only ever ADDS protection (`spacing_repair`'s section-rhythm gate)
-        // and never applies phone chrome.
-        for (w, h) in [
-            (1080.0, 1440.0), // XHS 竖版 3:4 — the primary spec
-            (1080.0, 1080.0), // XHS 方版 1:1
-            (1080.0, 1920.0), // 通用 9:16
+        // Portrait cards read as the Card form (DS P1.5); the square board
+        // keeps its previous Page judgement. None may read as a phone.
+        for (w, h, expected) in [
+            (1080.0, 1440.0, DesignForm::Card), // XHS 竖版 3:4 — the primary spec
+            (1080.0, 1080.0, DesignForm::Page), // XHS 方版 1:1
+            (1080.0, 1920.0, DesignForm::Card), // 通用 9:16
         ] {
             let form = classify_root_form(Some(w), Some(h));
             assert_ne!(form, DesignForm::MobileScreen, "{w}x{h}");
-            assert_eq!(form, DesignForm::Page, "{w}x{h}");
+            assert_eq!(form, expected, "{w}x{h}");
         }
     }
 
@@ -423,6 +472,33 @@ mod tests {
         assert_eq!(
             detect_design_type("a profile card").type_,
             DesignType::Component
+        );
+    }
+
+    #[test]
+    fn phone_dimensions_in_the_brief_mean_a_mobile_screen() {
+        assert_eq!(
+            detect_design_type("外卖 App 首页（375×812）：顶部地址与搜索").type_,
+            DesignType::MobileScreen
+        );
+        assert_eq!(
+            detect_design_type("Workout detail screen (390x844) with a hero image").type_,
+            DesignType::MobileScreen
+        );
+        assert_eq!(
+            detect_design_type(
+                "短视频平台首页（375×812，暗色）：顶部分类标签、推荐视频六卡、底部导航。"
+            )
+            .type_,
+            DesignType::MobileScreen
+        );
+        assert_ne!(
+            detect_design_type("官网首页（1440×900，浅色）").type_,
+            DesignType::MobileScreen
+        );
+        assert_ne!(
+            detect_design_type("横幅 1200x300 banner").type_,
+            DesignType::MobileScreen
         );
     }
 

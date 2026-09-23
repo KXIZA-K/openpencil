@@ -84,6 +84,7 @@ fn stash_design_request_for_retry_writes_json_onto_the_last_message() {
         validation_enabled: true,
         visual_ref_enabled: false,
         pinned_style_guide: None,
+        reference_skeleton: None,
     };
 
     stash_design_request_for_retry(&mut host, &request);
@@ -148,7 +149,9 @@ fn design_launch_preparation_captures_builtin_model_before_detaching_chat() {
             display_name: "MiniMax".into(),
             kind: BuiltinAgentKind::OpenAiCompat,
             api_key: "sk-test".into(),
-            model: "MiniMax-M3".into(),
+            // Both rows are explicitly saved; the active tab selects the
+            // second one and must win for this turn.
+            models: vec!["MiniMax-M2.7".into(), "MiniMax-M3".into()],
             base_url: "http://localhost:9".into(),
             enabled: true,
         });
@@ -182,6 +185,72 @@ fn design_launch_preparation_captures_builtin_model_before_detaching_chat() {
     );
 }
 
+#[test]
+fn selected_builtin_config_is_narrowed_to_the_saved_tab_model() {
+    let mut state = EditorState::new();
+    state
+        .editor_ui
+        .agent_settings
+        .builtin_agents
+        .push(BuiltinAgentConfig {
+            id: "builtin-1".into(),
+            preset: BuiltinAgentPresetKey::Custom,
+            display_name: "MiniMax".into(),
+            kind: BuiltinAgentKind::OpenAiCompat,
+            api_key: "sk-test".into(),
+            models: vec!["persisted-fallback".into(), "active-tab-model".into()],
+            base_url: "http://localhost:9".into(),
+            enabled: true,
+        });
+    state.chat.available_models = vec![ModelEntry::builtin(
+        AgentProvider::ClaudeCode,
+        "builtin-1",
+        "builtin:builtin-1:active-tab-model",
+        "Active tab model",
+    )];
+    state.chat.selected_model = 0;
+    let entry = state
+        .chat
+        .selected_model_entry()
+        .expect("selected model entry");
+    let config = providers::selected_builtin_agent_config(&state, entry)
+        .expect("selected builtin resolves a provider config");
+
+    assert_eq!(config.models, ["active-tab-model"]);
+    assert_eq!(
+        state.editor_ui.agent_settings.builtin_agents[0].models,
+        ["persisted-fallback", "active-tab-model"],
+        "routing must narrow a clone, never mutate persisted settings"
+    );
+}
+
+#[test]
+fn stale_builtin_row_cannot_override_current_provider_credentials() {
+    let mut state = EditorState::new();
+    state
+        .editor_ui
+        .agent_settings
+        .builtin_agents
+        .push(BuiltinAgentConfig {
+            id: "builtin-1".into(),
+            preset: BuiltinAgentPresetKey::Custom,
+            display_name: "Provider".into(),
+            kind: BuiltinAgentKind::OpenAiCompat,
+            api_key: "sk-new".into(),
+            models: vec!["current-model".into()],
+            base_url: "http://localhost:9".into(),
+            enabled: true,
+        });
+    let stale = ModelEntry::builtin(
+        AgentProvider::ClaudeCode,
+        "builtin-1",
+        "builtin:builtin-1:old-private-model",
+        "Old private model",
+    );
+
+    assert!(providers::selected_builtin_agent_config(&state, &stale).is_none());
+}
+
 /// Regression lock for a real bug a user hit: the CLI-standard route
 /// (`launch_cli_standard_turn`, reached whenever no builtin/ACP model is
 /// selected — the common case) never stashed `design_request_json_for_retry`
@@ -191,6 +260,122 @@ fn design_launch_preparation_captures_builtin_model_before_detaching_chat() {
 /// mocking provider construction or spawning a real CLI subprocess — that's
 /// exactly where the stash must happen (before the worker thread moves the
 /// request away), so it's exactly what this test needs to prove.
+#[test]
+fn orchestrator_launch_route_bypasses_the_design_loop_even_when_the_gate_says_yes() {
+    let _guard = crate::agent_indicator_test_lock::LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    op_editor_core::agent_indicators::clear();
+
+    let mut host = WidgetHostNative::new();
+    // A ready builtin provider with its model row selected: the turn is
+    // builtin-routed (the design-intent branch below `is_builtin_or_acp`)
+    // AND loop-eligible — the experimental flag forces the loop gate on.
+    host.editor_state_mut()
+        .editor_ui
+        .agent_settings
+        .builtin_agents
+        .push(BuiltinAgentConfig {
+            id: "builtin-1".into(),
+            preset: BuiltinAgentPresetKey::Custom,
+            display_name: "MiniMax".into(),
+            kind: BuiltinAgentKind::OpenAiCompat,
+            api_key: "sk-test".into(),
+            models: vec!["MiniMax-M3".into()],
+            base_url: "http://localhost:9".into(),
+            enabled: true,
+        });
+    host.editor_state_mut().chat.available_models = vec![ModelEntry::builtin(
+        AgentProvider::ClaudeCode,
+        "builtin-1",
+        "builtin:builtin-1:MiniMax-M3",
+        "MiniMax M3",
+    )];
+    host.editor_state_mut().chat.selected_model = 0;
+    host.editor_state_mut()
+        .editor_ui
+        .agent_settings
+        .experimental_features_enabled = true;
+    host.editor_state_mut()
+        .chat
+        .set_input_text("design a login page");
+
+    host.editor_state_mut().chat.launch_route = op_editor_core::LaunchRoute::Orchestrator;
+    assert!(host.editor_state_mut().chat.begin_send());
+    let mut current_chat = None;
+    let mut current_design = None;
+    assert!(launch_if_pending(
+        &mut host,
+        &mut current_chat,
+        &mut current_design
+    ));
+    assert!(
+        current_design.is_some(),
+        "the pinned route must land on the orchestrator design session"
+    );
+    assert!(current_chat.is_none());
+    assert_eq!(
+        host.editor_state().chat.launch_route,
+        op_editor_core::LaunchRoute::Auto,
+        "draining the send must consume the route back to Auto"
+    );
+
+    op_editor_core::agent_indicators::clear();
+}
+
+#[test]
+fn auto_launch_route_still_takes_the_design_loop_when_the_gate_says_yes() {
+    let _guard = crate::agent_indicator_test_lock::LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    op_editor_core::agent_indicators::clear();
+
+    let mut host = WidgetHostNative::new();
+    host.editor_state_mut()
+        .editor_ui
+        .agent_settings
+        .builtin_agents
+        .push(BuiltinAgentConfig {
+            id: "builtin-1".into(),
+            preset: BuiltinAgentPresetKey::Custom,
+            display_name: "MiniMax".into(),
+            kind: BuiltinAgentKind::OpenAiCompat,
+            api_key: "sk-test".into(),
+            models: vec!["MiniMax-M3".into()],
+            base_url: "http://localhost:9".into(),
+            enabled: true,
+        });
+    host.editor_state_mut().chat.available_models = vec![ModelEntry::builtin(
+        AgentProvider::ClaudeCode,
+        "builtin-1",
+        "builtin:builtin-1:MiniMax-M3",
+        "MiniMax M3",
+    )];
+    host.editor_state_mut().chat.selected_model = 0;
+    host.editor_state_mut()
+        .editor_ui
+        .agent_settings
+        .experimental_features_enabled = true;
+    host.editor_state_mut()
+        .chat
+        .set_input_text("design a login page");
+
+    assert!(host.editor_state_mut().chat.begin_send());
+    let mut current_chat = None;
+    let mut current_design = None;
+    assert!(launch_if_pending(
+        &mut host,
+        &mut current_chat,
+        &mut current_design
+    ));
+    assert!(
+        current_chat.is_some() && current_design.is_none(),
+        "the default Auto route keeps the design-agent loop"
+    );
+
+    op_editor_core::agent_indicators::clear();
+}
+
 #[test]
 fn launch_if_pending_stashes_the_design_request_on_the_cli_standard_route() {
     // `launch_cli_standard_turn` (reached below) unconditionally calls

@@ -9,7 +9,7 @@ use op_editor_ui::widgets::editor_state_ext::theme_for;
 use op_editor_ui::widgets::host_canvas_geometry as canvas_geometry;
 use op_editor_ui::widgets::{
     variables_panel::VariablesPanel, AIChatPlaceholder, AlignToolbar, CanvasViewport, GitPanel,
-    LayerPanel, LayoutCx, LocalePicker, PaintCx, PropertyPanel, ShapePicker, StatusBar, Toolbar,
+    HomeSurface, LayoutCx, LocalePicker, PaintCx, PropertyPanel, ShapePicker, StatusBar, Toolbar,
     TopBar, Widget, TOOLBAR_WIDTH, TOP_BAR_HEIGHT,
 };
 use op_editor_ui::{Point2D, Rect, RenderBackend};
@@ -23,6 +23,7 @@ impl WidgetHostNative {
         viewport_height: f32,
     ) {
         self.image_input_geometry = None;
+        self.publish_viewport_geometry(viewport_width, viewport_height);
         // Rotate the transcript-cache owner if the active chat session changed
         // since the last frame, BEFORE any resolve stores under it — the new
         // tab's build is then stamped with the fresh owner.
@@ -36,6 +37,38 @@ impl WidgetHostNative {
             },
             self.theme.background,
         );
+
+        if self.editor_state.editor_ui.home.visible {
+            // The Home headline and the workspace title resolve their
+            // serif at paint time. Load the native family snapshot before
+            // constructing the surface so the first frame does not fall
+            // back to the editor sans face.
+            self.ensure_system_fonts_loaded();
+        }
+        if self.editor_state.editor_ui.home.visible
+            && self.editor_state.editor_ui.home.shown_at_ms == 0
+        {
+            // First frame since the show: stamp the wall clock the
+            // entrance choreography phases against. Every hide path
+            // resets the stamp, so each show animates from the top.
+            self.editor_state.editor_ui.home.shown_at_ms = self.now_ms;
+        }
+        if let Some(home) = HomeSurface::for_editor_at(&self.editor_state, self.now_ms) {
+            {
+                let mut cx = PaintCx {
+                    backend: &mut *frame,
+                };
+                home.paint(
+                    &mut cx,
+                    Rect::xywh(0.0, 0.0, viewport_width, viewport_height),
+                );
+            }
+            // The overlays Home opens (settings modal, sign-in modal,
+            // model picker) paint above the takeover — mirroring the
+            // z-order `paint_topmost_overlays` gives them elsewhere.
+            self.paint_home_overlays(frame, viewport_width, viewport_height);
+            return;
+        }
 
         let dpi = frame.dpi_scale();
 
@@ -112,6 +145,16 @@ impl WidgetHostNative {
         // stays: it carries the preview toggle, so there is always a visible
         // way out besides Esc and the toolbar's own exit.
         let presenting = self.preview_slideshow_active();
+        // The generation workspace chrome replaces the TopBar / rails
+        // while docked: header + toolbar + dock background paint UNDER
+        // the canvas here, and the deck strip's board rasters paint
+        // over the canvas bottom after the pinned chat (§8.1 below).
+        // The canvas itself and the chat panel paint through the
+        // ordinary sections below at the docked `canvas_region`.
+        let workspace_visible = self.workspace_visible() && !presenting;
+        if workspace_visible {
+            self.paint_workspace_chrome(frame, viewport_width, viewport_height);
+        }
         if self.device_mode_active() && self.preview_device_frame.is_none() {
             // Paint owns authoritative viewport dimensions; enter-time
             // cached dimensions can still be zero on a fresh host.
@@ -124,96 +167,40 @@ impl WidgetHostNative {
             let stage = self.preview_canvas_rect(viewport_width, viewport_height);
             self.frame_slideshow_board((stage.size.x, stage.size.y));
         }
-        let ui = &self.editor_state.editor_ui;
-
-        // 2. TopBar.
+        // 2. TopBar — painted only on the desktop; mobile layout replaces
+        //    it with the floating action cluster below.
         let top_bar = TopBar::for_editor_ui(&self.editor_state.editor_ui);
         let top_bar_rect = Rect {
             origin: Point2D::new(0.0, 0.0),
             size: Point2D::new(viewport_width, TOP_BAR_HEIGHT),
         };
-        {
-            let mut cx = PaintCx {
-                backend: &mut *frame,
-            };
-            top_bar.paint(&mut cx, top_bar_rect);
-        }
-
-        // 3. The left rail — skipped when the sidebar is collapsed and
-        //    while presenting (see `presenting` above). It shows either
-        //    the deck's slides navigator, which OWNS the rail when it is
-        //    on show, or the Pages + Layers tree.
-        let rail_open = ui.sidebar_open && !presenting;
-        let slides_panel = if rail_open {
-            self.slides_panel_frame(viewport_width, viewport_height)
-        } else {
-            None
-        };
-        if let Some(slides) = &slides_panel {
-            self.paint_slides_panel(frame, slides);
-        }
-        if rail_open && slides_panel.is_none() {
-            // Compute the active drop target so the panel can paint
-            // the drop-indicator line during a drag-to-reorder.
-            // The rail is the tab row's leftovers when a tab row shows,
-            // so paint and hit-test both start from the same rect.
-            let layer_panel_rect = self.layers_content_rect(viewport_height);
-            // Build the panel for paint. While a drag is active,
-            // exclude the source's subtree so the rendered row stack
-            // mirrors the post-commit layout — both the visible rows
-            // and the drop-indicator y the user sees are then exactly
-            // what `reorder_before/after` produces on release.
-            // The panel walks the canonical `PenNode` tree directly
-            // off `EditorState`; the drag source id is shell-core's
-            // `NodeId` (from the input path), losslessly accepted.
-            let active_drag = self.layer_drag.clone().filter(|d| {
-                d.active
-                    && self
-                        .layout_scene
-                        .active_page()
-                        .map(|p| p.find(d.source.as_str()).is_some())
-                        .unwrap_or(false)
-            });
-            let mut layer_panel = if let Some(d) = &active_drag {
-                LayerPanel::from_editor_with_drag_source(&self.editor_state, &d.source)
-            } else {
-                // Per-frame paint: resolve the row model through the
-                // owner-scoped cache so idle / streaming / hover repaints
-                // that don't touch the layer tree skip the walk + measure.
-                self.layer_panel()
-            };
-            if let Some(d) = &active_drag {
-                layer_panel.drop_target = layer_panel
-                    .drop_target_at(layer_panel_rect, Point2D::new(d.current_x, d.current_y));
-                // Floating ghost — keeps the source visible mid-drag.
-                if let Some(item) = LayerPanel::ghost_item_for(&self.editor_state, &d.source) {
-                    layer_panel.drag_ghost = Some((item, d.current_y));
-                }
-            }
-            layer_panel.now_ms = self.now_ms;
+        if !self.editor_state.editor_ui.touch_chrome() && !workspace_visible {
             {
                 let mut cx = PaintCx {
                     backend: &mut *frame,
                 };
-                layer_panel.paint(&mut cx, layer_panel_rect);
+                top_bar.paint(&mut cx, top_bar_rect);
             }
-            // The tab row heads the rail in BOTH tabs — it is how the
-            // user gets back to the slides — so it paints over the
-            // layer tree's own card background here.
-            if let Some(tabs) = self.slides_tab_row(viewport_height) {
-                self.paint_slides_tab_row(frame, &tabs);
-            }
+        }
+
+        // 3. The left rail — painted BEFORE the canvas on the desktop
+        //    (it pushes the canvas) and AFTER it in mobile layout (it
+        //    overlays the canvas).
+        let persistent_layers = !workspace_visible
+            && (!self.editor_state.editor_ui.touch_chrome()
+                || (self.editor_state.editor_ui.expanded_touch_layout()
+                    && self.editor_state.editor_ui.sidebar_open));
+        if persistent_layers {
+            self.paint_left_rail(frame, viewport_width, viewport_height);
         }
 
         // 4. CanvasViewport — middle band, respects sidebar
         //    collapse state. It paints before the right rail so
         //    PropertyPanel popovers can extend into the canvas.
-        let (canvas_left, _canvas_y, canvas_w, canvas_h) =
-            self.canvas_region(viewport_width, viewport_height);
-        let canvas_rect = Rect {
-            origin: Point2D::new(canvas_left, TOP_BAR_HEIGHT),
-            size: Point2D::new(canvas_w, canvas_h),
-        };
+        let canvas_rect =
+            canvas_geometry::canvas_rect(&self.editor_state, viewport_width, viewport_height);
+        let canvas_w = canvas_rect.size.x;
+        let canvas_h = canvas_rect.size.y;
         if canvas_w > 0.0 && canvas_h > 0.0 {
             if self.preview.is_some() {
                 // PREVIEW path — paint the canvas background, then the
@@ -272,7 +259,7 @@ impl WidgetHostNative {
                     let canvas_scene = transition_scene.as_ref().unwrap_or(&self.layout_scene);
                     let mut canvas = CanvasViewport::from_editor(&self.editor_state, canvas_scene);
                     canvas.now_ms = self.now_ms;
-                    canvas.fast_interaction = self.fast_interaction_active();
+                    canvas.fast_interaction = self.canvas_fast_interaction_active();
                     canvas.set_node_drag_active(
                         self.node_drag.as_ref().is_some_and(|drag| drag.moved),
                     );
@@ -326,10 +313,19 @@ impl WidgetHostNative {
             }
         }
 
-        // Re-borrow after the canvas section: the pan-cache path above
-        // needs `&mut self`, which must not overlap the earlier shared
-        // `ui` borrow.
-        let ui = &self.editor_state.editor_ui;
+        if !presenting {
+            self.paint_mobile_sheet_scrim(frame, viewport_width, viewport_height);
+        }
+
+        // Touch overlay: Layers paints after the canvas. Expanded's
+        // persistent rail already painted before it and pushed the canvas.
+        if self.editor_state.editor_ui.touch_chrome()
+            && !presenting
+            && self.editor_state.editor_ui.mobile_sheet
+                == Some(op_editor_core::size_class::MobileSheetKind::Layers)
+        {
+            self.paint_mobile_layers_sheet(frame, viewport_width, viewport_height);
+        }
 
         // 5. PropertyPanel — only when selection.
         let property_panel = PropertyPanel::for_selection_at_with_scene(
@@ -337,23 +333,39 @@ impl WidgetHostNative {
             &self.layout_scene,
             self.now_ms,
         );
-        let property_panel_width = ui.property_panel_width;
-        let right_rail_x = viewport_width - property_panel_width;
-        if let Some(panel) = property_panel.as_ref().filter(|_| !presenting) {
-            let property_rect = canvas_geometry::property_panel_rect(
-                &self.editor_state,
-                viewport_width,
-                viewport_height,
-            );
+        let touch_layout = self.editor_state.editor_ui.touch_chrome();
+        let properties_open = !touch_layout
+            || self.editor_state.editor_ui.expanded_touch_layout()
+            || self.editor_state.editor_ui.mobile_sheet
+                == Some(op_editor_core::size_class::MobileSheetKind::Properties);
+        if let Some(panel) = property_panel
+            .as_ref()
+            .filter(|_| !presenting && properties_open && !workspace_visible)
+        {
+            let property_rect = self.property_rect(viewport_width, viewport_height);
             let mut cx = PaintCx {
                 backend: &mut *frame,
             };
-            panel.paint(&mut cx, property_rect);
+            if self.editor_state.editor_ui.compact_layout()
+                || self.editor_state.editor_ui.medium_layout()
+            {
+                crate::widget_host::paint_mobile::paint_property_sheet(
+                    &self.editor_state,
+                    panel,
+                    &mut cx,
+                    property_rect,
+                );
+            } else {
+                panel.paint(&mut cx, property_rect);
+            }
         }
 
         // 5b. VariablesPanel — mirrors TS' `{}` toolbar toggle as a
         //     floating canvas overlay next to the toolbar.
-        if let Some(vars_rect) = self.variables_panel_rect(viewport_width, viewport_height) {
+        if let Some(vars_rect) = self
+            .variables_panel_rect(viewport_width, viewport_height)
+            .filter(|_| !presenting && !workspace_visible)
+        {
             let vars = VariablesPanel::for_editor_at(&self.editor_state, self.now_ms);
             let mut cx = PaintCx {
                 backend: &mut *frame,
@@ -364,8 +376,9 @@ impl WidgetHostNative {
         // 5b-1. Theme-preset dropdown (#20) — painted after the panel
         //       so the functional menu covers the panel's static stub
         //       rows (variables_preset_press.rs owns the geometry).
-        if let Some((preset_menu, preset_menu_rect)) =
-            self.variables_preset_menu_with_rect(viewport_width, viewport_height)
+        if let Some((preset_menu, preset_menu_rect)) = self
+            .variables_preset_menu_with_rect(viewport_width, viewport_height)
+            .filter(|_| !presenting && !workspace_visible)
         {
             let mut cx = PaintCx {
                 backend: &mut *frame,
@@ -384,7 +397,12 @@ impl WidgetHostNative {
             .size
             .y;
         let toolbar_rect = canvas_geometry::toolbar_rect(&self.editor_state, toolbar_h);
-        if canvas_geometry::toolbar_fits(canvas_w) && !presenting {
+        let touch_layout = self.editor_state.editor_ui.touch_chrome();
+        if canvas_geometry::toolbar_fits(canvas_w)
+            && !presenting
+            && !touch_layout
+            && !workspace_visible
+        {
             let mut cx = PaintCx {
                 backend: &mut *frame,
             };
@@ -394,9 +412,12 @@ impl WidgetHostNative {
         // 7. AIChatPlaceholder — painted LAST so it sits on top
         //    of the toolbar in any overlap region (matches the
         //    user's requested z-order: chat above toolbar).
+        let chat_open = !touch_layout
+            || self.editor_state.editor_ui.mobile_sheet
+                == Some(op_editor_core::size_class::MobileSheetKind::Ai);
         if let Some(chat_rect) = self
             .ai_chat_rect(viewport_width, viewport_height)
-            .filter(|_| !presenting)
+            .filter(|_| !presenting && chat_open)
         {
             // Owner-stamp so paint stores the canonical build under THIS host's
             // owner — the display-frame cursor hint reads it back by that owner.
@@ -407,11 +428,16 @@ impl WidgetHostNative {
             };
             chat.paint(&mut cx, chat_rect);
         }
+        // The rail's edge belongs to the rail, but it has to go down
+        // after the pinned chat has filled the rail's body.
+        if !presenting {
+            self.paint_rail_canvas_edge(frame, viewport_height);
+        }
 
         // 8. StatusBar — floating bottom-right.
         if let Some(status_rect) =
             canvas_geometry::status_bar_rect(&self.editor_state, viewport_width, viewport_height)
-                .filter(|_| !presenting)
+                .filter(|_| !presenting && !touch_layout)
         {
             let status = StatusBar::for_editor(&self.editor_state);
             let mut cx = PaintCx {
@@ -420,14 +446,22 @@ impl WidgetHostNative {
             status.paint(&mut cx, status_rect);
         }
 
+        // 8.1. Workspace deck strip — the presentation family's board
+        //      rasters blit over the strip's placeholder plates, above
+        //      the canvas but below the floating pickers / modals.
+        if workspace_visible {
+            self.paint_workspace_strip(frame, viewport_width, viewport_height);
+        }
+
         // 8.4. Floating align/distribute toolbar — visible whenever
         //      2+ nodes are selected. Sits above the canvas but
         //      below status / modal overlays.
-        let canvas_region = Rect {
-            origin: Point2D::new(canvas_left, TOP_BAR_HEIGHT),
-            size: Point2D::new(canvas_w, canvas_h),
-        };
-        if self.preview.is_none() {
+        let canvas_region = canvas_rect;
+        if self.preview.is_none()
+            && !touch_layout
+            && !workspace_visible
+            && self.editor_state.editor_ui.mobile_sheet.is_none()
+        {
             if let Some(toolbar) =
                 AlignToolbar::for_canvas_region(canvas_region, &self.editor_state)
             {
@@ -442,7 +476,7 @@ impl WidgetHostNative {
         //      canvas (Select tool). Never in preview mode.
         if let Some(rect) = self
             .marquee_drag
-            .filter(|_| self.preview.is_none())
+            .filter(|_| self.preview.is_none() && !workspace_visible)
             .as_ref()
             .and_then(canvas_geometry::marquee_rect)
         {
@@ -464,14 +498,15 @@ impl WidgetHostNative {
         // 8.6. PropertyPanel overlays — painted after canvas floating
         //      controls so the image-fill popover can cover the zoom
         //      status pill when it extends into the canvas.
-        if let Some(panel) = property_panel.as_ref().filter(|_| !presenting) {
-            let property_rect = Rect {
-                origin: Point2D::new(right_rail_x, TOP_BAR_HEIGHT),
-                size: Point2D::new(
-                    property_panel_width,
-                    (viewport_height - TOP_BAR_HEIGHT).max(0.0),
-                ),
-            };
+        let properties_open = !touch_layout
+            || self.editor_state.editor_ui.expanded_touch_layout()
+            || self.editor_state.editor_ui.mobile_sheet
+                == Some(op_editor_core::size_class::MobileSheetKind::Properties);
+        if let Some(panel) = property_panel
+            .as_ref()
+            .filter(|_| !presenting && properties_open && !workspace_visible)
+        {
+            let property_rect = self.property_rect(viewport_width, viewport_height);
             let mut cx = PaintCx {
                 backend: &mut *frame,
             };
@@ -479,6 +514,10 @@ impl WidgetHostNative {
             self.image_input_geometry =
                 panel.image_popover_input_geometry(property_rect, &mut *frame);
         }
+
+        // Touch chrome sits above the editor canvas and rails, but below
+        // pickers, dialogs, settings, and diagnostics painted afterwards.
+        self.paint_mobile_chrome(frame, viewport_width, viewport_height);
 
         // 8.65. TopBar hover tooltip — over the rails, under every menu.
         self.paint_top_bar_tooltip_overlay(frame, &top_bar, top_bar_rect, viewport_width);
@@ -520,6 +559,8 @@ impl WidgetHostNative {
             }
         }
 
+        let ui = &self.editor_state.editor_ui;
+
         // 9. ShapePicker — anchored to the right of the toolbar
         //    shape slot; same z-priority as the locale picker.
         if ui.shape_picker.open {
@@ -556,15 +597,23 @@ impl WidgetHostNative {
         // Collaboration popover — a real shared widget anchored to the
         // collaboration status chip. It consumes only sanitized UI state;
         // the native session actor drains queued actions separately.
-        if let Some(panel) = op_editor_ui::widgets::CollabPanel::for_editor_ui_at(
-            &self.editor_state.editor_ui,
-            self.now_ms,
-        ) {
-            let anchor = top_bar.collaboration_chip_rect_estimated(top_bar_rect);
-            let panel_rect = panel.rect_at(
-                anchor,
-                Rect::xywh(0.0, 0.0, viewport_width, viewport_height),
-            );
+        let touch_presenting = presenting && ui.touch_chrome();
+        if let Some(panel) = (!touch_presenting)
+            .then(|| {
+                op_editor_ui::widgets::CollabPanel::for_editor_ui_at(
+                    &self.editor_state.editor_ui,
+                    self.now_ms,
+                )
+            })
+            .flatten()
+        {
+            let panel_rect =
+                op_editor_ui::widgets::touch_overlay_geometry::collaboration_panel_rect(
+                    &self.editor_state,
+                    &panel,
+                    viewport_width,
+                    viewport_height,
+                );
             let mut cx = PaintCx {
                 backend: &mut *frame,
             };
@@ -625,41 +674,21 @@ impl WidgetHostNative {
         }
 
         // 10e. Sign-in modal — full-viewport scrim + centred card.
-        if ui.account_ui_available && ui.login_modal_open {
-            use op_editor_ui::widgets::login_modal::LoginModal;
-            frame.fill_rect(
-                Rect {
-                    origin: Point2D::new(0.0, 0.0),
-                    size: Point2D::new(viewport_width, viewport_height),
-                },
-                op_editor_ui::Color {
-                    r: 0.0,
-                    g: 0.0,
-                    b: 0.0,
-                    a: 0.45,
-                },
-            );
-            let modal = LoginModal::for_editor(&self.editor_state);
-            let modal_rect = modal.rect(viewport_width, viewport_height);
-            let mut cx = PaintCx {
-                backend: &mut *frame,
-            };
-            modal.paint(&mut cx, modal_rect);
+        if !touch_presenting {
+            self.paint_login_modal_overlay(frame, viewport_width, viewport_height);
         }
 
         // 10f. Signed-in account dropdown — anchored under the TopBar
         //      avatar button, no scrim (same tier as the file menu /
         //      locale picker).
-        if ui.account_ui_available && ui.account_menu_open {
+        if !touch_presenting && ui.account_ui_available && ui.account_menu_open {
             use op_editor_ui::widgets::account_menu::AccountMenu;
-            let top_bar_rect = Rect {
-                origin: Point2D::new(0.0, 0.0),
-                size: Point2D::new(viewport_width, TOP_BAR_HEIGHT),
-            };
-            let top_bar = TopBar::for_editor_ui(&self.editor_state.editor_ui);
-            let anchor = top_bar.account_button_rect(top_bar_rect);
             if let Some(menu) = AccountMenu::for_editor_ui(&self.editor_state.editor_ui) {
-                let menu_rect = menu.rect_at(anchor);
+                let menu_rect = op_editor_ui::widgets::touch_overlay_geometry::account_menu_rect(
+                    &self.editor_state,
+                    &menu,
+                    viewport_width,
+                );
                 let mut cx = PaintCx {
                     backend: &mut *frame,
                 };
@@ -668,28 +697,8 @@ impl WidgetHostNative {
         }
 
         // 10a. Agent-settings modal — top-most overlay when open.
-        if ui.agent_settings_open {
-            use op_editor_ui::widgets::agent_settings_panel::AgentSettingsPanel;
-            // Dim scrim across the full viewport.
-            let scrim_color = op_editor_ui::Color {
-                r: 0.0,
-                g: 0.0,
-                b: 0.0,
-                a: 0.45,
-            };
-            frame.fill_rect(
-                Rect {
-                    origin: Point2D::new(0.0, 0.0),
-                    size: Point2D::new(viewport_width, viewport_height),
-                },
-                scrim_color,
-            );
-            let panel = AgentSettingsPanel::for_editor_at(&self.editor_state, self.now_ms);
-            let panel_rect = panel.rect(viewport_width, viewport_height);
-            let mut cx = PaintCx {
-                backend: &mut *frame,
-            };
-            panel.paint(&mut cx, panel_rect);
+        if !touch_presenting {
+            self.paint_agent_settings_modal_overlay(frame, viewport_width, viewport_height);
         }
 
         // 10b. Color picker — floating overlay near the right rail.
@@ -731,12 +740,8 @@ impl WidgetHostNative {
         // 13. File-drop overlay — top-most layer, above every panel and
         //     modal, while a file is dragged over the window.
         if self.editor_state.editor_ui.file_drop_active {
-            let (drop_left, _y, drop_w, drop_h) =
-                self.canvas_region(viewport_width, viewport_height);
-            let drop_rect = Rect {
-                origin: Point2D::new(drop_left, TOP_BAR_HEIGHT),
-                size: Point2D::new(drop_w, drop_h),
-            };
+            let drop_rect =
+                canvas_geometry::canvas_rect(&self.editor_state, viewport_width, viewport_height);
             let target = self
                 .editor_state
                 .editor_ui
@@ -746,11 +751,15 @@ impl WidgetHostNative {
             op_editor_ui::widgets::file_drop_overlay::paint_file_drop_overlay(
                 &mut *frame,
                 &self.theme,
-                self.editor_state.editor_ui.locale,
+                self.editor_state.editor_ui.effective_locale(),
                 drop_rect,
                 target,
             );
         }
+
+        // 13b. Mobile save-name dialog — modal above every touch surface;
+        //      matches its tier-0 position in the press ladder.
+        self.paint_save_name_dialog(frame, viewport_width, viewport_height);
 
         // Top-most overlay band — the diagnostics notice, the toast banner and
         // the missing-font modal, in that z-order. Split into a sibling at the

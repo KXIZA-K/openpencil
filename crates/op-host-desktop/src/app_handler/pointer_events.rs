@@ -207,6 +207,9 @@ impl DesktopApp {
                 .pending_fullscreen_toggle = false;
             self.handle_menu_action(crate::menu::MenuAction::ToggleFullscreen, event_loop);
         }
+        if self.drain_save_current_template_request() {
+            self.request_redraw(true);
+        }
         if let Some(text) = self.host.editor_state_mut().chat.pending_copy_text.take() {
             crate::clipboard::set_text(&text);
         }
@@ -400,6 +403,25 @@ impl DesktopApp {
             return;
         }
         self.collab_runtime.finish_local_edit(&mut self.host);
+        self.request_redraw(true);
+    }
+
+    /// First time the window is actually visible: re-arm the Home
+    /// entrance clock. The first paint (which stamps it) runs while the
+    /// window is still off screen during start-up, so without this the
+    /// choreography has already finished by the time the user sees Home.
+    /// Later focus / occlusion changes never replay it.
+    pub(crate) fn on_window_shown(&mut self) {
+        if self.window_shown_once {
+            return;
+        }
+        self.window_shown_once = true;
+        let home = &mut self.host.editor_state_mut().editor_ui.home;
+        if !home.visible {
+            return;
+        }
+        home.shown_at_ms = 0;
+        self.host.mark_editor_state_dirty();
         self.request_redraw(true);
     }
 

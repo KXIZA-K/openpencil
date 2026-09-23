@@ -57,6 +57,8 @@ fn assert_chat_and_lower_hover_cleared(host: &WidgetHost) {
 #[test]
 fn cursor_move_tracks_hovered_design_json_card_for_copy_reveal() {
     let mut host = WidgetHost::new();
+    host.editor_state.editor_ui.enter_chat_tab();
+    host.editor_state.editor_ui.entry_surface = op_editor_core::EntrySurface::Canvas;
     host.editor_state
         .chat
         .messages
@@ -87,6 +89,7 @@ fn cursor_move_tracks_hovered_design_json_card_for_copy_reveal() {
 #[test]
 fn cursor_move_tracks_chat_footer_buttons() {
     let mut host = WidgetHost::new();
+    host.editor_state.editor_ui.entry_surface = op_editor_core::EntrySurface::Canvas;
     host.editor_state
         .chat
         .available_models
@@ -139,6 +142,7 @@ fn cursor_move_tracks_chat_footer_buttons() {
 #[test]
 fn chat_blank_surface_blocks_lower_hover_and_stable_move_needs_no_repaint() {
     let mut host = WidgetHost::new();
+    host.editor_state.editor_ui.entry_surface = op_editor_core::EntrySurface::Canvas;
     let (viewport_w, viewport_h) = (1440.0, 900.0);
     host.last_viewport_w = viewport_w;
     host.last_viewport_h = viewport_h;
@@ -191,6 +195,7 @@ fn chat_blank_surface_blocks_lower_hover_and_stable_move_needs_no_repaint() {
 #[test]
 fn entering_chat_clears_stale_higher_and_lower_hover_in_one_move() {
     let mut host = WidgetHost::new();
+    host.editor_state.editor_ui.entry_surface = op_editor_core::EntrySurface::Canvas;
     let (viewport_w, viewport_h) = (1440.0, 900.0);
     host.last_viewport_w = viewport_w;
     host.last_viewport_h = viewport_h;
@@ -262,10 +267,12 @@ fn entering_chat_clears_stale_higher_and_lower_hover_in_one_move() {
 #[test]
 fn regular_chat_wins_when_overlapping_variables_panel() {
     let mut host = WidgetHost::new();
+    host.editor_state.editor_ui.entry_surface = op_editor_core::EntrySurface::Canvas;
     let (viewport_w, viewport_h) = (1440.0, 900.0);
     host.last_viewport_w = viewport_w;
     host.last_viewport_h = viewport_h;
     host.editor_state.editor_ui.variables_panel_open = true;
+    host.editor_state.editor_ui.variables_panel_size = Some((744.0, 760.0));
     host.editor_state.editor_ui.variables_panel_hover =
         Some(op_editor_core::VariablesPanelButton::Close);
     host.editor_state.editor_ui.canvas_hover_node = Some(NodeId::new("stale-canvas"));
@@ -300,8 +307,9 @@ fn regular_chat_wins_when_overlapping_variables_panel() {
 }
 
 #[test]
-fn align_toolbar_whole_rect_wins_above_maximized_chat() {
+fn align_toolbar_padding_clears_docked_chat_hover() {
     let mut host = WidgetHost::new();
+    host.editor_state.editor_ui.entry_surface = op_editor_core::EntrySurface::Canvas;
     let (viewport_w, viewport_h) = (1440.0, 900.0);
     host.last_viewport_w = viewport_w;
     host.last_viewport_h = viewport_h;
@@ -334,8 +342,8 @@ fn align_toolbar_whole_rect_wins_above_maximized_chat() {
                 point,
             )
             .hit
-            .is_some(),
-        "the lower maximized Chat would otherwise own the same point"
+            .is_none(),
+        "the docked chat leaves the alignment toolbar unobstructed"
     );
 
     assert!(host.apply_cursor_move(point.x, point.y));
@@ -350,15 +358,16 @@ fn align_toolbar_whole_rect_wins_above_maximized_chat() {
 #[test]
 fn context_menu_footprint_clears_chat_and_lower_hover_in_one_move() {
     let mut host = WidgetHost::new();
+    host.editor_state.editor_ui.entry_surface = op_editor_core::EntrySurface::Canvas;
     let (viewport_w, viewport_h) = (1440.0, 900.0);
     host.last_viewport_w = viewport_w;
     host.last_viewport_h = viewport_h;
-    host.editor_state.chat.maximized = true;
+    let card = host.ai_chat_rect(viewport_w, viewport_h).expect("composer");
     host.editor_state.ui.path_anchor_menu = Some(PathAnchorMenuState {
         node_id: NodeId::new("anchor-node"),
         anchor_index: 0,
-        x: 420.0,
-        y: 220.0,
+        x: card.origin.x,
+        y: card.origin.y,
         menu: Default::default(),
     });
     seed_stale_chat_and_lower_hover(&mut host);
@@ -394,6 +403,7 @@ fn context_menu_footprint_clears_chat_and_lower_hover_in_one_move() {
 #[test]
 fn status_bar_footprint_clears_chat_and_lower_hover_in_one_move() {
     let mut host = WidgetHost::new();
+    host.editor_state.editor_ui.entry_surface = op_editor_core::EntrySurface::Canvas;
     let (viewport_w, viewport_h) = (1440.0, 900.0);
     host.last_viewport_w = viewport_w;
     host.last_viewport_h = viewport_h;
@@ -414,8 +424,9 @@ fn status_bar_footprint_clears_chat_and_lower_hover_in_one_move() {
 }
 
 #[test]
-fn static_color_picker_owns_point_above_maximized_chat() {
+fn static_color_picker_clears_docked_chat_hover() {
     let mut host = WidgetHost::new();
+    host.editor_state.editor_ui.entry_surface = op_editor_core::EntrySurface::Canvas;
     let (viewport_w, viewport_h) = (1440.0, 900.0);
     host.last_viewport_w = viewport_w;
     host.last_viewport_h = viewport_h;
@@ -439,7 +450,7 @@ fn static_color_picker_owns_point_above_maximized_chat() {
         rect.origin.x + rect.size.x / 2.0,
         rect.origin.y + rect.size.y / 2.0,
     );
-    assert!(host
+    assert!(!host
         .ai_chat_rect(viewport_w, viewport_h)
         .expect("maximized chat")
         .contains(point));
@@ -452,6 +463,7 @@ fn static_color_picker_owns_point_above_maximized_chat() {
 #[test]
 fn property_image_popup_wins_above_chat_model_picker() {
     let mut host = WidgetHost::new();
+    host.editor_state.editor_ui.entry_surface = op_editor_core::EntrySurface::Canvas;
     let (viewport_w, viewport_h) = (1440.0, 900.0);
     host.last_viewport_w = viewport_w;
     host.last_viewport_h = viewport_h;
@@ -475,16 +487,13 @@ fn property_image_popup_wins_above_chat_model_picker() {
             viewport_h - TOP_BAR_HEIGHT,
         ),
     };
-    let chat_rect = host
-        .ai_chat_rect(viewport_w, viewport_h)
-        .expect("maximized chat");
     let mut owned_point = None;
     let mut y = TOP_BAR_HEIGHT;
     while y < viewport_h && owned_point.is_none() {
         let mut x = 0.0;
         while x < viewport_w {
             let point = Point2D::new(x, y);
-            if panel.image_popovers_contain(property_rect, point) && chat_rect.contains(point) {
+            if panel.image_popovers_contain(property_rect, point) {
                 owned_point = Some(point);
                 break;
             }
@@ -492,7 +501,7 @@ fn property_image_popup_wins_above_chat_model_picker() {
         }
         y += 4.0;
     }
-    let point = owned_point.expect("image search popup must overlap maximized Chat");
+    let point = owned_point.expect("visible image search popup");
 
     assert!(host.apply_cursor_move(point.x, point.y));
     assert!(host.editor_state.editor_ui.image_panel.search_open);
@@ -507,6 +516,7 @@ fn cursor_move_tracks_chat_model_picker_row_hover() {
     };
 
     let mut host = WidgetHost::new();
+    host.editor_state.editor_ui.entry_surface = op_editor_core::EntrySurface::Canvas;
     host.editor_state
         .chat
         .available_models
@@ -525,7 +535,7 @@ fn cursor_move_tracks_chat_model_picker_row_hover() {
         .model_picker_bounds(chat_rect)
         .unwrap();
     let row = Point2D::new(
-        picker.origin.x + 48.0,
+        picker.origin.x + 180.0,
         picker.origin.y + MODEL_SEARCH_H + MODEL_PICKER_PAD_Y + MODEL_GROUP_H + MODEL_ROW_H / 2.0,
     );
 
@@ -537,6 +547,7 @@ fn cursor_move_tracks_chat_model_picker_row_hover() {
 #[test]
 fn open_model_picker_blocks_layer_and_lower_hover_dispatch() {
     let mut host = WidgetHost::new();
+    host.editor_state.editor_ui.entry_surface = op_editor_core::EntrySurface::Canvas;
     let (viewport_w, viewport_h) = (1440.0, 900.0);
     host.last_viewport_w = viewport_w;
     host.last_viewport_h = viewport_h;
@@ -582,6 +593,7 @@ fn leaving_higher_context_menu_updates_model_picker_in_same_move() {
     };
 
     let mut host = WidgetHost::new();
+    host.editor_state.editor_ui.entry_surface = op_editor_core::EntrySurface::Canvas;
     let (viewport_w, viewport_h) = (1440.0, 900.0);
     host.last_viewport_w = viewport_w;
     host.last_viewport_h = viewport_h;
@@ -604,7 +616,7 @@ fn leaving_higher_context_menu_updates_model_picker_in_same_move() {
         .chat_model_picker_rect(viewport_w, viewport_h)
         .expect("model picker rect");
     let point = Point2D::new(
-        picker.origin.x + 48.0,
+        picker.origin.x + 180.0,
         picker.origin.y + MODEL_SEARCH_H + MODEL_PICKER_PAD_Y + MODEL_GROUP_H + MODEL_ROW_H / 2.0,
     );
 
@@ -629,6 +641,7 @@ fn leaving_higher_floating_panel_updates_model_picker_in_same_move() {
     };
 
     let mut host = WidgetHost::new();
+    host.editor_state.editor_ui.entry_surface = op_editor_core::EntrySurface::Canvas;
     let (viewport_w, viewport_h) = (1440.0, 900.0);
     host.last_viewport_w = viewport_w;
     host.last_viewport_h = viewport_h;
@@ -640,7 +653,7 @@ fn leaving_higher_floating_panel_updates_model_picker_in_same_move() {
         .chat_model_picker_rect(viewport_w, viewport_h)
         .expect("model picker rect");
     let point = Point2D::new(
-        picker.origin.x + 48.0,
+        picker.origin.x + 180.0,
         picker.origin.y + MODEL_SEARCH_H + MODEL_PICKER_PAD_Y + MODEL_GROUP_H + MODEL_ROW_H / 2.0,
     );
     assert!(
@@ -659,6 +672,7 @@ fn leaving_higher_floating_panel_updates_model_picker_in_same_move() {
 #[test]
 fn import_menu_owns_hover_above_model_picker() {
     let mut host = WidgetHost::new();
+    host.editor_state.editor_ui.entry_surface = op_editor_core::EntrySurface::Canvas;
     let (viewport_w, viewport_h) = (1440.0, 900.0);
     host.last_viewport_w = viewport_w;
     host.last_viewport_h = viewport_h;
@@ -677,6 +691,7 @@ fn import_menu_owns_hover_above_model_picker() {
 #[test]
 fn model_picker_hover_wins_when_overlapping_variables_panel() {
     let mut host = WidgetHost::new();
+    host.editor_state.editor_ui.entry_surface = op_editor_core::EntrySurface::Canvas;
     let (viewport_w, viewport_h) = (1440.0, 600.0);
     host.last_viewport_w = viewport_w;
     host.last_viewport_h = viewport_h;
@@ -691,7 +706,7 @@ fn model_picker_hover_wins_when_overlapping_variables_panel() {
         .chat_model_picker_rect(viewport_w, viewport_h)
         .expect("model picker rect");
     let point = Point2D::new(
-        picker.origin.x + 48.0,
+        picker.origin.x + 180.0,
         picker.origin.y
             + op_editor_ui::widgets::ai_chat_model_picker::MODEL_SEARCH_H
             + op_editor_ui::widgets::ai_chat_model_picker::MODEL_PICKER_PAD_Y
@@ -711,6 +726,7 @@ fn model_picker_hover_wins_when_overlapping_variables_panel() {
 #[test]
 fn model_picker_without_visible_bounds_closes_and_releases_layer_hover() {
     let mut host = WidgetHost::new();
+    host.editor_state.editor_ui.entry_surface = op_editor_core::EntrySurface::Canvas;
     let (viewport_w, viewport_h) = (120.0, 120.0);
     host.last_viewport_w = viewport_w;
     host.last_viewport_h = viewport_h;

@@ -23,6 +23,7 @@ op-ai = { path = "../op-ai" }
 
 # Canonical hex-color parsing (dependency-free + wasm32-clean).
 op-util = { path = "../op-util" }
+base64 = "0.22"
 
 # render_backend.rs uses glam::Vec2 as Point2D (spec §5.2). Pinned to the
 # same version op-editor-ui uses so both crates resolve one glam.
@@ -30,3 +31,9 @@ glam = { version = "0.29", default-features = false, features = ["std"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
+
+# Test-only: the Home task wrappers must keep steering the orchestrator's
+# design-type detection. op-orchestrator depends on this crate, so this
+# can only ever be a dev-dependency (a legal cycle in Cargo).
+[dev-dependencies]
+op-orchestrator = { path = "../op-orchestrator" }

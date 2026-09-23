@@ -22,7 +22,10 @@ impl<'a> Widget for AIChatPlaceholder<'a> {
 
     fn paint(&self, cx: &mut PaintCx<'_>, rect: Rect) {
         // Minimized: the compact input bar replaces the whole panel.
-        if self.state.is_minimized() {
+        // Composer-only outranks it: that card IS the chat's resting
+        // state on desktop now, so a stale `minimized` flag from an
+        // earlier session must not swap it for the old bar.
+        if self.state.is_minimized() && !self.composer_only {
             crate::widgets::ai_chat_panel_minimized::paint_minimized_bar(
                 cx,
                 &self.theme,
@@ -32,182 +35,273 @@ impl<'a> Widget for AIChatPlaceholder<'a> {
             return;
         }
 
-        paint_panel_surface(cx, &self.theme, rect);
+        // A pinned chat sits ON the rail, so it must not paint a floating
+        // card under itself: the rounded border ran off the rail's right
+        // edge and read as a broken box around the session row. The rail
+        // is the ground; fill it flat and leave the edges to the rail.
+        if self.column_pinned {
+            cx.backend.fill_rect(rect, self.theme.card);
+        } else {
+            paint_panel_surface(cx, &self.theme, rect);
+        }
         let can_use_model = !self.state.available_models.is_empty();
         let input_h = self.input_height_for_rect(rect);
         let sep_y = rect.origin.y + rect.size.y - input_h;
-        paint_panel_body_chrome(cx, &self.theme, rect, sep_y);
-
-        // Expanded header:
-        //   [chevron ⌄] [active conversation ▾] [count] [maximize] [new-chat ⊕]
-        use op_editor_core::ChatHeaderButton;
-        // Vertical center of all header icons (18px icons in 36px header).
-        let header_icon_y = rect.origin.y + (HEADER_HEIGHT - 18.0) / 2.0;
-        let right_edge = rect.origin.x + rect.size.x - PAD;
-        let chevron_x = rect.origin.x + PAD;
-        let tokens = crate::widgets::button::tokens_from_theme(&self.theme);
-
-        // --- Collapse chevron (far left) ---
-        // Rendered through IconButton (like the maximize button beside the
-        // new-chat "+") so hovering/pressing it shows the same ghost
-        // button-hover wash instead of only swapping the icon color (#41).
-        jian_widgets::components::icon_button::IconButton {
-            icon_paths: Icon::ChevronDown.paths(),
-            hovered: self.header_hover == Some(ChatHeaderButton::ToggleCollapse),
-            pressed: self.header_pressed == Some(ChatHeaderButton::ToggleCollapse),
-            active: false,
-            enabled: true,
-            icon_size: 18.0,
-            stroke_width: 1.4,
-        }
-        .paint(
-            cx.backend,
-            Rect {
-                origin: Point2D::new(chevron_x, header_icon_y),
-                size: Point2D::new(18.0, 18.0),
-            },
-            &tokens,
-        );
-
-        // --- New-chat "+" circular button (far right, 28px circle) ---
-        // New chat creates a local placeholder immediately; managed Platform
-        // embeds persist it as a durable team thread during the host drain.
-        const NEW_CHAT_R: f32 = NEW_CHAT_D / 2.0;
-        let new_chat_rect = Rect {
-            origin: Point2D::new(
-                right_edge - NEW_CHAT_D,
-                rect.origin.y + (HEADER_HEIGHT - NEW_CHAT_D) / 2.0,
-            ),
-            size: Point2D::new(NEW_CHAT_D, NEW_CHAT_D),
-        };
-        let new_chat_hovered = self.header_hover == Some(ChatHeaderButton::NewChat);
-        let new_chat_pressed = self.header_pressed == Some(ChatHeaderButton::NewChat);
-        let new_chat_fill = if new_chat_pressed {
-            chat_neutral_feedback_color(&self.theme, true)
-        } else if new_chat_hovered {
-            chat_neutral_feedback_color(&self.theme, false)
-        } else {
-            self.theme.secondary
-        };
-        cx.backend
-            .fill_round_rect(new_chat_rect, NEW_CHAT_R, new_chat_fill);
-        cx.backend
-            .stroke_round_rect(new_chat_rect, NEW_CHAT_R, self.theme.border, 1.0);
-        draw_icon(
-            cx.backend,
-            Icon::Plus,
-            Point2D::new(
-                new_chat_rect.origin.x + (NEW_CHAT_D - 14.0) / 2.0,
-                new_chat_rect.origin.y + (NEW_CHAT_D - 14.0) / 2.0,
-            ),
-            14.0,
-            self.theme.muted_foreground,
-            1.4,
-        );
-        // --- Maximize / minimize icon (just left of new-chat) ---
-        let maximize_x = right_edge - NEW_CHAT_D - MAXIMIZE_GAP - MAXIMIZE_W;
-        jian_widgets::components::icon_button::IconButton {
-            icon_paths: self.maximize_icon().paths(),
-            hovered: self.header_hover == Some(ChatHeaderButton::ToggleMaximize),
-            pressed: self.header_pressed == Some(ChatHeaderButton::ToggleMaximize),
-            active: false,
-            enabled: true,
-            icon_size: MAXIMIZE_W,
-            stroke_width: 1.4,
-        }
-        .paint(
-            cx.backend,
-            Rect {
-                origin: Point2D::new(maximize_x, header_icon_y),
-                size: Point2D::new(MAXIMIZE_W, MAXIMIZE_W),
-            },
-            &tokens,
-        );
-
-        // --- Conversation selector (between chevron and maximize) ---
-        // One readable active title replaces the compressed multi-tab strip.
-        let is_running = self.state.agents_running.0 > 0;
-        paint_thread_selector(
-            cx,
-            &self.theme,
-            rect,
-            &self.tabs_snapshot,
-            self.active_tab_index,
-            self.tab_hover == Some(self.active_tab_index),
-            self.header_pressed == Some(ChatHeaderButton::ThreadPicker),
-            self.thread_picker_open,
-            is_running,
-        );
-
-        // Body — either messages or examples.
-        if let Some(button) = self.history_button_rect(rect) {
-            let key = if self.state.history_loading { "ai.history.loading" }
-                else if self.state.history_error { "ai.history.retry" }
-                else { "ai.history.older" };
-            let label = op_i18n::translate(self.locale, key);
-            cx.backend.fill_round_rect(button, 6.0, self.theme.secondary);
-            let layout = crate::TextLayout::single_run(
-                label, "system-ui", 11.0, self.theme.muted_foreground.to_jian(), Point2D::new(0.0, 0.0),
-            );
-            cx.backend.draw_text(&layout, Point2D::new(button.origin.x + 8.0, button.origin.y + 17.0));
-        }
-        if self.state.messages.is_empty() {
-            paint_examples(
+        // The body chrome is the header hairline, the transcript wash and
+        // the divider above the composer. A composer-only card has none
+        // of those above it — painting them drew a rule across an empty
+        // card.
+        // Pinned, the rail already bounds the panel, so the header's own
+        // hairline is a second rule inside one surface — Pencil separates
+        // its session row from the body with space alone. The composer
+        // card has no body above it at all.
+        if !self.composer_only && !self.column_pinned {
+            paint_panel_body_chrome(cx, &self.theme, rect, sep_y);
+        } else if self.column_pinned {
+            // The divider ABOVE the composer stays: it is the one edge
+            // that keeps a long transcript from running into the input.
+            crate::widgets::ai_chat_panel_paint::paint_composer_divider(
                 cx,
                 &self.theme,
                 rect,
-                &self.label_start_with_ai,
-                &self.label_tip_select_elements,
-                &self.examples,
-                // Examples stay enabled without a connected model (#43) — clicking
-                // one fills the input; only streaming disables them.
-                self.is_streaming(),
-                self.example_hover,
-                self.example_pressed,
-            );
-        } else {
-            let body = self.body_rect(rect);
-            // Fingerprint + resolve the transcript ONCE for the whole paint
-            // pass, then thread the build into both the scroll clamp and the
-            // painter so neither re-hashes.
-            let canonical =
-                crate::widgets::ai_chat_transcript_cache::cached_canonical_transcript_owned(
-                    self.owner,
-                    &self.state.messages,
-                    body,
-                    self.locale,
-                );
-            let scroll_offset = crate::widgets::ai_chat_transcript::effective_offset_of(
-                &canonical,
-                body,
-                self.state.transcript_scroll.offset,
-                self.state.transcript_pinned,
-            );
-            crate::widgets::ai_chat_transcript::paint_transcript_with_selection(
-                cx,
-                &self.theme,
-                body,
-                &self.state.messages,
-                &canonical,
-                self.now_ms,
-                self.design_hover,
-                self.state.transcript_selection,
-                scroll_offset,
+                sep_y,
             );
         }
+
+        // Composer-only: the rail is showing another tab, so the card
+        // over the canvas is the input box and nothing else. Unfocused
+        // it is the box alone; once the input has focus it grows the
+        // slim header carrying the session name and the two ways into
+        // the Agent tab. No transcript, no examples: the conversation
+        // has one home and this is not it.
+        if self.composer_only {
+            if self.state.focused {
+                crate::widgets::ai_chat_panel_header::paint_composer_header(
+                    cx,
+                    &self.theme,
+                    rect,
+                    &self.state.title,
+                    self.header_hover,
+                    self.header_pressed,
+                );
+            }
+        } else {
+            // Expanded header (MT.2 tab-row restyle):
+            //   [session selector] … [maximize (floating only)] [new-chat ⊕]
+            use op_editor_core::ChatHeaderButton;
+            // Vertical center of all header icons (18px icons in 36px header).
+            let header_icon_y = rect.origin.y + (HEADER_HEIGHT - 18.0) / 2.0;
+            let right_edge = rect.origin.x + rect.size.x - PAD;
+            let chevron_x = rect.origin.x + PAD;
+            let tokens = crate::widgets::button::tokens_from_theme(&self.theme);
+
+            // The collapse chevron survives only on the touch sheet, which
+            // still collapses to its header. On desktop the conversation's
+            // one home is the rail's Agent tab, so there is no header-only
+            // middle state to toggle into, and a control that toggles
+            // nothing is what made the header read as a floating window's
+            // title bar.
+            if self.touch_sheet {
+                jian_widgets::components::icon_button::IconButton {
+                    icon_paths: Icon::ChevronDown.paths(),
+                    hovered: self.header_hover == Some(ChatHeaderButton::ToggleCollapse),
+                    pressed: self.header_pressed == Some(ChatHeaderButton::ToggleCollapse),
+                    active: false,
+                    enabled: true,
+                    icon_size: 18.0,
+                    stroke_width: 1.4,
+                }
+                .paint(
+                    cx.backend,
+                    Rect {
+                        origin: Point2D::new(chevron_x, header_icon_y),
+                        size: Point2D::new(18.0, 18.0),
+                    },
+                    &tokens,
+                );
+            }
+            // --- New-chat "+" circular button (far right, 28px circle) ---
+            const NEW_CHAT_R: f32 = NEW_CHAT_D / 2.0;
+            let new_chat_rect = Rect {
+                origin: Point2D::new(
+                    right_edge - NEW_CHAT_D,
+                    rect.origin.y + (HEADER_HEIGHT - NEW_CHAT_D) / 2.0,
+                ),
+                size: Point2D::new(NEW_CHAT_D, NEW_CHAT_D),
+            };
+            let new_chat_hovered = self.header_hover == Some(ChatHeaderButton::NewChat);
+            let new_chat_pressed = self.header_pressed == Some(ChatHeaderButton::NewChat);
+            let new_chat_fill = if new_chat_pressed {
+                chat_neutral_feedback_color(&self.theme, true)
+            } else if new_chat_hovered {
+                chat_neutral_feedback_color(&self.theme, false)
+            } else {
+                self.theme.secondary
+            };
+            cx.backend
+                .fill_round_rect(new_chat_rect, NEW_CHAT_R, new_chat_fill);
+            cx.backend
+                .stroke_round_rect(new_chat_rect, NEW_CHAT_R, self.theme.border, 1.0);
+            draw_icon(
+                cx.backend,
+                Icon::Plus,
+                Point2D::new(
+                    new_chat_rect.origin.x + (NEW_CHAT_D - 14.0) / 2.0,
+                    new_chat_rect.origin.y + (NEW_CHAT_D - 14.0) / 2.0,
+                ),
+                14.0,
+                self.theme.muted_foreground,
+                1.4,
+            );
+            // --- Maximize / minimize icon (just left of new-chat) ---
+            // Pinned into a column there is no window to maximize, and a
+            // control that cannot do anything is exactly the kind of thing
+            // that makes the conversation read as a floating panel parked in
+            // the rail rather than the rail's own Agent tab.
+            let maximize_x = right_edge - NEW_CHAT_D - MAXIMIZE_GAP - MAXIMIZE_W;
+            if !self.column_pinned {
+                jian_widgets::components::icon_button::IconButton {
+                    icon_paths: self.maximize_icon().paths(),
+                    hovered: self.header_hover == Some(ChatHeaderButton::ToggleMaximize),
+                    pressed: self.header_pressed == Some(ChatHeaderButton::ToggleMaximize),
+                    active: false,
+                    enabled: true,
+                    icon_size: MAXIMIZE_W,
+                    stroke_width: 1.4,
+                }
+                .paint(
+                    cx.backend,
+                    Rect {
+                        origin: Point2D::new(maximize_x, header_icon_y),
+                        size: Point2D::new(MAXIMIZE_W, MAXIMIZE_W),
+                    },
+                    &tokens,
+                );
+            }
+
+            // --- Tab row (between chevron and maximize) ---
+            // Replaces the single active-chat pill from 5.3.
+            let is_running = self.state.agents_running.0 > 0;
+            paint_thread_selector(
+                cx,
+                &self.theme,
+                rect,
+                &self.tabs_snapshot,
+                self.active_tab_index,
+                self.tab_hover == Some(self.active_tab_index),
+                self.header_pressed == Some(ChatHeaderButton::ThreadPicker),
+                self.thread_picker_open,
+                is_running,
+            );
+            if let Some(button) = self.history_button_rect(rect) {
+                let key = if self.state.history_loading {
+                    "ai.history.loading"
+                } else if self.state.history_error {
+                    "ai.history.retry"
+                } else {
+                    "ai.history.older"
+                };
+                let label = op_i18n::translate(self.locale, key);
+                cx.backend
+                    .fill_round_rect(button, 6.0, self.theme.secondary);
+                let layout = crate::TextLayout::single_run(
+                    label,
+                    "system-ui",
+                    11.0,
+                    self.theme.muted_foreground.to_jian(),
+                    Point2D::new(0.0, 0.0),
+                );
+                cx.backend.draw_text(
+                    &layout,
+                    Point2D::new(button.origin.x + 8.0, button.origin.y + 17.0),
+                );
+            }
+
+            if self.state.messages.is_empty() {
+                // The empty-state stack is laid out from the top while the
+                // composer block is bottom-anchored; on a keyboard-shrunk
+                // compact sheet the two can meet. Clip to the region between
+                // them and hand the painter its bottom so pills / tips that
+                // don't fit are dropped instead of overlapping the composer.
+                let region = self.empty_state_region(rect);
+                cx.backend.save();
+                cx.backend.clip_rect(region);
+                paint_examples(
+                    cx,
+                    &self.theme,
+                    rect,
+                    &self.label_start_with_ai,
+                    &self.label_tip_select_elements,
+                    &self.examples,
+                    // Examples stay enabled without a connected model (#43) — clicking
+                    // one fills the input; only streaming disables them.
+                    self.is_streaming(),
+                    self.example_hover,
+                    self.example_pressed,
+                    region.origin.y + region.size.y,
+                );
+                cx.backend.restore();
+            } else {
+                let body = self.body_rect(rect);
+                // Fingerprint + resolve the transcript ONCE for the whole paint
+                // pass, then thread the build into both the scroll clamp and the
+                // painter so neither re-hashes.
+                let canonical =
+                    crate::widgets::ai_chat_transcript_cache::cached_canonical_transcript_owned(
+                        self.owner,
+                        &self.state.messages,
+                        body,
+                        self.locale,
+                    );
+                let scroll_offset = crate::widgets::ai_chat_transcript::effective_offset_of(
+                    &canonical,
+                    body,
+                    self.state.transcript_scroll.offset,
+                    self.state.transcript_pinned,
+                );
+                crate::widgets::ai_chat_transcript::paint_transcript_with_selection(
+                    cx,
+                    &self.theme,
+                    body,
+                    &self.state.messages,
+                    &canonical,
+                    self.now_ms,
+                    self.design_hover,
+                    self.state.transcript_selection,
+                    scroll_offset,
+                );
+            }
+        }
         let input_block_rect = self.input_rect(rect);
+        // Above even the chips: a turn that cannot start at all outranks
+        // anything describing what the turn would do.
+        let notice_h = self.mcp_notice_row_h();
+        if let (Some(row), Some(label)) = (self.mcp_notice_row(rect), self.mcp_notice.as_deref()) {
+            crate::widgets::ai_chat_mcp_notice::paint_mcp_notice(cx, row, self.theme, label);
+        }
+        let rows_rect = Rect {
+            origin: Point2D::new(
+                input_block_rect.origin.x,
+                input_block_rect.origin.y + notice_h,
+            ),
+            size: Point2D::new(
+                input_block_rect.size.x,
+                (input_block_rect.size.y - notice_h).max(0.0),
+            ),
+        };
         // Above everything else in the input block: the chips describe the
         // next turn and what it is aimed at, not the turn's content.
-        crate::widgets::ai_chat_chip_row::paint_chip_row(cx, &self.theme, self, input_block_rect);
+        crate::widgets::ai_chat_chip_row::paint_chip_row(cx, &self.theme, self, rows_rect);
         let chip_row_h = self.chip_row_h();
         let input_rect = Rect {
-            origin: Point2D::new(rect.origin.x + PAD, sep_y + 1.0 + chip_row_h),
+            origin: Point2D::new(rect.origin.x + PAD, sep_y + 1.0 + notice_h + chip_row_h),
             size: Point2D::new(
                 rect.size.x - PAD * 2.0,
                 self.input_area_height_for_rect(rect),
             ),
         };
         let input_area_h = input_rect.size.y;
+
         crate::widgets::ai_chat_input_text::paint_input_text_area(
             cx,
             &self.theme,
@@ -281,8 +375,11 @@ impl<'a> Widget for AIChatPlaceholder<'a> {
         }
 
         // "New Chat Cmd+T" tooltip paints after transcript and overlays so it
-        // cannot be covered by message bubbles below the header.
-        if new_chat_hovered {
+        // cannot be covered by message bubbles below the header. The
+        // composer-only card has no such button to describe.
+        if !self.composer_only
+            && self.header_hover == Some(op_editor_core::ChatHeaderButton::NewChat)
+        {
             paint_new_chat_tooltip(cx, &self.theme, rect);
         }
 

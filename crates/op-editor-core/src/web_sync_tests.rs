@@ -101,8 +101,7 @@ fn next_document_rejects_malformed_responses() {
 
 #[test]
 fn build_push_body_wraps_the_document() {
-    let doc: PenDocument =
-        serde_json::from_str(r#"{"version":"1.0","children":[]}"#).expect("doc");
+    let doc: PenDocument = serde_json::from_str(r#"{"version":"1.0","children":[]}"#).expect("doc");
     let body = WebSyncClient::build_push_body(&doc).expect("body");
     assert!(body.starts_with(r#"{"document":"#), "{body}");
     assert!(body.contains(r#""version":"1.0""#), "{body}");
@@ -236,8 +235,7 @@ fn selection_key_and_body_track_ids_and_active_page() {
     assert_eq!(key, "sel:n1,n2|page:");
     assert_ne!(key, key_empty);
     // Body matches the TS selection.post.ts renderer shape.
-    let body: serde_json::Value =
-        serde_json::from_str(&selection_push_body(&state)).expect("json");
+    let body: serde_json::Value = serde_json::from_str(&selection_push_body(&state)).expect("json");
     assert_eq!(body["selectedIds"], serde_json::json!(["n1", "n2"]));
     assert_eq!(body["activePageId"], serde_json::Value::Null);
 }
@@ -255,7 +253,6 @@ fn selection_body_carries_the_active_page_id() {
     assert!(selection_sync_key(&state).ends_with("|page:p1"));
     assert!(state.set_active_page(1));
     assert!(selection_sync_key(&state).ends_with("|page:p2"));
-    let body: serde_json::Value =
-        serde_json::from_str(&selection_push_body(&state)).expect("json");
+    let body: serde_json::Value = serde_json::from_str(&selection_push_body(&state)).expect("json");
     assert_eq!(body["activePageId"], "p2");
 }

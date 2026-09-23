@@ -316,6 +316,7 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "htmlImport.warn.layout.margins_on_visual_box_ignored" => {
             "Внешние отступы CSS у визуального блока проигнорированы."
         }
+        "htmlImport.warn.layout.inline_margin_wrapping_approximated" => "Строчный элемент с CSS-отступами преобразован в блок и может больше не переноситься между строками.",
         "htmlImport.warn.layout.content_box_percentage_approximated" => {
             "Процентные размеры content-box аппроксимированы."
         }
@@ -545,6 +546,9 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "htmlImport.warn.media.object_position_ignored" => {
             "Свойство CSS object-position проигнорировано."
         }
+        "htmlImport.warn.media.image_intrinsic_axis_unresolved" => {
+            "Не удалось определить недостающую ось по собственному соотношению сторон изображения: заданный размер является динамическим либо размер содержащего блока не определён."
+        }
         "htmlImport.warn.media.image_mix_blend_mode_unsupported" => {
             "Неподдерживаемое значение CSS mix-blend-mode у изображения проигнорировано."
         }
@@ -669,12 +673,14 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "assetCenter.style.importEmpty" => "Файл пуст или слишком короткий для руководства по стилю.",
         "assetCenter.style.importNotText" => "Файл не читается как текст Markdown.",
         "assetCenter.style.importTooLarge" => "Файл больше 512 КБ.",
+        "leftPanel.tab.chat" => "Agent",
         "slidesPanel.tabSlides" => "Слайды",
         "slidesPanel.tabCards" => "Карточки",
         "slidesPanel.present" => "Показать",
         "slidesPanel.exportPdf" => "Экспорт в PDF",
         "slidesPanel.exportAllSlides" => "Экспортировать все слайды",
         "slidesPanel.exportSelectedSlides" => "Экспортировать выбранные слайды ({{count}})",
+        "settings.tab.ai" => "ИИ",
         "settings.agents.heroTitle" => "Подключите своего AI-провайдера",
         "settings.agents.heroSubtitle" => "OpenPencil управляет локальными CLI-агентами и API-провайдерами — подключите любого, чтобы генерировать дизайны.",
         "settings.agents.statusConnected" => "Подключено",

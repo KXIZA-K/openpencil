@@ -55,6 +55,18 @@ pub(super) fn is_deck_board(plan: &OrchestratorPlan) -> bool {
     .is_deck_board()
 }
 
+/// The portrait-card analogue of [`is_deck_board`]: a 900..=1280 wide,
+/// taller-than-wide (aspect <= 2.0) board reads as [`DesignForm::Card`] and
+/// claims the card budget arm — the same single-classifier routing so a
+/// square (1080x1080) or long page keeps the ordinary page budget.
+pub(super) fn is_card_board(plan: &OrchestratorPlan) -> bool {
+    crate::design_type::classify_root_form(
+        Some(plan.root_frame.width),
+        Some(plan.root_frame.height),
+    )
+    .is_card_board()
+}
+
 /// Build the sub-agent style-guide instruction block for the planner-selected
 /// guide. Port of `buildSubAgentStyleGuideInstruction`
 /// (orchestrator-sub-agent-compact.ts:78-124).
@@ -126,11 +138,28 @@ pub(crate) fn build_style_guide_instruction(
         return Some(s);
     }
 
-    // Standard/Basic: a compact summary.
+    // Standard/Basic: a compact summary. The guide's "Key aesthetics"
+    // bullets ride along: they are its expression layer (display face, how
+    // the accent is spent, card depth, hero idiom), and a summary of palette
+    // and radii alone left weak models producing the same neutral template
+    // under every guide.
     let mut lines = vec![format!("VISUAL STYLE GUIDE SUMMARY ({name}):")];
     let tags: Vec<String> = guide.tags.iter().take(6).cloned().collect();
     if !tags.is_empty() {
         lines.push(format!("- Tags: {}", tags.join(", ")));
+    }
+    let aesthetics = op_ai_skills::style_guide::key_aesthetics(&guide.content, 8);
+    if !aesthetics.is_empty() {
+        lines.push(
+            "- Key aesthetics (the signature treatment — apply it to the first content section):"
+                .into(),
+        );
+        lines.extend(aesthetics.iter().map(|a| format!("  - {a}")));
+    }
+    let recipes = op_ai_skills::style_guide::signature_recipes(&guide.content, 2);
+    if !recipes.is_empty() {
+        lines.push("- Signature recipes (realise both in the first screen):".into());
+        lines.extend(recipes.iter().map(|recipe| format!("  - {recipe}")));
     }
     let has_colors = !colors.is_empty();
     lines.extend(colors);
@@ -215,6 +244,15 @@ pub(super) fn push_resolved_string_tokens(
 /// compaction is about to delete. This is the order every sub-agent prompt
 /// uses; see the call site in `prompt_subagent` for what the other order cost.
 ///
+/// `model_id` drives the DS P2-a overlay gate (the `model_families`
+/// frontmatter field): a family-gated skill only enters the candidate set
+/// when the normalized model id contains one of its families; an empty id
+/// (the default) admits nothing gated, so every caller that does not know
+/// its model resolves byte-for-byte as before. Strategic line: output
+/// contracts belong in the public corpus, model behaviour adaptation belongs
+/// in the DS experiment field (`skills/overlays/`); overlay teaching migrates
+/// into the public skills only after ab validation graduates it.
+///
 /// Mirrors `op_ai_skills::resolve_skills` step for step (phase filter → intent
 /// / flag match → dynamic-content injection → `trim_by_budget_pinned`) with
 /// the compaction inserted between the third and fourth. **The one thing it
@@ -226,8 +264,12 @@ pub(super) fn push_resolved_string_tokens(
 /// starts populating `memory` must route through `resolve_skills` or teach
 /// this function the same derivation; the history helpers are private to
 /// `op-ai-skills`, which is why this note exists instead of a call.
+// Nine behaviour flags after `intent` / `model_id` / `opts` — the call site
+// owns the derivation of each, and a struct would only move the pile.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn resolve_generation_skills_after_prompt_filter(
     intent: &str,
+    model_id: &str,
     opts: &ResolveOptions,
     tier: ModelTier,
     is_mobile_screen: bool,
@@ -246,16 +288,29 @@ pub(super) fn resolve_generation_skills_after_prompt_filter(
         .into_iter()
         .cloned()
         .collect();
+    // Model-family gate (DS P2-a overlays) — family-gated skills leave the
+    // candidate set before intent matching; the rest of the pipeline is
+    // untouched for the survivors.
+    let (phase_skills, gated_out) =
+        op_ai_skills::resolver::filter_by_model_family(&phase_skills, model_id);
     let matched = filter_by_intent(&phase_skills, intent, &opts.flags);
 
-    let mut dropped: Vec<DroppedSkill> = phase_skills
+    let mut dropped: Vec<DroppedSkill> = gated_out
         .iter()
-        .filter(|candidate| !matched.iter().any(|m| m.meta.name == candidate.meta.name))
-        .map(|candidate| DroppedSkill {
-            name: candidate.meta.name.clone(),
-            reason: DropReason::IntentMiss,
+        .map(|gated| DroppedSkill {
+            name: gated.meta.name.clone(),
+            reason: DropReason::ModelFamilyMiss,
         })
         .collect();
+    dropped.extend(
+        phase_skills
+            .iter()
+            .filter(|candidate| !matched.iter().any(|m| m.meta.name == candidate.meta.name))
+            .map(|candidate| DroppedSkill {
+                name: candidate.meta.name.clone(),
+                reason: DropReason::IntentMiss,
+            }),
+    );
 
     let mut dynamic = opts.dynamic_content.clone();
     dynamic

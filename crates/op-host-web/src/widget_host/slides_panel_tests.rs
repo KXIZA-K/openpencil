@@ -75,7 +75,7 @@ fn any_document_with_boards_gets_the_slides_tab() {
 }
 
 #[test]
-fn a_page_with_no_boards_has_nothing_to_list_and_shows_no_tab() {
+fn a_page_with_no_boards_keeps_chat_and_layers_tabs_without_slides() {
     let mut empty = WidgetHost::new();
     empty.editor_state.editor_ui.slides_panel.tab = LeftPanelTab::Slides;
     // The starter document opens with one empty Frame, which IS a board;
@@ -85,13 +85,9 @@ fn a_page_with_no_boards_has_nothing_to_list_and_shows_no_tab() {
     empty.last_viewport_w = VW;
     empty.last_viewport_h = VH;
     assert!(active_page_boards(&empty.editor_state).is_empty());
-    assert!(empty.slides_tab_row(VH).is_none());
+    assert!(empty.slides_tab_row(VH).is_some());
     assert!(empty.slides_panel_frame(VW, VH).is_none());
-    assert_eq!(
-        empty.layers_content_rect(VH).origin.y,
-        op_editor_ui::widgets::TOP_BAR_HEIGHT,
-        "a document without a tab row keeps the whole rail"
-    );
+    assert!(empty.layers_content_rect(VH).origin.y > op_editor_ui::widgets::TOP_BAR_HEIGHT);
 }
 
 #[test]
@@ -195,6 +191,20 @@ fn hovering_a_row_washes_it_and_leaving_the_rail_clears_it() {
 #[test]
 fn the_footer_button_enters_preview() {
     let mut host = host_with(Some(TemplateScene::Slides));
+    host.editor_state.editor_ui.login_modal_open = true;
+    host.editor_state.editor_ui.prompt_center.open = true;
+    host.editor_state.editor_ui.prompt_center.save_open = true;
+    host.editor_state.editor_ui.theme_mode = op_editor_core::ThemeMode::Light;
+    host.editor_state.editor_ui.locale = op_editor_core::Locale::Ja;
+    host.editor_state.editor_ui.account = op_editor_core::AccountState::dev_fake_signed_in();
+    host.editor_state.ui.property_focus = Some(op_editor_core::PropertyFocus::PositionX);
+    host.editor_state.ui.property_input.set_text("draft");
+    host.editor_state
+        .ui
+        .property_input
+        .set_composition("ni", 2, 0);
+    let document_before = host.editor_state.doc.clone();
+    let auth_actions_before = host.pending_auth_actions.clone();
     let button = {
         let slides = host.slides_panel_frame(VW, VH).expect("slides tab");
         Point2D::new(
@@ -202,9 +212,25 @@ fn the_footer_button_enters_preview() {
             slides.layout.actions.present.origin.y + slides.layout.actions.present.size.y / 2.0,
         )
     };
-    host.apply_press(button.x, button.y, VW, VH);
+    assert!(
+        host.apply_press(button.x, button.y, VW, VH),
+        "press is consumed"
+    );
+    assert!(
+        host.editor_state.ui.property_focus.is_none(),
+        "the ordinary slides-panel press blurs property focus before release"
+    );
+    assert!(host.editor_state.ui.property_input.composition().is_none());
     host.apply_release_with_viewport(VW, VH);
-    assert!(host.editor_state.editor_ui.preview.mode);
+    assert!(!host.editor_state.editor_ui.preview.mode);
+    assert_eq!(host.editor_state.doc, document_before);
+    assert!(host.editor_state.editor_ui.login_modal_open);
+    assert!(host.editor_state.editor_ui.prompt_center.open);
+    assert_eq!(host.pending_auth_actions, auth_actions_before);
+    assert_eq!(
+        host.editor_state.editor_ui.preview.warnings,
+        vec!["preview: CanvasKit not initialized".to_string()]
+    );
 }
 
 /// The tab row must not swallow a cursor move while the chat model

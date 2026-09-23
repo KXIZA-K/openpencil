@@ -191,6 +191,7 @@ impl WidgetHostNative {
                     return;
                 };
                 let gate_action = match choice {
+                    FileMenuChoice::Home => op_editor_core::CollabGateAction::LocalUi,
                     FileMenuChoice::NewFile
                     | FileMenuChoice::OpenFile
                     | FileMenuChoice::OpenRecent(_) => {
@@ -198,6 +199,7 @@ impl WidgetHostNative {
                     }
                     FileMenuChoice::Save => op_editor_core::CollabGateAction::SaveShared,
                     FileMenuChoice::SaveAs => op_editor_core::CollabGateAction::SaveFork,
+                    FileMenuChoice::SaveAsTemplate => op_editor_core::CollabGateAction::LocalUi,
                     FileMenuChoice::ExportImage
                     | FileMenuChoice::ExportAllFrames
                     | FileMenuChoice::ExportSlideshowHtml
@@ -221,7 +223,18 @@ impl WidgetHostNative {
                     self.mark_dirty();
                     return;
                 }
+                if choice == FileMenuChoice::SaveAsTemplate {
+                    self.editor_state
+                        .editor_ui
+                        .scene_template_center
+                        .request_save_current();
+                    self.editor_state.editor_ui.file_menu_open = false;
+                    self.editor_state.editor_ui.file_menu.hover = None;
+                    self.mark_dirty();
+                    return;
+                }
                 self.editor_state.editor_ui.pending_file_action = Some(match choice {
+                    FileMenuChoice::Home => FileAction::Home,
                     FileMenuChoice::NewFile => FileAction::New,
                     FileMenuChoice::OpenFile => FileAction::Open,
                     FileMenuChoice::Save => FileAction::Save,
@@ -234,7 +247,7 @@ impl WidgetHostNative {
                     FileMenuChoice::ClearRecent => FileAction::ClearRecent,
                     // Handled above — it opens a panel rather than queuing a
                     // file action.
-                    FileMenuChoice::NewFromTemplate => return,
+                    FileMenuChoice::NewFromTemplate | FileMenuChoice::SaveAsTemplate => return,
                 });
                 self.editor_state.editor_ui.file_menu_open = false;
                 self.editor_state.editor_ui.file_menu.hover = None;

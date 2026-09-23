@@ -17,6 +17,7 @@ mod app_handler;
 mod app_poll;
 mod app_state;
 mod asset_fetch_error;
+mod builtin_model_refresh_host;
 mod bundled_fonts;
 mod chat_acp;
 mod chat_attachment;
@@ -72,13 +73,13 @@ mod macos_app;
 mod mcp_config_error;
 mod mcp_config_io;
 mod mcp_integrations;
+mod mcp_integrations_dsh;
 mod mcp_port_file;
 mod mcp_runtime;
 mod mcp_serve;
 mod menu;
 mod menu_action;
 mod message_dialog;
-mod model_refresh_host;
 mod persistence;
 mod persistence_error;
 mod persistence_export_batch;
@@ -104,8 +105,11 @@ mod theme_preset_host;
 mod ui_prefs;
 mod update_check;
 mod user_style_store;
+mod user_template_save;
+mod user_template_store;
 mod window_resize;
 mod window_state;
+mod workspace_phase;
 
 use op_host_native::{NativeBackend, SharedSkiaContext, SharedSkiaError, WidgetHostNative};
 use std::ffi::OsStr;
@@ -203,6 +207,12 @@ struct DesktopApp {
     redraw_pending: bool,
     /// True when the pending redraw needs a paint even if cursor coalescing drained to no-op.
     redraw_dirty: bool,
+    /// Whether the window has been on screen at least once. The Home
+    /// entrance choreography stamps its clock at the first paint, which
+    /// on macOS happens seconds before the window is actually composited;
+    /// the first `Occluded(false)` / `Focused(true)` re-arms it so the
+    /// choreography plays when the user can see it.
+    window_shown_once: bool,
     /// Logical page whose first frame has completed. The document epoch
     /// distinguishes whole-document replacements, while the page id keeps
     /// page deletion/reorder correct even when an index is reused.
@@ -303,11 +313,10 @@ struct DesktopApp {
     /// on a worker thread; its result is drained into
     /// `chat.available_models` on a later frame.
     model_probe: op_host_services::model_discovery::ModelProbe,
-    /// TTL-debounced re-discovery of the connected CLI providers'
-    /// catalogs, requested whenever the chat model picker opens
-    /// (`editor_ui.pending_model_catalog_refresh`) and drained by
-    /// `drain_model_catalog_refresh`.
-    model_catalog_refresh: op_host_services::model_catalog_refresh::ModelCatalogRefresh,
+    /// Per-agent HTTP model catalogs requested by the built-in model picker.
+    /// Jobs stay host-side because discovery uses native networking; only
+    /// successful, current results are installed into editor-core runtime state.
+    builtin_model_refresh: builtin_model_refresh_host::BuiltinModelRefreshHost,
     /// Background auto-search jobs that replace generated empty image
     /// nodes with freely licensed remote images.
     image_search: image_search_session::ImageSearchSession,
@@ -349,11 +358,11 @@ struct DesktopApp {
     /// only when the user explicitly disconnects. Deliberately not a
     /// mirror of the live `connected` flags: a failed probe must not
     /// evict a provider from next launch's reconnect replay.
-    remembered_connections: [bool; 6],
+    remembered_connections: [bool; 7],
     /// Previous frame's per-provider connect phase, so
     /// `persist_connection_changes` can tell an explicit Disconnect (card
     /// returns to Idle) from a probe failure (card shows Error).
-    last_seen_provider_phase: [op_editor_core::agent_settings::ProviderConnectPhase; 6],
+    last_seen_provider_phase: [op_editor_core::agent_settings::ProviderConnectPhase; 7],
     /// In-flight ACP-agent connect probe (Settings → Agents → ACP
     /// Connect), drained by `drain_acp_agent_connect`.
     acp_agent_connect_job: Option<acp_agent_probe_host::AcpAgentConnectJob>,
@@ -697,6 +706,10 @@ fn main() {
 #[cfg(test)]
 #[path = "chat_intent_host_tests.rs"]
 mod chat_intent_host_tests;
+
+#[cfg(test)]
+#[path = "settings_agent_preference_tests.rs"]
+mod settings_agent_preference_tests;
 
 #[cfg(test)]
 mod main_mcp_tests;

@@ -25,6 +25,9 @@ pub(super) struct CkInner {
     /// so the browser IME can compose CJK into it; its `compositionend` is
     /// routed to `apply_ime`. `None` only if the DOM is unreachable.
     pub(super) ime: Option<crate::ime_input::ImeInput>,
+    /// DOM-side video playback layer used only while CanvasKit preview is
+    /// active. The painted canvas remains the poster source of truth.
+    pub(super) video_overlay: crate::video_overlay::VideoOverlayLayer,
 }
 
 impl CkInner {
@@ -33,6 +36,11 @@ impl CkInner {
         // the existing surface before drawing the coalesced frame.
         if let Some(window) = web_sys::window() {
             let _ = self.resize_to_window(&window);
+        }
+        if crate::web_asset_fetch::reconcile_pending_locale(
+            &mut self.host.editor_state_mut().editor_ui,
+        ) {
+            self.host.mark_editor_state_dirty();
         }
         // Assets the last paint asked for but the bundle does not carry
         // (preview JPEGs, template documents, the icon catalog). Bounded per
@@ -84,6 +92,8 @@ impl CkInner {
         self.backend.begin_frame();
         self.host.paint_dyn(&mut self.backend, w, h);
         self.backend.end_frame();
+        let placements = self.host.preview_video_overlay_placements(w, h);
+        self.video_overlay.sync(&self.canvas, w, h, &placements);
         self.sync_a11y();
         // #54: focus the hidden IME input only while a text field owns the
         // keyboard, so CJK composition works when editing and no soft keyboard
@@ -158,7 +168,10 @@ impl CkInner {
             .unwrap_or_else(|| self.canvas.client_height().max(1) as f64)
             .round()
             .max(1.0) as u32;
-        let dpr = display_dpr(window.device_pixel_ratio() as f32, self.host.editor_state().viewport.zoom);
+        let dpr = display_dpr(
+            window.device_pixel_ratio() as f32,
+            self.host.editor_state().viewport.zoom,
+        );
         let dev_w = ((css_w as f32) * dpr).round().max(1.0) as u32;
         let dev_h = ((css_h as f32) * dpr).round().max(1.0) as u32;
 
@@ -226,6 +239,9 @@ impl crate::repaint_ctx::RepaintContext for CkInner {
     }
     fn register_imported_font_from_bytes(&mut self, bytes: &[u8]) -> Option<String> {
         self.backend.register_imported_font_from_bytes(bytes)
+    }
+    fn register_bundled_font(&mut self, family: &str, bytes: &[u8]) -> bool {
+        self.backend.register_bundled_font(family, bytes)
     }
     fn imported_family_list(&self) -> Vec<String> {
         self.backend.imported_family_list()

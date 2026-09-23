@@ -271,11 +271,11 @@ fn prepare_turn_after_paging_uses_only_active_thread_and_bounded_model_context()
         assert_eq!(models[0].value, "builtin:server-1:gpt-5.4");
         assert_eq!(
             models[0].builtin_provider_id.as_deref(),
-            Some("daemon-builtin:group:codex")
+            Some("daemon-builtin:server-1")
         );
         assert_eq!(
-            models[0].builtin_provider_id, models[1].builtin_provider_id,
-            "models rendered under one managed provider heading share its picker group id"
+            models[0].builtin_provider_display_name, models[1].builtin_provider_display_name,
+            "managed models share the provider heading without losing account identity"
         );
         assert_ne!(models[0].value, models[1].value);
     }

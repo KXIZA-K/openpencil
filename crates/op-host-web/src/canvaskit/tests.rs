@@ -94,7 +94,7 @@ fn tile_scale_is_forwarded_and_bridge_bounds_repetition() {
         .expect("image bridge method");
     let end = bridge[start..].find("\n    },").expect("image bridge end") + start;
     let method = &bridge[start..end];
-    assert!(method.contains("mode === 3 ? null : figmaImageLocalMatrix"));
+    assert!(method.contains("mode === 3 || mode === 5 ? null : figmaImageLocalMatrix"));
     assert!(method.contains("Number.isFinite(tileScale) && tileScale > 0"));
     assert!(method.contains("originalWidth > 0 ? originalWidth : imageW"));
     assert!(method.contains("originalHeight > 0 ? originalHeight : imageH"));

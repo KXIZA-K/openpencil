@@ -30,6 +30,11 @@ pub struct WebSyncDocument {
     pub generation: Option<String>,
     pub active_page_index: usize,
     pub preserve_authored_geometry: bool,
+    /// The document's scene tag (`"slides"` marks a deck), when the daemon
+    /// is new enough to send it. Older daemons omit the field — `None` then
+    /// means "unknown", not "no scenario", so appliers keep their current
+    /// value rather than clearing it.
+    pub scenario: Option<crate::scene_template_catalog::TemplateScene>,
 }
 
 #[derive(Debug, Default, serde::Deserialize)]
@@ -133,10 +138,15 @@ impl WebSyncClient {
             .ok_or(WebSyncError::MissingVersion)?;
         let generation = Self::response_generation(&value)?;
         if self.applied_generation.is_some() && generation.is_none() {
-            return Err(WebSyncError::ResponseParse("Document authority generation is missing".into()));
+            return Err(WebSyncError::ResponseParse(
+                "Document authority generation is missing".into(),
+            ));
         }
         // Already up to date (and past the first sync) → nothing to apply.
-        if self.initialized && generation == self.applied_generation && version <= self.applied_version {
+        if self.initialized
+            && generation == self.applied_generation
+            && version <= self.applied_version
+        {
             return Ok(None);
         }
         let document = value.get("document").ok_or(WebSyncError::MissingDocument)?;
@@ -157,12 +167,17 @@ impl WebSyncClient {
             .unwrap_or(false);
         let doc: PenDocument = serde_json::from_value(document.clone())
             .map_err(|e| WebSyncError::DocumentParse(e.to_string()))?;
+        let scenario = value
+            .get("scenario")
+            .and_then(serde_json::Value::as_str)
+            .and_then(|name| std::str::FromStr::from_str(name).ok());
         Ok(Some(WebSyncDocument {
             document: doc,
             version,
             generation,
             active_page_index,
             preserve_authored_geometry,
+            scenario,
         }))
     }
 
@@ -200,9 +215,10 @@ impl WebSyncClient {
     where
         F: FnOnce(PenDocument, u64, bool) -> bool,
     {
-        self.sync_with_editor_meta(body, |doc, version, _active_page_index, preserve| {
-            apply(doc, version, preserve)
-        })
+        self.sync_with_editor_meta(
+            body,
+            |doc, version, _active_page_index, preserve, _scenario| apply(doc, version, preserve),
+        )
     }
 
     /// Full editor-metadata companion to [`sync`](Self::sync). Active page and
@@ -210,7 +226,13 @@ impl WebSyncClient {
     /// preserve-only helper above remains source compatible.
     pub fn sync_with_editor_meta<F>(&mut self, body: &str, apply: F) -> Result<bool, WebSyncError>
     where
-        F: FnOnce(PenDocument, u64, usize, bool) -> bool,
+        F: FnOnce(
+            PenDocument,
+            u64,
+            usize,
+            bool,
+            Option<crate::scene_template_catalog::TemplateScene>,
+        ) -> bool,
     {
         match self.next_document_with_metadata(body)? {
             Some(next) => {
@@ -220,6 +242,7 @@ impl WebSyncClient {
                     version,
                     next.active_page_index,
                     next.preserve_authored_geometry,
+                    next.scenario,
                 ) {
                     self.mark_applied(version);
                     self.applied_generation = next.generation;

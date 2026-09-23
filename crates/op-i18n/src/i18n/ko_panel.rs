@@ -292,6 +292,7 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         }
         "htmlImport.warn.layout.negative_margins_ignored" => "음수 CSS 여백이 무시되었습니다.",
         "htmlImport.warn.layout.margins_on_visual_box_ignored" => "시각적 박스의 CSS 여백이 무시되었습니다.",
+        "htmlImport.warn.layout.inline_margin_wrapping_approximated" => "CSS 여백이 있는 인라인 요소를 상자로 변환하여 줄 사이에서 더 이상 줄바꿈되지 않을 수 있습니다.",
         "htmlImport.warn.layout.content_box_percentage_approximated" => {
             "content-box 백분율 크기 지정이 근사 처리되었습니다."
         }
@@ -445,6 +446,9 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "htmlImport.warn.media.object_fit_scale_down" => "CSS object-fit:scale-down이 근사 처리되었습니다.",
         "htmlImport.warn.media.object_fit_none_ignored" => "CSS object-fit:none이 무시되었습니다.",
         "htmlImport.warn.media.object_position_ignored" => "CSS object-position이 무시되었습니다.",
+        "htmlImport.warn.media.image_intrinsic_axis_unresolved" => {
+            "지정된 크기가 동적이거나 포함 블록의 크기가 확정되지 않아 이미지의 고유 종횡비로 누락된 축을 결정할 수 없습니다."
+        }
         "htmlImport.warn.media.image_mix_blend_mode_unsupported" => {
             "이미지에 적용된 지원되지 않는 CSS mix-blend-mode가 무시되었습니다."
         }
@@ -541,12 +545,14 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "assetCenter.style.importEmpty" => "이 파일은 비어 있거나 스타일 가이드로 보기에는 너무 짧습니다.",
         "assetCenter.style.importNotText" => "이 파일은 Markdown 텍스트로 읽을 수 없습니다.",
         "assetCenter.style.importTooLarge" => "이 파일은 512 KB를 넘습니다.",
+        "leftPanel.tab.chat" => "Agent",
         "slidesPanel.tabSlides" => "슬라이드",
         "slidesPanel.tabCards" => "카드",
         "slidesPanel.present" => "발표",
         "slidesPanel.exportPdf" => "PDF 내보내기",
         "slidesPanel.exportAllSlides" => "모든 슬라이드 내보내기",
         "slidesPanel.exportSelectedSlides" => "선택한 슬라이드 내보내기({{count}})",
+        "settings.tab.ai" => "AI",
         "settings.agents.heroTitle" => "AI 제공자 연결",
         "settings.agents.heroSubtitle" => "OpenPencil은 로컬 CLI 에이전트와 API 제공자를 직접 구동합니다. 하나를 연결하면 디자인 생성을 시작할 수 있습니다.",
         "settings.agents.statusConnected" => "연결됨",

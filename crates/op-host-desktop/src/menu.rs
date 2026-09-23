@@ -22,6 +22,7 @@
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MenuAction {
+    Home,
     New,
     Open,
     /// Open the recent-file at this index into `editor_ui.recent_files`
@@ -30,6 +31,8 @@ pub enum MenuAction {
     OpenRecent(usize),
     Save,
     SaveAs,
+    /// Save the open document as a reusable `user:` scene template.
+    SaveAsTemplate,
     Export,
     Undo,
     Redo,
@@ -75,9 +78,11 @@ mod backend {
     // `action_for_id`. Kept as `&str` consts so the build + the
     // dispatch can't drift.
     const ID_NEW: &str = "new";
+    const ID_HOME: &str = "home";
     const ID_OPEN: &str = "open";
     const ID_SAVE: &str = "save";
     const ID_SAVE_AS: &str = "save-as";
+    const ID_SAVE_AS_TEMPLATE: &str = "save-as-template";
     const ID_EXPORT: &str = "export";
     const ID_UNDO: &str = "undo";
     const ID_REDO: &str = "redo";
@@ -107,10 +112,12 @@ mod backend {
             return index.parse::<usize>().ok().map(MenuAction::OpenRecent);
         }
         Some(match id {
+            ID_HOME => MenuAction::Home,
             ID_NEW => MenuAction::New,
             ID_OPEN => MenuAction::Open,
             ID_SAVE => MenuAction::Save,
             ID_SAVE_AS => MenuAction::SaveAs,
+            ID_SAVE_AS_TEMPLATE => MenuAction::SaveAsTemplate,
             ID_EXPORT => MenuAction::Export,
             ID_UNDO => MenuAction::Undo,
             ID_REDO => MenuAction::Redo,
@@ -202,6 +209,7 @@ mod backend {
             let recent_submenu = Submenu::new(tr(locale, "menu.openRecent"), true);
             let file = Submenu::new(tr(locale, "menu.file"), true);
             let _ = file.append_items(&[
+                &item(ID_HOME, tr(locale, "fileMenu.home"), None),
                 &item(ID_NEW, tr(locale, "menu.new"), Some(accel(Code::KeyN))),
                 &item(ID_OPEN, tr(locale, "menu.open"), Some(accel(Code::KeyO))),
                 &recent_submenu,
@@ -212,6 +220,9 @@ mod backend {
                     tr(locale, "menu.saveAs"),
                     Some(accel_shift(Code::KeyS)),
                 ),
+                // No accelerator: saving a template is a deliberate, occasional
+                // action, not something a keystroke should risk by accident.
+                &item(ID_SAVE_AS_TEMPLATE, tr(locale, "menu.saveAsTemplate"), None),
                 &PredefinedMenuItem::separator(),
                 &item(
                     ID_EXPORT,
@@ -359,6 +370,7 @@ mod backend {
                 ID_OPEN,
                 ID_SAVE,
                 ID_SAVE_AS,
+                ID_SAVE_AS_TEMPLATE,
                 ID_EXPORT,
                 ID_UNDO,
                 ID_REDO,

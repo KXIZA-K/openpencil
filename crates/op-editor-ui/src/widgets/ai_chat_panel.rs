@@ -33,6 +33,14 @@ pub(crate) const RESIZE_GUTTER: f32 = 4.0;
 pub(crate) const RESIZE_CORNER: f32 = 12.0;
 pub(crate) const INPUT_AREA_HEIGHT: f32 = 56.0;
 pub(crate) const INPUT_TOOLBAR_HEIGHT: f32 = 40.0;
+/// Slim header the composer-only card grows once its input has focus:
+/// session name plus the two actions that take you to the Agent tab.
+pub(crate) const COMPOSER_HEADER_HEIGHT: f32 = 30.0;
+/// Panel height fed to the composer's own height maths in composer-only
+/// mode. The composer measures itself against the panel it sits in so a
+/// short panel can squeeze the text area; there is no panel here, so
+/// hand it a roomy one and let the composer keep its natural size.
+pub(crate) const COMPOSER_ONLY_PROBE_H: f32 = 600.0;
 #[cfg(test)]
 const INPUT_BASE_HEIGHT: f32 = INPUT_AREA_HEIGHT + INPUT_TOOLBAR_HEIGHT;
 
@@ -104,6 +112,19 @@ pub struct AIChatPlaceholder<'a> {
     /// Which bare header button the cursor is over (chevron / maximize
     /// / new chat) — drives their `theme.button_hover` wash.
     pub header_hover: Option<op_editor_core::ChatHeaderButton>,
+    /// Whether the chat is pinned into a left column (the Agent tab or
+    /// the generation workspace's dock) rather than floating. Pinned, it
+    /// has no window to drag or maximize, so the header spends that room
+    /// on the session selector instead.
+    pub column_pinned: bool,
+    /// Touch chrome hosts the chat as a sheet, which still collapses to
+    /// its header — so the chevron lives on there, and only there.
+    pub touch_sheet: bool,
+    /// Composer-only mode: the rail is showing another tab, so the chat
+    /// shows nothing but its input box docked at the canvas floor. The
+    /// conversation has exactly ONE home (the Agent tab); this is the
+    /// launcher that takes you there, not a second place to read it.
+    pub composer_only: bool,
     /// Which bottom-toolbar chat control the cursor is over.
     pub footer_hover: Option<op_editor_core::ChatFooterButton>,
     pub header_pressed: Option<op_editor_core::ChatHeaderButton>,
@@ -139,6 +160,10 @@ pub struct AIChatPlaceholder<'a> {
     pub(crate) parallel_agents_picker_open: bool,
     /// Which row (1–6) the cursor is over inside the Parallel Agents picker.
     pub(crate) parallel_agents_picker_hover: Option<u32>,
+    /// Localised pre-flight notice for the selected agent's missing MCP
+    /// integration, or `None` when it can run a canvas turn. See
+    /// `ai_chat_mcp_notice`.
+    pub(crate) mcp_notice: Option<String>,
     /// Opaque, stable per-panel-INSTANCE id used to scope the thread-local
     /// transcript cache. A host allocates ONE id (`Self::next_owner`) for its
     /// persistent widget-host state and stamps every constructed panel with it
@@ -148,6 +173,17 @@ pub struct AIChatPlaceholder<'a> {
     /// Defaults to `UNOWNED` (0) for plain `from_editor*` constructions (unit
     /// tests / paths that never touch the hint).
     pub(crate) owner: u64,
+}
+
+/// The localised notice for the selected agent's missing MCP integration, or
+/// `None` when nothing is missing. The CLI name is substituted rather than
+/// baked into fifteen catalogs, so a second gated agent needs no new key.
+fn mcp_notice_label(ui: &op_editor_core::EditorUiState) -> Option<String> {
+    ui.chat_agent_mcp_gap()?;
+    let agent = op_editor_core::chat::models::AgentProvider::ALL
+        .get(ui.chat_selected_agent)
+        .copied()?;
+    Some(translate(ui, "chat.mcpRequired").replace("{cli}", agent.name()))
 }
 
 /// Minimal per-tab snapshot used by the tab-row painter.
@@ -199,6 +235,9 @@ impl<'a> AIChatPlaceholder<'a> {
                 Some(op_editor_core::ButtonPressTarget::ChatExample(index)) => Some(index),
                 _ => None,
             },
+            column_pinned: ui.chat_pinned(),
+            touch_sheet: ui.touch_chrome(),
+            composer_only: ui.chat_composer_only(),
             header_hover: ui.chat_header_hover,
             footer_hover: ui.chat_footer_hover,
             header_pressed: match ui.pressed_button {
@@ -209,8 +248,9 @@ impl<'a> AIChatPlaceholder<'a> {
                 Some(op_editor_core::ButtonPressTarget::ChatFooter(button)) => Some(button),
                 _ => None,
             },
-            examples: example_cards(ui.locale),
-            locale: ui.locale,
+            examples: example_cards(ui.effective_locale()),
+            mcp_notice: mcp_notice_label(ui),
+            locale: ui.effective_locale(),
             tabs_snapshot,
             active_tab_index,
             thread_picker_open: ui.chat_thread_picker_open,
@@ -258,6 +298,43 @@ impl<'a> AIChatPlaceholder<'a> {
         }
     }
 
+    /// Height of the pre-flight MCP notice — `0` when the selected agent can
+    /// run a canvas turn, so a correctly configured panel never pays a row
+    /// for it (same rule as the attachment and chip rows above).
+    pub(crate) fn mcp_notice_row_h(&self) -> f32 {
+        if self.mcp_notice.is_some() {
+            crate::widgets::ai_chat_mcp_notice::MCP_NOTICE_ROW_HEIGHT
+        } else {
+            0.0
+        }
+    }
+
+    /// The MCP notice's row, at the top of the input block. `None` when there
+    /// is nothing to say — the single rect source paint and hit-test read.
+    pub(crate) fn mcp_notice_row(&self, rect: Rect) -> Option<Rect> {
+        let h = self.mcp_notice_row_h();
+        if h <= 0.0 {
+            return None;
+        }
+        let input = self.input_rect(rect);
+        Some(Rect {
+            origin: input.origin,
+            size: Point2D::new(input.size.x, h),
+        })
+    }
+
+    /// The input block with the notice row (if any) already taken off the top,
+    /// so every row below it lands in the same place whether or not the notice
+    /// is showing.
+    fn input_rows_rect(&self, rect: Rect) -> Rect {
+        let input = self.input_rect(rect);
+        let offset = self.mcp_notice_row_h();
+        Rect {
+            origin: Point2D::new(input.origin.x, input.origin.y + offset),
+            size: Point2D::new(input.size.x, (input.size.y - offset).max(0.0)),
+        }
+    }
+
     /// Where the live chips sit. The single rect source paint and hit-test
     /// both read — see `ai_chat_chip_row`.
     pub(crate) fn chip_row(&self, input_rect: Rect) -> ChipRowLayout {
@@ -287,7 +364,7 @@ impl<'a> AIChatPlaceholder<'a> {
     /// Where the pinned-style chip sits, or `None` when no style is in force.
     /// The same rect paint and hit-test read — see `ai_chat_chip_row`.
     pub fn style_chip_rect(&self, rect: Rect) -> Option<Rect> {
-        self.chip_row(self.input_rect(rect)).style
+        self.chip_row(self.input_rows_rect(rect)).style
     }
 
     /// Whether the chip's detail card is on screen at this panel's `now_ms`.
@@ -308,7 +385,7 @@ impl<'a> AIChatPlaceholder<'a> {
         if self.state.is_minimized() || self.model_picker.open || self.style_receipt.is_none() {
             return false;
         }
-        self.chip_row(self.input_rect(rect))
+        self.chip_row(self.input_rows_rect(rect))
             .style
             .is_some_and(|chip| chip.contains(point))
     }
@@ -362,7 +439,8 @@ impl<'a> AIChatPlaceholder<'a> {
     }
 
     pub(crate) fn input_height_for_width(&self, panel_w: f32, panel_h: f32) -> f32 {
-        self.chip_row_h()
+        self.mcp_notice_row_h()
+            + self.chip_row_h()
             + self.input_area_height_for_width(panel_w, panel_h)
             + INPUT_TOOLBAR_HEIGHT
             + self.attachment_row_h()
@@ -382,6 +460,21 @@ impl<'a> AIChatPlaceholder<'a> {
 
     pub(crate) fn is_streaming(&self) -> bool {
         self.state.messages.iter().any(|message| message.streaming)
+    }
+
+    /// Region available to the empty-state suggestion stack: everything
+    /// between the header divider and the bottom-anchored composer block.
+    /// Compact touch sheets shrink with the software keyboard, so this is
+    /// what keeps the hint / example pills / tip lines from running into
+    /// the composer — paint clips to it and pills that do not fully fit
+    /// are dropped (see `paint_examples`).
+    pub fn empty_state_region(&self, rect: Rect) -> Rect {
+        let top = rect.origin.y + HEADER_HEIGHT + 1.0;
+        let bottom = rect.origin.y + rect.size.y - self.input_height_for_rect(rect);
+        Rect {
+            origin: Point2D::new(rect.origin.x, top),
+            size: Point2D::new(rect.size.x, (bottom - top).max(0.0)),
+        }
     }
 
     pub fn body_rect(&self, rect: Rect) -> Rect {
@@ -450,6 +543,11 @@ impl<'a> AIChatPlaceholder<'a> {
     /// but the chevron is always the canonical collapse affordance.
     pub(crate) fn expanded_header_title_rect(&self, rect: Rect) -> Rect {
         use crate::widgets::ai_chat_panel_header::CHEVRON_W;
+        // Desktop has no collapsed state left to toggle, so the chevron
+        // is neither painted nor clickable there.
+        if !self.touch_sheet {
+            return Rect::ZERO;
+        }
         let chevron_h = 26.0; // generous hit target matching the pill height
         Rect {
             origin: Point2D::new(
@@ -461,7 +559,7 @@ impl<'a> AIChatPlaceholder<'a> {
     }
 
     pub fn model_picker_bounds(&self, rect: Rect) -> Option<Rect> {
-        if self.state.is_minimized() || !self.model_picker.open {
+        if (self.state.is_minimized() && !self.composer_only) || !self.model_picker.open {
             return None;
         }
         let input_rect = self.input_rect(rect);
@@ -501,6 +599,22 @@ impl<'a> AIChatPlaceholder<'a> {
         Some(crate::widgets::ai_chat_panel_footer::parallel_agents_picker_rect(footer))
     }
 
+    /// Height the composer-only card wants at `width`: the composer
+    /// block, plus the slim header that appears once the input has
+    /// focus. Unfocused it is the box alone (the design brief calls for
+    /// nothing but the input until you engage with it).
+    pub fn composer_only_height(&self, width: f32) -> f32 {
+        let composer = self.input_height_for_width(width, COMPOSER_ONLY_PROBE_H);
+        let header = if self.state.focused {
+            COMPOSER_HEADER_HEIGHT
+        } else {
+            0.0
+        };
+        // No extra padding: the composer block already carries its own,
+        // and a second helping left a dead band above the placeholder.
+        composer + header
+    }
+
     pub fn input_rect(&self, rect: Rect) -> Rect {
         let input_h = self.input_height_for_rect(rect);
         Rect {
@@ -513,7 +627,7 @@ impl<'a> AIChatPlaceholder<'a> {
     }
 
     pub fn input_text_rect(&self, rect: Rect) -> Rect {
-        let input_block = self.input_rect(rect);
+        let input_block = self.input_rows_rect(rect);
         Rect {
             origin: Point2D::new(
                 input_block.origin.x,
@@ -583,7 +697,7 @@ fn selection_chip_label_for_state(state: &EditorState) -> Option<String> {
             )
         }
         count => Some(
-            op_i18n::translate(state.editor_ui.locale, "common.selected")
+            op_i18n::translate(state.editor_ui.effective_locale(), "common.selected")
                 .replace("{{count}}", &count.to_string()),
         ),
     }

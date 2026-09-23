@@ -8,7 +8,22 @@
 //! It also keeps the TS `buildPrompt` GUIDELINES / TASK framing so
 //! the wire prompt matches the TS server byte-for-byte.
 
-use op_ai::chat_provider::{ChatDelta, EffortLevel, StopReason, ThinkingMode};
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
+use std::time::Duration;
+
+use op_ai::chat_provider::{ChatDelta, CliName, EffortLevel, StopReason, ThinkingMode};
+
+use crate::cli_probe_support::{bounded_cli_output, BoundedProbe};
+
+/// TS `DEFAULT_CODEX_TIMEOUT_MS` — the reference client caps a turn
+/// at 15 minutes then SIGTERM. Lives here rather than in
+/// `chat_subprocess.rs`: it is a Codex-specific quirk, and the bridge
+/// spine sits at the 800-line cap. `pub(crate)` so the DeepSeek
+/// Harness sibling (`chat_subprocess_dsh`) can assert its own budget
+/// stays aligned with the crate's widest subprocess tier.
+pub(crate) const CODEX_TURN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15 * 60);
 
 /// Allowlist-based env filter for the Codex CLI subprocess. Only
 /// passes through safe system vars and provider-specific prefixes —
@@ -34,8 +49,11 @@ const CODEX_ENV_ALLOWLIST: &[&str] = &[
     "http_proxy",
     "https_proxy",
     "no_proxy",
-    // Windows-essential vars
+    // Windows-essential vars. Matched case-insensitively (see
+    // `codex_env_allowed`) because Windows reports these in their native
+    // casing, e.g. `SystemRoot` / `windir` / `ComSpec` / `SystemDrive`.
     "SYSTEMROOT",
+    "WINDIR",
     "COMSPEC",
     "USERPROFILE",
     "APPDATA",
@@ -103,14 +121,90 @@ fn load_codex_config_env_keys() -> Vec<String> {
 /// prefixes + config.toml `env_key` opt-ins (TS `filterCodexEnv`).
 pub fn codex_child_env() -> Vec<(String, String)> {
     let extra = load_codex_config_env_keys();
-    std::env::vars()
-        .filter(|(k, _)| {
-            CODEX_ENV_ALLOWLIST.contains(&k.as_str())
-                || extra.iter().any(|e| e == k)
-                || k.starts_with("OPENAI_")
-                || k.starts_with("CODEX_")
-        })
+    filter_codex_env(std::env::vars(), &extra)
+}
+
+fn filter_codex_env<I>(vars: I, extra: &[String]) -> Vec<(String, String)>
+where
+    I: IntoIterator<Item = (String, String)>,
+{
+    vars.into_iter()
+        .filter(|(key, _)| codex_env_allowed(key, extra))
         .collect()
+}
+
+/// Windows environment keys are case-insensitive, and the OS hands them to a
+/// process in their native casing — `SystemRoot`, `windir`, `ComSpec`,
+/// `SystemDrive`, `Path`. An exact match against the uppercase allowlist
+/// therefore dropped every one of them, and a Codex child launched without
+/// `SystemRoot` cannot load the Winsock service providers under
+/// `%SystemRoot%\System32`: the turn dies with `WSAEPROVIDERFAILEDINIT`
+/// (os error 10106). Compare the system allowlist case-insensitively, the way
+/// `op_acp::client::local_env_allowed` already does. The `env_key` opt-ins and
+/// the `OPENAI_` / `CODEX_` prefixes stay exact: those are provider names the
+/// user spells out, not host variables.
+fn codex_env_allowed(key: &str, extra: &[String]) -> bool {
+    CODEX_ENV_ALLOWLIST
+        .iter()
+        .any(|allowed| allowed.eq_ignore_ascii_case(key))
+        || extra.iter().any(|e| e == key)
+        || key.starts_with("OPENAI_")
+        || key.starts_with("CODEX_")
+}
+
+/// Budget for the one-shot `codex exec --help` capability probe. Generous
+/// on purpose: the result is cached per binary path for the process
+/// lifetime — including a TimedOut-as-unsupported verdict — so a single
+/// slow probe on a loaded machine would otherwise permanently disable
+/// `--ephemeral` for the session. Measured on loaded CI (macOS runners)
+/// and under local contention: the npm-wrapper spawn chain
+/// (`env node` → launcher script) alone can exceed the previous 2s
+/// budget, misreporting a supporting Codex as unsupported.
+const CODEX_EXEC_HELP_TIMEOUT: Duration = Duration::from_secs(10);
+static CODEX_EPHEMERAL_SUPPORT: OnceLock<Mutex<HashMap<PathBuf, bool>>> = OnceLock::new();
+
+/// Add the non-persisting exec flag only when the installed Codex advertises
+/// it. The repository has no minimum Codex version; `--ephemeral` arrived in
+/// 0.99.0, so an unconditional flag would break otherwise-supported installs.
+pub(crate) fn append_codex_ephemeral_arg(binary: &Path, args: &mut Vec<String>) {
+    if args.first().is_some_and(|arg| arg == "exec")
+        && codex_exec_supports_ephemeral(binary)
+        && !args.iter().any(|arg| arg == "--ephemeral")
+    {
+        args.insert(1, "--ephemeral".into());
+    }
+}
+
+fn codex_exec_supports_ephemeral(binary: &Path) -> bool {
+    let cache = CODEX_EPHEMERAL_SUPPORT.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some(supported) = cache
+        .lock()
+        .ok()
+        .and_then(|cache| cache.get(binary).copied())
+    {
+        return supported;
+    }
+    let supported = match bounded_cli_output(
+        CliName::Codex,
+        binary,
+        &["exec", "--help"],
+        CODEX_EXEC_HELP_TIMEOUT,
+    ) {
+        BoundedProbe::Completed(output) if output.status.success() => {
+            help_advertises_ephemeral(&output.stdout) || help_advertises_ephemeral(&output.stderr)
+        }
+        BoundedProbe::Completed(_) | BoundedProbe::TimedOut { .. } | BoundedProbe::Failed => false,
+    };
+    if let Ok(mut cache) = cache.lock() {
+        cache.insert(binary.to_path_buf(), supported);
+    }
+    supported
+}
+
+fn help_advertises_ephemeral(output: &[u8]) -> bool {
+    String::from_utf8_lossy(output)
+        .split_ascii_whitespace()
+        .any(|token| token == "--ephemeral")
 }
 
 /// TS `codex-client.ts::buildPrompt` framing: an empty system prompt
@@ -150,9 +244,16 @@ pub fn parse_codex_line(line: &str) -> Option<ChatDelta> {
     let val: serde_json::Value = serde_json::from_str(trimmed).ok()?;
     let ty = val.get("type").and_then(|v| v.as_str()).unwrap_or("");
     match ty {
-        // TS: error events surface `message`, with a fixed fallback.
-        "error" => {
-            let msg = val
+        // `codex exec --json` exposes both unrecoverable stream errors and
+        // failed turns as terminal events. The former carries `message` at
+        // the top level; the latter nests the same shape under `error`.
+        "error" | "turn.failed" => {
+            let error = if ty == "turn.failed" {
+                val.get("error").unwrap_or(&val)
+            } else {
+                &val
+            };
+            let msg = error
                 .get("message")
                 .and_then(|v| v.as_str())
                 .filter(|s| !s.is_empty())
@@ -187,6 +288,19 @@ pub fn parse_codex_line(line: &str) -> Option<ChatDelta> {
             text.map(|t| ChatDelta::TextDelta(t.to_string()))
         }
     }
+}
+
+/// Whether a parsed Codex JSONL line is an unrecoverable terminal error.
+/// `item.completed` entries whose item type is `error` are deliberately not
+/// terminal: Codex documents those as non-fatal diagnostics.
+pub fn is_codex_terminal_error(line: &str) -> bool {
+    let Ok(val) = serde_json::from_str::<serde_json::Value>(line.trim()) else {
+        return false;
+    };
+    matches!(
+        val.get("type").and_then(|value| value.as_str()),
+        Some("error" | "turn.failed")
+    )
 }
 
 /// Extract a human-readable error from Codex stderr (TS
@@ -325,6 +439,75 @@ pub fn codex_reasoning_effort(thinking: ThinkingMode, effort: EffortLevel) -> Op
 mod tests {
     use super::*;
 
+    fn owned(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+        pairs
+            .iter()
+            .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+            .collect()
+    }
+
+    /// Windows hands the environment over in its native casing, so the
+    /// allowlist has to match case-insensitively. Losing `SystemRoot` here is
+    /// what made the Codex turn fail Winsock init with os error 10106.
+    #[test]
+    fn codex_env_keeps_windows_native_key_casing() {
+        let kept = filter_codex_env(
+            owned(&[
+                ("SystemRoot", r"C:\Windows"),
+                ("windir", r"C:\Windows"),
+                ("ComSpec", r"C:\Windows\System32\cmd.exe"),
+                ("SystemDrive", "C:"),
+                ("Path", r"C:\Windows\System32"),
+                ("PathExt", ".COM;.EXE;.BAT;.CMD"),
+                ("UserProfile", r"C:\Users\dev"),
+            ]),
+            &[],
+        );
+        let names: Vec<&str> = kept.iter().map(|(k, _)| k.as_str()).collect();
+        assert_eq!(
+            names,
+            vec![
+                "SystemRoot",
+                "windir",
+                "ComSpec",
+                "SystemDrive",
+                "Path",
+                "PathExt",
+                "UserProfile",
+            ]
+        );
+    }
+
+    /// The relaxed casing must not widen the secret boundary: only the
+    /// allowlist, the `OPENAI_` / `CODEX_` prefixes and the config.toml
+    /// `env_key` opt-ins get through.
+    #[test]
+    fn codex_env_still_filters_secrets_and_honours_opt_ins() {
+        let kept = filter_codex_env(
+            owned(&[
+                ("SystemRoot", r"C:\Windows"),
+                ("ANTHROPIC_API_KEY", "secret"),
+                ("GITHUB_TOKEN", "secret"),
+                ("AWS_SECRET_ACCESS_KEY", "secret"),
+                ("ALL_PROXY", "socks5://127.0.0.1:7897"),
+                ("OPENAI_API_KEY", "sk-test"),
+                ("CODEX_HOME", "/tmp/codex"),
+                ("MY_PROVIDER_KEY", "opted-in"),
+            ]),
+            &["MY_PROVIDER_KEY".to_string()],
+        );
+        let names: Vec<&str> = kept.iter().map(|(k, _)| k.as_str()).collect();
+        assert_eq!(
+            names,
+            vec![
+                "SystemRoot",
+                "OPENAI_API_KEY",
+                "CODEX_HOME",
+                "MY_PROVIDER_KEY",
+            ]
+        );
+    }
+
     #[test]
     fn codex_config_env_keys_extracts_quoted_values() {
         let toml = r#"
@@ -404,6 +587,25 @@ env_key = not_quoted
             Some(ChatDelta::TextDelta("xyz".into()))
         );
         assert_eq!(parse_codex_line(r#"{"type":"whatever"}"#), None);
+    }
+
+    #[test]
+    fn codex_line_parser_treats_failed_turns_and_stream_errors_as_terminal() {
+        let failed = r#"{"type":"turn.failed","error":{"message":"usage limit reached"}}"#;
+        assert_eq!(
+            parse_codex_line(failed),
+            Some(ChatDelta::Error("usage limit reached".into()))
+        );
+        assert!(is_codex_terminal_error(failed));
+
+        let stream_error = r#"{"type":"error","message":"stream disconnected"}"#;
+        assert!(is_codex_terminal_error(stream_error));
+        assert!(!is_codex_terminal_error(
+            r#"{"type":"item.completed","item":{"type":"error","message":"lagged"}}"#
+        ));
+        assert!(!is_codex_terminal_error(
+            r#"{"type":"turn.completed","usage":{}}"#
+        ));
     }
 
     #[test]

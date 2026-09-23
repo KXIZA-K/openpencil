@@ -54,10 +54,21 @@ impl<'a> Widget for FileMenu<'a> {
             &self.theme,
             rect.origin.x,
             y,
+            Icon::LayoutDashboard,
+            t(self.ui, "home"),
+            "",
+            h(0),
+        );
+        y += ROW_HEIGHT;
+        paint_row(
+            cx,
+            &self.theme,
+            rect.origin.x,
+            y,
             Icon::Plus,
             t(self.ui, "new"),
             "⌘N",
-            h(0),
+            h(1),
         );
         y += ROW_HEIGHT;
         paint_row(
@@ -68,7 +79,7 @@ impl<'a> Widget for FileMenu<'a> {
             Icon::LayoutDashboard,
             t(self.ui, "newFromTemplate"),
             "",
-            h(1),
+            h(2),
         );
         y += ROW_HEIGHT;
         paint_row(
@@ -79,7 +90,7 @@ impl<'a> Widget for FileMenu<'a> {
             Icon::FolderOpen,
             t(self.ui, "open"),
             "⌘O",
-            h(2),
+            h(3),
         );
         y += ROW_HEIGHT;
         y = paint_divider(cx, &self.theme, rect, y);
@@ -91,7 +102,7 @@ impl<'a> Widget for FileMenu<'a> {
             Icon::Save,
             t(self.ui, "save"),
             "⌘S",
-            h(3),
+            h(4),
         );
         y += ROW_HEIGHT;
         paint_row(
@@ -102,10 +113,24 @@ impl<'a> Widget for FileMenu<'a> {
             Icon::Save,
             t(self.ui, "saveAs"),
             "⌘⇧S",
-            h(4),
+            h(5),
         );
         y += ROW_HEIGHT;
+        if self.has_save_as_template_row() {
+            paint_row(
+                cx,
+                &self.theme,
+                rect.origin.x,
+                y,
+                Icon::Package,
+                t(self.ui, "saveAsTemplate"),
+                "",
+                h(6),
+            );
+            y += ROW_HEIGHT;
+        }
         y = paint_divider(cx, &self.theme, rect, y);
+        let export_image_row = 6 + usize::from(self.has_save_as_template_row());
         paint_row(
             cx,
             &self.theme,
@@ -114,10 +139,11 @@ impl<'a> Widget for FileMenu<'a> {
             Icon::Download,
             t(self.ui, "exportImage"),
             "⌘⇧P",
-            h(5),
+            h(export_image_row),
         );
         y += ROW_HEIGHT;
         if self.has_export_all_row() {
+            let row = export_image_row + 1;
             paint_row(
                 cx,
                 &self.theme,
@@ -126,7 +152,7 @@ impl<'a> Widget for FileMenu<'a> {
                 Icon::LayoutGrid,
                 &self.export_all_label(),
                 "",
-                h(6),
+                h(row),
             );
             y += ROW_HEIGHT;
         }
@@ -208,7 +234,10 @@ impl<'a> Widget for FileMenu<'a> {
 
     fn access_node(&self) -> accesskit::Node {
         let mut node = accesskit::Node::new(accesskit::Role::Menu);
-        node.set_label(op_i18n::translate(self.ui.locale, "a11y.fileMenu"));
+        node.set_label(op_i18n::translate(
+            self.ui.effective_locale(),
+            "a11y.fileMenu",
+        ));
         node
     }
 }

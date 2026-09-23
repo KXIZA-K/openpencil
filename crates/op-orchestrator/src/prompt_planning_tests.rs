@@ -34,6 +34,29 @@ fn provider_planning_prompt_carries_quality_guardrails() {
 }
 
 #[test]
+fn phone_planning_prompt_uses_the_archetype_handoff_and_gate() {
+    let mut phone = req();
+    phone.prompt = "Mobile banking home".into();
+    let phone_prompt = build_orchestrator_prompt(&phone, PlanningMode::Rich, AbortFlag::new());
+    assert!(phone_prompt
+        .call_request
+        .system_prompt
+        .contains("ARCHETYPE:"));
+    assert!(!phone_prompt
+        .call_request
+        .system_prompt
+        .contains("SIGNATURE MOMENT"));
+
+    let mut landing = req();
+    landing.prompt = "官网首页（1440）".into();
+    let landing_prompt = build_orchestrator_prompt(&landing, PlanningMode::Rich, AbortFlag::new());
+    assert!(!landing_prompt
+        .call_request
+        .system_prompt
+        .contains("ARCHETYPE:"));
+}
+
+#[test]
 fn minimal_prompt_has_short_suffix_no_snippets() {
     let pp = build_orchestrator_prompt(&req(), PlanningMode::Minimal, AbortFlag::new());
     assert!(pp
@@ -73,8 +96,10 @@ fn subagent_prompt_carries_subtask_and_script_format() {
             width: 1200.0,
             height: 400.0,
         },
+        bleed_hero: false,
         id_prefix: "hero".into(),
         parent_frame_id: Some("root".into()),
+        insert_after_sibling_id: None,
         elements: None,
         screen: None,
         generated_root_id: None,
@@ -150,8 +175,10 @@ fn subagent_prompt_reduced_complexity_carries_script_format() {
             width: 1200.0,
             height: 400.0,
         },
+        bleed_hero: false,
         id_prefix: "hero".into(),
         parent_frame_id: Some("root".into()),
+        insert_after_sibling_id: None,
         elements: None,
         screen: None,
         generated_root_id: None,
@@ -181,8 +208,10 @@ fn subagent_prompt_carries_ts_layout_contract() {
                 width: 390.0,
                 height: 96.0,
             },
+            bleed_hero: false,
             id_prefix: "header".into(),
             parent_frame_id: Some("page".into()),
+            insert_after_sibling_id: None,
             elements: Some("delivery location".into()),
             screen: None,
             generated_root_id: None,
@@ -196,8 +225,10 @@ fn subagent_prompt_carries_ts_layout_contract() {
                 width: 390.0,
                 height: 112.0,
             },
+            bleed_hero: false,
             id_prefix: "categories".into(),
             parent_frame_id: Some("page".into()),
+            insert_after_sibling_id: None,
             elements: Some("category chips".into()),
             screen: None,
             generated_root_id: None,
@@ -266,8 +297,10 @@ fn subagent_prompt_minimal_skills_has_schema_and_script_format() {
             width: 1200.0,
             height: 400.0,
         },
+        bleed_hero: false,
         id_prefix: "hero".into(),
         parent_frame_id: None,
+        insert_after_sibling_id: None,
         elements: None,
         screen: None,
         generated_root_id: None,
@@ -305,8 +338,10 @@ fn subagent_prompt_reduced_complexity_basic_is_shorter_than_full() {
             width: 1200.0,
             height: 400.0,
         },
+        bleed_hero: false,
         id_prefix: "hero".into(),
         parent_frame_id: None,
+        insert_after_sibling_id: None,
         elements: None,
         screen: None,
         generated_root_id: None,
@@ -327,6 +362,7 @@ fn subagent_prompt_reduced_complexity_basic_is_shorter_than_full() {
 
         visual_ref_enabled: false,
         pinned_style_guide: None,
+        reference_skeleton: None,
     };
     let (full_cr, _) = bsp(&st, &plan(), &basic_req, AbortFlag::new(), false, false);
     let (reduced_cr, _) = bsp(&st, &plan(), &basic_req, AbortFlag::new(), true, false);
@@ -348,8 +384,10 @@ fn subagent_prompt_reduced_complexity_full_tier_skill_filtering_is_noop() {
             width: 1200.0,
             height: 400.0,
         },
+        bleed_hero: false,
         id_prefix: "hero".into(),
         parent_frame_id: None,
+        insert_after_sibling_id: None,
         elements: None,
         screen: None,
         generated_root_id: None,
@@ -366,6 +404,7 @@ fn subagent_prompt_reduced_complexity_full_tier_skill_filtering_is_noop() {
         AbortFlag::new(),
         false,
         false,
+        false,
         true,
         &ComponentLibrary::default(),
         &[],
@@ -376,6 +415,7 @@ fn subagent_prompt_reduced_complexity_full_tier_skill_filtering_is_noop() {
         &req(),
         AbortFlag::new(),
         true,
+        false,
         false,
         true,
         &ComponentLibrary::default(),
@@ -399,8 +439,10 @@ fn subagent_prompt_reduced_complexity_keeps_script_gen_even_on_full_tier() {
             width: 1200.0,
             height: 400.0,
         },
+        bleed_hero: false,
         id_prefix: "hero".into(),
         parent_frame_id: None,
+        insert_after_sibling_id: None,
         elements: None,
         screen: None,
         generated_root_id: None,
@@ -456,6 +498,7 @@ fn subagent_prompt_basic_tier_reduced_retry_drops_jsonl_format_skills() {
         validation_enabled: true,
         visual_ref_enabled: false,
         pinned_style_guide: None,
+        reference_skeleton: None,
     };
     let (basic_cr, basic_report) = bsp(
         &subtask(),
@@ -508,6 +551,7 @@ fn subagent_prompt_basic_mobile_food_keeps_mobile_app_skill() {
         validation_enabled: true,
         visual_ref_enabled: false,
         pinned_style_guide: None,
+        reference_skeleton: None,
     };
     let mut mobile_plan = plan();
     mobile_plan.root_frame.width = 402.0;
@@ -520,8 +564,10 @@ fn subagent_prompt_basic_mobile_food_keeps_mobile_app_skill() {
             width: 402.0,
             height: 640.0,
         },
+        bleed_hero: false,
         id_prefix: "main-content".into(),
         parent_frame_id: Some("page".into()),
+        insert_after_sibling_id: None,
         elements: Some(
             "search, filters, category chips, promotional banner, restaurant cards".into(),
         ),
@@ -566,8 +612,10 @@ fn subagent_prompt_teaches_camelcase_property_names() {
             width: 1920.0,
             height: 1080.0,
         },
+        bleed_hero: false,
         id_prefix: "cover".into(),
         parent_frame_id: Some("root".into()),
+        insert_after_sibling_id: None,
         elements: None,
         screen: Some("Cover".into()),
         generated_root_id: None,

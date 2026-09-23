@@ -11,6 +11,32 @@ use op_editor_core::host_preset_name_draft as preset_name;
 
 impl WidgetHostNative {
     pub fn apply_backspace(&mut self) -> bool {
+        // Home's overlays own Backspace above the sheet draft (the same
+        // precedence `apply_text` gives them).
+        if self.editor_state.editor_ui.home.visible {
+            if self.editor_state.editor_ui.chat_model_picker.open {
+                return self.apply_chat_model_picker_backspace();
+            }
+            if self.editor_state.editor_ui.login_modal_open {
+                return true;
+            }
+            if !self.editor_state.editor_ui.agent_settings_open {
+                if let Some(changed) = self.home_backspace() {
+                    return changed;
+                }
+            }
+            // Settings modal over Home: fall through so its own input
+            // arm in the ladder below takes the key.
+        }
+        // Save-name dialog first — same modal priority as `apply_text`.
+        if let Some(changed) =
+            op_editor_core::save_name_keyboard::backspace(&mut self.editor_state, self.now_ms)
+        {
+            if changed {
+                self.mark_dirty();
+            }
+            return true;
+        }
         if let Some(changed) = shared::prompt_center_backspace(&mut self.editor_state, self.now_ms)
         {
             if changed {
@@ -259,6 +285,17 @@ impl WidgetHostNative {
     /// Delete — pops a char from rename / text-edit when active;
     /// otherwise deletes the selected node.
     pub fn apply_delete(&mut self) -> bool {
+        if let Some(changed) = self.home_delete() {
+            return changed;
+        }
+        if let Some(changed) =
+            op_editor_core::save_name_keyboard::delete_forward(&mut self.editor_state, self.now_ms)
+        {
+            if changed {
+                self.mark_dirty();
+            }
+            return true;
+        }
         if let Some(changed) =
             shared::prompt_center_delete_forward(&mut self.editor_state, self.now_ms)
         {
@@ -302,6 +339,12 @@ impl WidgetHostNative {
         // selection behind the overlay.
         if self.editor_state.editor_ui.font_picker.open {
             return true;
+        }
+        // Settings-modal input owns Delete while focused (forward
+        // deletion at the caret) — without this arm the keystroke fell
+        // through and removed the selected node behind the modal.
+        if self.editor_state.editor_ui.agent_settings.focus.is_some() {
+            return self.apply_settings_delete_forward();
         }
         if self.editor_state.editor_ui.variables_header_rename_active() {
             let changed =

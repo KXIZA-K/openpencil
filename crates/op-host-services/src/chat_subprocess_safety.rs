@@ -57,6 +57,36 @@ pub fn antigravity_args(purpose: TurnPurpose) -> Vec<String> {
     args
 }
 
+/// Claude Code's one-shot interface: `--print` with the stream-json
+/// transcript the parser understands. A generation turn is text-only —
+/// the orchestrator parses the reply itself — so every tool is disallowed
+/// and no MCP server is loaded; the canvas-agent turn keeps the CLI's own
+/// tool policy because it is expected to drive the OpenPencil MCP server.
+pub fn claude_code_args(purpose: TurnPurpose) -> Vec<String> {
+    let mut args: Vec<String> = Vec::new();
+    if purpose == TurnPurpose::Generation {
+        // `--disallowedTools` is variadic: it swallows every following bare
+        // argument, including the positional prompt. It therefore has to
+        // come first, followed by a single-valued flag, so the prompt that
+        // `PromptMode::PositionalArg` appends last is read as the prompt.
+        args.extend([
+            "--disallowedTools".into(),
+            CLAUDE_CODE_GENERATION_DISALLOWED_TOOLS.into(),
+            "--strict-mcp-config".into(),
+        ]);
+    }
+    args.extend([
+        "--print".into(),
+        "--verbose".into(),
+        "--output-format".into(),
+        "stream-json".into(),
+    ]);
+    args
+}
+
+pub const CLAUDE_CODE_GENERATION_DISALLOWED_TOOLS: &str =
+    "Bash,Write,Edit,MultiEdit,NotebookEdit,Read,Task,Agent,WebFetch,WebSearch,Glob,Grep";
+
 pub fn grok_args(purpose: TurnPurpose) -> Vec<String> {
     let mut args = vec![
         "--no-auto-update".into(),
@@ -250,6 +280,22 @@ impl IsolatedTurn {
             home.join(".gemini").to_string_lossy()
         ));
         args.push("--app_data_dir=antigravity-cli".into());
+        // Point the CLI's own log into this turn's private directory. Its
+        // stderr can be as uninformative as a bare "Agent execution
+        // terminated due to error." while the real cause (a server-side
+        // FAILED_PRECONDITION, an auth refusal) is only ever written here —
+        // see `chat_subprocess_antigravity_log`. The file dies with the turn
+        // directory, so this adds no retained state.
+        if let Some(log) = self.log_file() {
+            args.push(format!("--log-file={}", log.to_string_lossy()));
+        }
+    }
+
+    /// Where this turn's CLI log lives, for the CLIs that write one.
+    /// `None` for every turn without a private home (i.e. everything but
+    /// Antigravity).
+    pub(crate) fn log_file(&self) -> Option<PathBuf> {
+        Some(self.home_dir()?.join("cli.log"))
     }
 }
 
@@ -274,11 +320,11 @@ pub fn append_isolated_env(env: &mut Vec<(String, String)>, turn: Option<&Isolat
         #[cfg(windows)]
         let safe_path = env
             .iter()
-            .find(|(key, _)| key == "SYSTEMROOT")
+            .find(|(key, _)| key.eq_ignore_ascii_case("SYSTEMROOT"))
             .map(|(_, root)| format!(r"{root}\System32;{root}"))
             .unwrap_or_else(|| r"C:\Windows\System32;C:\Windows".to_string());
         const PRIVATE_KEYS: &[&str] = &["PATH", "TMPDIR", "TMP", "TEMP"];
-        env.retain(|(key, _)| !PRIVATE_KEYS.contains(&key.as_str()));
+        env.retain(|(key, _)| !env_key_listed(PRIVATE_KEYS, key));
         let value = |path: &Path| path.to_string_lossy().into_owned();
         env.extend([
             ("PATH".to_string(), safe_path),
@@ -501,7 +547,8 @@ impl Drop for IsolatedTurn {
 /// The MCP shutdown token is deliberately excluded: normal MCP tools do not
 /// need it, and a child agent must not inherit authority to stop the host.
 pub fn child_env(cli: Option<CliName>) -> Option<Vec<(String, String)>> {
-    let cli @ (CliName::Antigravity | CliName::GrokBuild) = cli? else {
+    let cli @ (CliName::OpenCode | CliName::Antigravity | CliName::GrokBuild | CliName::Dsh) = cli?
+    else {
         return None;
     };
     Some(filtered_env(cli, std::env::vars()))
@@ -514,6 +561,17 @@ where
     vars.into_iter()
         .filter(|(key, _)| allowed_env(cli, key))
         .collect()
+}
+
+/// Windows environment keys are case-insensitive and the OS hands them to a
+/// process in their native casing — `Path`, `SystemRoot`, `windir`, `ComSpec`,
+/// `ProgramData`. Matching an uppercase list with `contains` therefore drops
+/// every one of them: a guarded CLI then starts with no `Path` and no
+/// `SystemRoot`, and a child that cannot reach `%SystemRoot%\System32` fails
+/// Winsock initialization with `WSAEPROVIDERFAILEDINIT` (os error 10106).
+/// `chat_spawn::scrubbed_child_env` already compares this way.
+fn env_key_listed(list: &[&str], key: &str) -> bool {
+    list.iter().any(|entry| entry.eq_ignore_ascii_case(key))
 }
 
 fn allowed_env(cli: CliName, key: &str) -> bool {
@@ -549,7 +607,7 @@ fn allowed_env(cli: CliName, key: &str) -> bool {
         "REQUESTS_CA_BUNDLE",
         "CURL_CA_BUNDLE",
     ];
-    if COMMON.contains(&key) || key.starts_with("LC_") {
+    if env_key_listed(COMMON, key) || key.starts_with("LC_") {
         return true;
     }
     match cli {
@@ -568,12 +626,35 @@ fn allowed_env(cli: CliName, key: &str) -> bool {
                 | "XDG_RUNTIME_DIR"
         ),
         CliName::GrokBuild => matches!(key, "XAI_API_KEY" | "GROK_HOME" | "GROK_API_KEY"),
+        // OpenCode reads its auth/config from HOME (or the standard XDG
+        // overrides) and supports OPENCODE_* path/config overrides. Model
+        // discovery does not need unrelated provider-key namespaces, so do
+        // not leak every API key owned by the desktop process into the probe.
+        CliName::OpenCode => {
+            key.starts_with("OPENCODE_")
+                || matches!(
+                    key,
+                    "XDG_CONFIG_HOME"
+                        | "XDG_DATA_HOME"
+                        | "XDG_CACHE_HOME"
+                        | "XDG_STATE_HOME"
+                        | "XDG_RUNTIME_DIR"
+                )
+        }
+        // `dsh` is a Node CLI: it needs the merged login-shell PATH
+        // (already in COMMON) so its `#!/usr/bin/env node` shebang
+        // resolves Node ≥ 22; the DeepSeek credential rides the
+        // standard DEEPSEEK_API_KEY name.
+        CliName::Dsh => matches!(key, "DEEPSEEK_API_KEY"),
         _ => false,
     }
 }
 
 pub fn is_guarded_cli(cli: Option<CliName>) -> bool {
-    matches!(cli, Some(CliName::Antigravity | CliName::GrokBuild))
+    matches!(
+        cli,
+        Some(CliName::Antigravity | CliName::GrokBuild | CliName::Dsh)
+    )
 }
 
 /// Whether the text is talking about *authentication* rather than
@@ -603,6 +684,9 @@ pub fn friendly_stderr_error(cli: Option<CliName>, stderr: &str) -> Option<Strin
             }
             Some(CliName::GrokBuild) => {
                 "Grok Build is not authenticated. Run `grok login` in a terminal.".into()
+            }
+            Some(CliName::Dsh) => {
+                "DeepSeek Harness is not authenticated. Run `dsh` once in a terminal.".into()
             }
             _ => return None,
         });

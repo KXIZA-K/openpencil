@@ -122,6 +122,58 @@ pub fn node_kind_str(node: &PenNode) -> &'static str {
     }
 }
 
+impl NodeKind {
+    /// True when this kind is a structural container — Frame, Group, or Rectangle.
+    pub fn is_container(self) -> bool {
+        matches!(
+            self,
+            NodeKind::Frame | NodeKind::Group | NodeKind::Rectangle
+        )
+    }
+}
+
+/// Read an authored x coordinate. A missing coordinate is not treated as zero
+/// because flex layout may supply it later.
+pub fn node_x(node: &PenNode) -> Option<f64> {
+    base(node).x
+}
+
+/// Read an authored y coordinate. A missing coordinate is not treated as zero
+/// because flex layout may supply it later.
+pub fn node_y(node: &PenNode) -> Option<f64> {
+    base(node).y
+}
+
+/// Read a numeric authored width from the node kinds that have one.
+pub fn numeric_width(node: &PenNode) -> Option<f64> {
+    numeric_sizing(width_sizing(node))
+}
+
+/// Read a numeric authored height from the node kinds that have one.
+pub fn numeric_height(node: &PenNode) -> Option<f64> {
+    numeric_sizing(height_sizing(node))
+}
+
+fn width_sizing(node: &PenNode) -> Option<&SizingBehavior> {
+    match node {
+        PenNode::Frame(n) => n.container.width.as_ref(),
+        PenNode::Group(n) => n.container.width.as_ref(),
+        PenNode::Rectangle(n) => n.container.width.as_ref(),
+        PenNode::Ellipse(n) => n.width.as_ref(),
+        PenNode::Polygon(n) => n.width.as_ref(),
+        PenNode::Path(n) => n.width.as_ref(),
+        PenNode::Image(n) => n.width.as_ref(),
+        _ => None,
+    }
+}
+
+fn numeric_sizing(sizing: Option<&SizingBehavior>) -> Option<f64> {
+    match sizing {
+        Some(SizingBehavior::Number(value)) if value.is_finite() && *value > 0.0 => Some(*value),
+        _ => None,
+    }
+}
+
 /// A node's children. In jian, only Frame / Group / Rectangle declare a
 /// `children` field at all; every other kind yields an empty slice. A
 /// Frame / Group / Rectangle whose `children` is unset also yields an empty
@@ -140,6 +192,26 @@ pub fn children(node: &PenNode) -> &[PenNode] {
 /// A node's `role` (`PenNodeBase.role`), if set.
 pub fn role(node: &PenNode) -> Option<&str> {
     base(node).role.as_deref()
+}
+
+/// True when a node's `role` marks it as mobile screen chrome — the OS status
+/// bar or any bottom-navigation form. Shared by the spacing detectors'
+/// mobile-page shape filter and the slop detectors' chrome exemption (a tab
+/// bar legitimately IS an icon+label row and must not read as slop).
+pub fn is_mobile_screen_chrome(node: &PenNode) -> bool {
+    matches!(
+        role(node)
+            .unwrap_or("")
+            .trim()
+            .to_ascii_lowercase()
+            .as_str(),
+        "status-bar"
+            | "bottom-tab-bar"
+            | "bottom-nav"
+            | "bottom-navigation-bar"
+            | "tab-bar"
+            | "tabbar"
+    )
 }
 
 /// A node's `rotation` in degrees. jian `rotation` is `Option<f64>`; a

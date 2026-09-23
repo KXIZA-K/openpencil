@@ -248,7 +248,10 @@ impl Viewer {
                 mark_and_arm(&shared);
             }
         }) as Box<dyn FnMut(web_sys::Event)>);
-        canvas.add_event_listener_with_callback("op-image-ready", on_image_ready.as_ref().unchecked_ref())?;
+        canvas.add_event_listener_with_callback(
+            "op-image-ready",
+            on_image_ready.as_ref().unchecked_ref(),
+        )?;
         IMAGE_READY.with(|slot| *slot.borrow_mut() = Some((canvas, on_image_ready)));
         start_raf_pump(shared);
         Ok(())
@@ -268,7 +271,10 @@ impl Viewer {
     pub fn detach(&self) {
         IMAGE_READY.with(|slot| {
             if let Some((canvas, listener)) = slot.borrow_mut().take() {
-                let _ = canvas.remove_event_listener_with_callback("op-image-ready", listener.as_ref().unchecked_ref());
+                let _ = canvas.remove_event_listener_with_callback(
+                    "op-image-ready",
+                    listener.as_ref().unchecked_ref(),
+                );
             }
         });
         let shared = RENDER.with(|slot| slot.borrow_mut().take());
@@ -592,8 +598,18 @@ fn paint_frame(shared: &RenderShared) -> bool {
             b.backend.resize_for_display(w as u32, h as u32, dpr);
         }
     }
+    // A scene paint records encoded-image decode work into the shared image
+    // runtime. Drain work left by the previous frame before painting, then
+    // drain again afterwards so this frame's newly requested images are
+    // decoded and can be shown by the next dirty repaint. The full web host
+    // does the same at the start of `CkInner::repaint`; the standalone SDK
+    // owns its own pump and therefore must service that queue itself.
+    b.backend.drain_pending_decodes(2);
     b.backend.begin_frame();
     crate::viewer_host::paint_scene(&mut b.backend, &scene_rc, vp, Theme::dark(), w, h);
     b.backend.end_frame();
+    if b.backend.drain_pending_decodes(2) > 0 {
+        mark_and_arm(shared);
+    }
     true
 }

@@ -18,8 +18,7 @@ mod viewer_host;
 // Compile the existing PreviewSession, not a second implementation. Its painter,
 // widget state and navigation remain shared with the native design preview.
 #[cfg(target_arch = "wasm32")]
-#[path = "../../op-host-native/src/preview/mod.rs"]
-pub mod preview;
+pub use op_preview_core as preview;
 #[cfg(all(target_arch = "wasm32", feature = "canvaskit"))]
 mod playback;
 

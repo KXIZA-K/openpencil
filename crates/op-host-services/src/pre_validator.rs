@@ -15,6 +15,7 @@
 //! | `Remove`               | `DeleteNode { node_id, page_id: None }`                 |
 //! | `SetHeightFitContent`  | `SetNodeLayoutProp { property:"height", Keyword("fit_content") }` |
 //! | `SetRotation(deg)`     | `SetNodeRotation { degrees }`                           |
+//! | `SetY(y)`              | `SetNodeLayoutProp { property:"y", Number }`           |
 //! | `SetCornerRadius(r)`   | `SetNodeCornerRadius { radius }`                        |
 //! | `SetFontSize(px)`      | `SetNodeFontSize { font_size }`                         |
 //! | `ClearEffects`         | N × `RemoveNodeEffect { index }` (highest→lowest)       |
@@ -185,6 +186,14 @@ fn planned_fix_to_commands(fix: &PlannedFix, state: &EditorState) -> Vec<EditorC
             });
         }
 
+        PlannedAction::SetY(y) => {
+            cmds.push(EditorCommand::SetNodeLayoutProp {
+                node_id: node_id.clone(),
+                property: "y".to_string(),
+                value: op_editor_core::LayoutPropValue::Number(*y),
+            });
+        }
+
         PlannedAction::SetCornerRadius(r) => {
             cmds.push(EditorCommand::SetNodeCornerRadius {
                 node_id: node_id.clone(),
@@ -329,6 +338,9 @@ mod tests {
     use super::*;
     use op_editor_core::EditorState;
     use op_orchestrator::PreValidator;
+
+    #[path = "pre_validator_bleed_tests.rs"]
+    mod bleed_tests;
 
     /// Minimal `DocSink` for tests — wraps an `EditorState`, applies
     /// commands through `EditorState::apply`. Modeled on
@@ -486,7 +498,7 @@ mod tests {
         );
     }
 
-    /// invisible-container-with-var: exercises `$color-border` design-token
+    /// invisible-container-with-var: exercises `$--border` design-token
     /// reference path through `SetNodeStrokeHex`. Regression guard caught
     /// by stop-time review — `cmd_set_node_stroke_hex` previously rejected
     /// `$`-prefixed strings via `parse_hex_rgb`, dropping the color silently

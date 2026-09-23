@@ -172,6 +172,7 @@ fn close_chat_tab(state: &mut EditorState, idx: usize) {
         None => {}
     }
     state.chat.close_tab(idx);
+    state.rebuild_chat_models();
 }
 
 /// Launch one streaming turn: abort any in-flight one (a send fired mid-turn
@@ -297,7 +298,9 @@ fn start_pump<C: RepaintContext + 'static>(
             changed = true;
             if event_terminal {
                 terminal_payload = Some(crate::platform_chat_turn::terminal_payload(
-                    target, &evt, &prepared.client_run_id,
+                    target,
+                    &evt,
+                    &prepared.client_run_id,
                 ));
                 terminal = true;
                 // The first terminal result wins. A queued late delta must not
@@ -418,12 +421,13 @@ pub(crate) fn prepare_turn(state: &mut EditorState) -> Option<PreparedTurn> {
         return None;
     }
     let user_text = state.chat.pending_send.take()?;
-    let (model, credential) = crate::web_ai_credentials::selected_target(state);
+    let (model, credential, builtin_provider_id) =
+        crate::web_ai_credentials::selected_target(state);
     let provider = selected.as_ref().and_then(|entry| {
         // Legacy string catalogs use an unqualified model id and must stay on
         // the daemon's ambiguity-safe built-in resolver. Structured built-ins
         // and request-scoped browser credentials can carry exact identity.
-        (model.starts_with("builtin:") || credential.is_some()).then(|| entry.provider.wire_id())
+        (builtin_provider_id.is_some() || credential.is_some()).then(|| entry.provider.wire_id())
     });
     let thinking = state.chat.thinking_mode.as_str();
     let effort = state.chat.effort_level.as_str();
@@ -464,6 +468,7 @@ pub(crate) fn prepare_turn(state: &mut EditorState) -> Option<PreparedTurn> {
         .map(|page| page.id.as_str());
     let body = serde_json::json!({
         "provider": provider,
+        "builtinProviderId": builtin_provider_id,
         "model": model,
         "credential": credential,
         // Standard turns route through the daemon classifier + design
@@ -522,6 +527,10 @@ pub(crate) fn apply_event_to_chat(chat: &mut ChatState, evt: &AiEvent) -> bool {
 #[cfg(test)]
 #[path = "web_chat_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "web_chat_upstream_tests.rs"]
+mod upstream_tests;
 
 #[cfg(test)]
 #[path = "web_chat_credential_tests.rs"]

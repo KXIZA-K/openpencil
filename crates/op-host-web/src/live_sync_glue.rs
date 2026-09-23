@@ -369,14 +369,20 @@ fn apply_document_response<C: RepaintContext + 'static>(
             s.client
                 .sync_with_editor_meta(
                     body,
-                    |doc, _version, active_page_index, preserve_authored_geometry| {
+                    |doc,
+                     _version,
+                     active_page_index,
+                     preserve_authored_geometry,
+                     wire_scenario| {
                         let (viewport_w, viewport_h) = inner_ref.viewport_size();
                         let host = inner_ref.host_mut();
                         host.replace_document_from_sync(doc, undoable);
-                        // The live-sync wire carries no scenario field, so
-                        // keep whatever the open document already had rather
-                        // than letting every sync erase its tag.
-                        let scenario = host.editor_state().editor_ui.scenario;
+                        // A daemon new enough to send `scenario` is the
+                        // authority (the browser boots with `None`, and a deck
+                        // must present as a deck). An older daemon omits the
+                        // field — keep whatever the open document already had
+                        // rather than letting every sync erase its tag.
+                        let scenario = wire_scenario.or(host.editor_state().editor_ui.scenario);
                         let pinned_style_guide =
                             host.editor_state().editor_ui.pinned_style_guide.clone();
                         op_pen_loader::apply_editor_meta(
@@ -598,7 +604,9 @@ fn push_document_if_changed<C: RepaintContext + 'static>(
         // the pull gate on rejected bytes).
         let conflict_version = WebSyncClient::parse_push_conflict(&resp);
         if let Some(server_v) = conflict_version {
-            sync_done.borrow_mut().note_conflict_response(&resp, server_v);
+            sync_done
+                .borrow_mut()
+                .note_conflict_response(&resp, server_v);
             return;
         }
         let accepted_version = WebSyncClient::parse_push_response(&resp);
@@ -681,7 +689,10 @@ thread_local! {
 
 #[path = "live_sync_controller.rs"]
 mod live_sync_controller;
-pub(crate) use live_sync_controller::{acknowledge_daemon_save, applied_document_authority, fence_daemon_save, note_daemon_save_conflict, SharedSync, SyncController};
+pub(crate) use live_sync_controller::{
+    acknowledge_daemon_save, applied_document_authority, fence_daemon_save,
+    note_daemon_save_conflict, SharedSync, SyncController,
+};
 // Spine-local: the two identity pairs every gating decision here is keyed on.
 use live_sync_controller::{current_oversize_identity, current_pair};
 

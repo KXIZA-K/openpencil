@@ -14,6 +14,7 @@ use op_editor_core::host_drag_state::{AnchorDragTarget, MarqueeDragState};
 use op_editor_core::EditorState;
 
 use crate::layout_scene::LayoutScene;
+use crate::widgets::slides_panel_flow;
 use crate::widgets::{STATUS_BAR_HEIGHT, STATUS_BAR_WIDTH, TOOLBAR_WIDTH, TOP_BAR_HEIGHT};
 use crate::{Point2D, Rect};
 
@@ -25,6 +26,12 @@ pub const AICHAT_INSET_LEFT: f32 = 12.0;
 pub const TOOLBAR_INSET_X: f32 = 12.0;
 pub const TOOLBAR_INSET_Y: f32 = 12.0;
 pub const STATUS_INSET: f32 = 16.0;
+/// Width of the composer-only card docked at the canvas floor. Wide
+/// enough for a sentence and the control row, narrow enough that it
+/// never reads as a panel covering the design.
+pub const COMPOSER_CARD_W: f32 = 420.0;
+/// Below this the canvas cannot hold the card at all.
+const AI_CHAT_MINIMIZED_MIN_WIDTH_REF: f32 = 240.0;
 
 /// Placement of the minimized AI chat bar inside the canvas region
 /// `(cx0, cy0, cw, ch)`.
@@ -76,35 +83,274 @@ pub fn minimized_chat_bar_rect(
     })
 }
 
+/// Phone app bar height. The shell translates the usable viewport below
+/// the safe area before the shared editor chrome is painted.
+pub const MOBILE_APP_BAR_HEIGHT: f32 = 52.0;
+/// Tablet app bar height.
+pub const TABLET_APP_BAR_HEIGHT: f32 = 56.0;
+/// Phone bottom tool dock height.
+pub const MOBILE_DOCK_HEIGHT: f32 = 60.0;
+/// Floating tablet tool dock height.
+pub const TABLET_DOCK_HEIGHT: f32 = 64.0;
+pub const TABLET_DOCK_BOTTOM_INSET: f32 = 12.0;
+pub const TABLET_LAYER_WIDTH: f32 = 256.0;
+pub const TABLET_PROPERTY_WIDTH: f32 = 360.0;
+pub const TABLET_PANEL_INSET: f32 = 12.0;
+
+/// The compact app bar (sheet layouts).
+pub fn mobile_app_bar_rect(viewport_w: f32) -> Rect {
+    Rect {
+        origin: Point2D::new(0.0, 0.0),
+        size: Point2D::new(viewport_w, MOBILE_APP_BAR_HEIGHT),
+    }
+}
+
+/// App bar used by native touch chrome. Medium/Expanded get a slightly
+/// taller tablet bar; Compact keeps the tighter phone metric.
+pub fn touch_app_bar_rect(state: &EditorState, viewport_w: f32) -> Rect {
+    let height = touch_app_bar_height(state);
+    Rect {
+        origin: Point2D::new(0.0, 0.0),
+        size: Point2D::new(viewport_w, height),
+    }
+}
+
+pub fn touch_app_bar_height(state: &EditorState) -> f32 {
+    if state.editor_ui.compact_layout() {
+        MOBILE_APP_BAR_HEIGHT
+    } else {
+        TABLET_APP_BAR_HEIGHT
+    }
+}
+
+/// The bottom tool dock (sheet layouts).
+pub fn mobile_dock_rect(viewport_w: f32, viewport_h: f32) -> Rect {
+    Rect {
+        origin: Point2D::new(0.0, viewport_h - MOBILE_DOCK_HEIGHT),
+        size: Point2D::new(viewport_w, MOBILE_DOCK_HEIGHT),
+    }
+}
+
+/// Bottom tools are edge-to-edge only on phones. Tablet windows use a
+/// centered floating dock, leaving the canvas and side panels visually
+/// continuous instead of adding a second full-width bar.
+pub fn touch_dock_rect(state: &EditorState, viewport_w: f32, viewport_h: f32) -> Rect {
+    if state.editor_ui.compact_layout() {
+        return mobile_dock_rect(viewport_w, viewport_h);
+    }
+    let preferred_width = if state.editor_ui.medium_layout() {
+        360.0_f32
+    } else {
+        400.0_f32
+    };
+    let (canvas_x, _, canvas_w, _) = canvas_region(state, viewport_w, viewport_h);
+    let width = preferred_width.min((canvas_w - TABLET_PANEL_INSET * 2.0).max(0.0));
+    Rect {
+        origin: Point2D::new(
+            canvas_x + (canvas_w - width) / 2.0,
+            (viewport_h - TABLET_DOCK_HEIGHT - TABLET_DOCK_BOTTOM_INSET).max(0.0),
+        ),
+        size: Point2D::new(width, TABLET_DOCK_HEIGHT.min(viewport_h.max(0.0))),
+    }
+}
+
+pub fn touch_dock_bottom_gap(state: &EditorState) -> f32 {
+    if state.editor_ui.compact_layout() {
+        MOBILE_DOCK_HEIGHT
+    } else {
+        TABLET_DOCK_HEIGHT + TABLET_DOCK_BOTTOM_INSET * 2.0
+    }
+}
+
+pub fn tablet_layer_width(state: &EditorState) -> f32 {
+    state
+        .editor_ui
+        .layer_panel_width
+        .clamp(TABLET_LAYER_WIDTH, 280.0)
+}
+
+pub fn tablet_property_width(state: &EditorState) -> f32 {
+    state
+        .editor_ui
+        .property_panel_width
+        .clamp(TABLET_PROPERTY_WIDTH, 384.0)
+}
+
+/// Whether the generation workspace currently owns the layout: its
+/// docked chat column IS the left panel (the rail's own tab row is not
+/// shown while the workspace header/toolbar replace the TopBar), and
+/// the dock's open/width read the shared `sidebar_open` /
+/// `layer_panel_width`. Touch chrome never docks — the workspace is a
+/// desktop-mode surface.
+pub fn workspace_docked(state: &EditorState) -> bool {
+    state.editor_ui.workspace.visible && !state.editor_ui.touch_chrome()
+}
+
+/// Where a column-pinned chat panel sits, when it is pinned at all.
+///
+/// ONE answer for the two columns that can own the chat — the
+/// workspace's dock and the professional editor's Chat tab — resolved
+/// here so `ai_chat_rect` on either host is a routing decision, never
+/// a second copy of the geometry. That second copy is exactly how the
+/// two left columns drifted apart before they were folded into one
+/// panel.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum PinnedChat {
+    /// Pinned into the column at this rect.
+    At(Rect),
+    /// Pinned into a column that is currently closed — no chat at all.
+    /// Distinct from "not pinned" so a pinned chat never falls back to
+    /// its floating placement just because the panel was shut.
+    Closed,
+    /// The rail is showing another tab: only the composer appears, as a
+    /// card docked at the canvas floor. Its height is the caller's to
+    /// resolve (it depends on draft length, chips and focus), so this
+    /// carries the card's left / bottom / width and the caller finishes
+    /// it.
+    Composer { x: f32, bottom: f32, width: f32 },
+}
+
+/// The pinned chat's placement, or `None` when the chat is not
+/// column-pinned (touch chrome hosts it as a sheet; anything else
+/// keeps its ordinary floating geometry).
+///
+/// The workspace branch ignores the rail's tab: while the workspace is
+/// up the dock IS the chat's home. The professional branch asks the
+/// flow whether the Chat tab owns the rail, and the rect is the rail's
+/// body below the tab row — the same subtraction the Layers tree's
+/// rows start from.
+///
+/// When ANOTHER tab owns the rail the chat is simply not pinned, and
+/// keeps its ordinary floating placement: the Chat tab is a new HOME
+/// for the conversation, not a retirement of the floating panel, so
+/// exactly one of the two shows at a time and nothing a user relies on
+/// (drag, minimize, anchor) disappears with this change. Once the Chat
+/// tab IS the home, though, shutting the rail or starting a
+/// presentation means no chat at all — never a panel drifting back
+/// over the canvas the user just cleared.
+pub fn pinned_chat(state: &EditorState, viewport_w: f32, viewport_h: f32) -> Option<PinnedChat> {
+    let ui = &state.editor_ui;
+    if ui.touch_chrome() {
+        return None;
+    }
+    if ui.workspace.visible {
+        return if ui.sidebar_open {
+            Some(PinnedChat::At(Rect::xywh(
+                0.0,
+                op_editor_core::WORKSPACE_HEADER_H,
+                ui.layer_panel_width,
+                (viewport_h - op_editor_core::WORKSPACE_HEADER_H).max(0.0),
+            )))
+        } else {
+            Some(PinnedChat::Closed)
+        };
+    }
+    if ui.chat_composer_only() {
+        let (cx0, cy0, cw, ch) = canvas_region(state, viewport_w, viewport_h);
+        let _ = cy0;
+        let width = COMPOSER_CARD_W.min((cw - AICHAT_INSET_LEFT * 2.0).max(0.0));
+        if width < AI_CHAT_MINIMIZED_MIN_WIDTH_REF {
+            return Some(PinnedChat::Closed);
+        }
+        return Some(PinnedChat::Composer {
+            x: cx0 + AICHAT_INSET_LEFT,
+            bottom: cy0 + ch - AICHAT_INSET_BOTTOM,
+            width,
+        });
+    }
+    if !slides_panel_flow::chat_tab_active(state) {
+        return None;
+    }
+    if ui.preview.mode || !ui.sidebar_open {
+        return Some(PinnedChat::Closed);
+    }
+    let panel = layer_panel_rect(state, viewport_h);
+    Some(PinnedChat::At(slides_panel_flow::layers_content_rect(
+        state, panel,
+    )))
+}
+
 /// Top-left of the canvas region in viewport-logical px. Collapses to
 /// `x = 0` when the sidebar is closed — the whole point of the
-/// invariant.
+/// invariant. In mobile layout the rails overlay the canvas, so the
+/// canvas always spans the full viewport width, and the top edge sits
+/// below the compact app bar (never the hidden desktop bar).
+///
+/// While the workspace is docked, the canvas starts at the dock edge —
+/// which is the LEFT PANEL's edge (`layer_panel_width`, 0 when the
+/// panel is closed) — below the workspace header + toolbar.
 pub fn canvas_origin(state: &EditorState) -> (f32, f32) {
-    let cx0 = if state.editor_ui.sidebar_open {
-        state.editor_ui.layer_panel_width
+    if workspace_docked(state) {
+        let dock_x = if state.editor_ui.sidebar_open {
+            state.editor_ui.layer_panel_width
+        } else {
+            0.0
+        };
+        return (
+            dock_x,
+            op_editor_core::WORKSPACE_HEADER_H + op_editor_core::WORKSPACE_TOOLBAR_H,
+        );
+    }
+    let cx0 = if state.editor_ui.sidebar_open
+        && (!state.editor_ui.touch_chrome() || state.editor_ui.expanded_touch_layout())
+    {
+        if state.editor_ui.expanded_touch_layout() {
+            tablet_layer_width(state)
+        } else {
+            state.editor_ui.layer_panel_width
+        }
     } else {
         0.0
     };
-    (cx0, TOP_BAR_HEIGHT)
+    let top = if state.editor_ui.touch_chrome() {
+        touch_app_bar_height(state)
+    } else {
+        TOP_BAR_HEIGHT
+    };
+    (cx0, top)
 }
 
 /// Canvas region `(x, y, w, h)` in viewport-logical px. The right rail
 /// only reserves width while it is actually visible, and both extents
 /// clamp at zero so a viewport narrower than the rails can't produce a
-/// negative-size rect.
+/// negative-size rect. While the workspace is docked there is no right
+/// rail, and the presentation family's deck strip reserves the bottom.
 pub fn canvas_region(
     state: &EditorState,
     viewport_w: f32,
     viewport_h: f32,
 ) -> (f32, f32, f32, f32) {
     let (canvas_left, canvas_top) = canvas_origin(state);
-    let canvas_right = if state.right_rail_visible() {
-        viewport_w - state.editor_ui.property_panel_width
+    if workspace_docked(state) {
+        let workspace = &state.editor_ui.workspace;
+        let strip_h = if crate::widgets::workspace_surface::family_has_strip(workspace.family) {
+            op_editor_core::WORKSPACE_DECK_STRIP_H
+        } else {
+            0.0
+        };
+        let canvas_w = (viewport_w - canvas_left).max(0.0);
+        let canvas_h = (viewport_h - canvas_top - strip_h).max(0.0);
+        return (canvas_left, canvas_top, canvas_w, canvas_h);
+    }
+    let reserve_property = state.right_rail_visible()
+        && (!state.editor_ui.touch_chrome() || state.editor_ui.expanded_touch_layout());
+    let canvas_right = if reserve_property {
+        viewport_w
+            - if state.editor_ui.expanded_touch_layout() {
+                tablet_property_width(state)
+            } else {
+                state.editor_ui.property_panel_width
+            }
     } else {
         viewport_w
     };
     let canvas_w = (canvas_right - canvas_left).max(0.0);
-    let canvas_h = (viewport_h - canvas_top).max(0.0);
+    let bottom_gap = if state.editor_ui.touch_chrome() {
+        touch_dock_bottom_gap(state)
+    } else {
+        0.0
+    };
+    let canvas_h = (viewport_h - canvas_top - bottom_gap).max(0.0);
     (canvas_left, canvas_top, canvas_w, canvas_h)
 }
 
@@ -121,6 +367,21 @@ pub fn canvas_rect(state: &EditorState, viewport_w: f32, viewport_h: f32) -> Rec
 /// Left rail. Callers gate on `editor_ui.sidebar_open` themselves — this
 /// returns the rect the panel WOULD occupy.
 pub fn layer_panel_rect(state: &EditorState, viewport_h: f32) -> Rect {
+    if state.editor_ui.medium_layout() {
+        let top = touch_app_bar_height(state) + 8.0;
+        let height = (viewport_h - top - TABLET_PANEL_INSET).max(0.0);
+        return Rect {
+            origin: Point2D::new(TABLET_PANEL_INSET, top),
+            size: Point2D::new(tablet_layer_width(state), height),
+        };
+    }
+    if state.editor_ui.expanded_touch_layout() {
+        let top = touch_app_bar_height(state);
+        return Rect {
+            origin: Point2D::new(0.0, top),
+            size: Point2D::new(tablet_layer_width(state), (viewport_h - top).max(0.0)),
+        };
+    }
     Rect {
         origin: Point2D::new(0.0, TOP_BAR_HEIGHT),
         size: Point2D::new(
@@ -131,12 +392,64 @@ pub fn layer_panel_rect(state: &EditorState, viewport_h: f32) -> Rect {
 }
 
 /// Right rail. Callers gate on the panel actually resolving for the
-/// current selection — this returns the rect it WOULD occupy.
+/// current selection — this returns the rect it WOULD occupy. In mobile
+/// layout the panel becomes a bottom sheet: full-width, ~45% of the
+/// viewport height, anchored to the bottom edge.
 pub fn property_panel_rect(state: &EditorState, viewport_w: f32, viewport_h: f32) -> Rect {
     let width = state.editor_ui.property_panel_width;
+    if state.editor_ui.compact_layout() {
+        let max_h = (viewport_h - touch_app_bar_height(state)).max(0.0);
+        let min_h = 280.0_f32.min(max_h);
+        let sheet_h = (viewport_h * 0.58).clamp(min_h, max_h);
+        Rect {
+            origin: Point2D::new(0.0, viewport_h - sheet_h),
+            size: Point2D::new(viewport_w, sheet_h),
+        }
+    } else if state.editor_ui.medium_layout() {
+        let top = touch_app_bar_height(state) + 8.0;
+        let panel_w = tablet_property_width(state).min((viewport_w - 24.0).max(0.0));
+        Rect {
+            origin: Point2D::new(viewport_w - panel_w - TABLET_PANEL_INSET, top),
+            size: Point2D::new(panel_w, (viewport_h - top - TABLET_PANEL_INSET).max(0.0)),
+        }
+    } else if state.editor_ui.expanded_touch_layout() {
+        let top = touch_app_bar_height(state);
+        let panel_w = tablet_property_width(state);
+        Rect {
+            origin: Point2D::new(viewport_w - panel_w, top),
+            size: Point2D::new(panel_w, (viewport_h - top).max(0.0)),
+        }
+    } else {
+        Rect {
+            origin: Point2D::new(viewport_w - width, TOP_BAR_HEIGHT),
+            size: Point2D::new(width, (viewport_h - TOP_BAR_HEIGHT).max(0.0)),
+        }
+    }
+}
+
+/// The mobile bottom-sheet drag handle (a short rounded bar centered on
+/// the sheet's top edge).
+pub fn mobile_sheet_handle_rect(sheet: Rect) -> Rect {
+    const HANDLE_W: f32 = 36.0;
+    const HANDLE_H: f32 = 4.0;
     Rect {
-        origin: Point2D::new(viewport_w - width, TOP_BAR_HEIGHT),
-        size: Point2D::new(width, (viewport_h - TOP_BAR_HEIGHT).max(0.0)),
+        origin: Point2D::new(
+            sheet.origin.x + (sheet.size.x - HANDLE_W) / 2.0,
+            sheet.origin.y + 8.0,
+        ),
+        size: Point2D::new(HANDLE_W, HANDLE_H),
+    }
+}
+
+/// The mobile bottom-sheet close button (top-right corner of the sheet).
+pub fn mobile_sheet_close_rect(sheet: Rect) -> Rect {
+    const CLOSE: f32 = 28.0;
+    Rect {
+        origin: Point2D::new(
+            sheet.origin.x + sheet.size.x - CLOSE - 10.0,
+            sheet.origin.y + 10.0,
+        ),
+        size: Point2D::new(CLOSE, CLOSE),
     }
 }
 

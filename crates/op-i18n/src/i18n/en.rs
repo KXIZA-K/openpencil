@@ -351,6 +351,7 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "ai.quickAction.foodAppDesc" => "App homepage design",
         "ai.quickAction.bottomNavDesc" => "5-tab navigation bar",
         "ai.quickAction.colorPaletteDesc" => "Color palette recommendation",
+        "fileMenu.home" => "Drafting table",
         "fileMenu.newFile" => "New file",
         "fileMenu.openFile" => "Open file...",
         "fileMenu.save" => "Save",
@@ -706,7 +707,7 @@ pub fn lookup(key: &str) -> Option<&'static str> {
             "Done — all {{count}} planned sections are in place and the final layout has been checked."
         }
         "ai.designProgress.completion.issues" => {
-            "Finished with issues — {{completed}} completed and {{failed}} need attention."
+            "Finished with issues — {{completed}} completed and {{failed}} failed. The failed sections below show the exact reasons."
         }
         "figma.importNotWired" => ".fig file import not yet wired",
         "dialog.loadErrorInvalidUtf8" => "The file is not valid UTF-8 text: {{detail}}",

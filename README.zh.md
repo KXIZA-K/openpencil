@@ -20,6 +20,10 @@
   <a href="https://discord.gg/h9Fmyy6pVh"><img src="https://img.shields.io/badge/Discord-Join%20chat-5865F2?logo=discord&logoColor=white" alt="Discord" /></a>
 </p>
 
+<p align="center">
+  <a href="https://trendshift.io/repositories/24088?utm_source=repository-badge&amp;utm_medium=badge&amp;utm_campaign=badge-repository-24088" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/repositories/24088" alt="ZSeven-W%2Fopenpencil | Trendshift" width="250" height="55" /></a>
+</p>
+
 <br />
 
 <p align="center">
@@ -29,18 +33,18 @@
 </p>
 <p align="center"><sub>点击图片观看演示视频</sub></p>
 
-<br />
-
-<p align="center">
-  <a href="https://github.com/InnerAura/hyperweave" title="Star history rendered with HyperWeave">
-    <img src="./screenshot/openpencil-star-history.svg" alt="OpenPencil star history rendered by HyperWeave" width="100%" />
-  </a>
-</p>
-<p align="center">
-  <sub>The trend above is rendered with <a href="https://github.com/InnerAura/hyperweave"><b>HyperWeave</b></a> — an experimental SVG artifact layer for agents. &nbsp;<a href="https://github.com/InnerAura/hyperweave"><b>Explore&nbsp;→</b></a></sub>
-</p>
-
 ## 为什么选择 OpenPencil
+
+<a href="https://fluxionai.world/register?source=github&amp;campaign=github-openpencil&amp;promo=OPENPENCIL" title="Fluxion AI">
+  <img src="./screenshot/fluxion-ai-sponsor-banner.png" alt="Fluxion AI — reliable, cost-efficient access to GPT, Claude, and other leading AI models through one unified API" width="100%" />
+</a>
+
+### [OpenPencil × Fluxion AI｜一个统一 API 接入 GPT、Claude 等主流模型](https://fluxionai.world/register?source=github&campaign=github-openpencil&promo=OPENPENCIL)
+
+感谢 [Fluxion AI](https://fluxionai.world/register?source=github&campaign=github-openpencil&promo=OPENPENCIL) 赞助 OpenPencil！
+
+- ⚡ **稳定、低成本接入：** 通过一个统一 API 稳定调用 GPT、Claude 等主流 AI 模型，价格最高可比官方 API 节省 70%。
+- 🎁 **OpenPencil 用户专属福利：** 通过 [此链接注册](https://fluxionai.world/register?source=github&campaign=github-openpencil&promo=OPENPENCIL) 即可获得 **1 美元 API 额度**。
 
 <table>
 <tr>
@@ -110,6 +114,8 @@ Web 应用 + macOS、Windows 和 Linux 原生桌面端 — 单一 Rust 核心，
 </table>
 
 ## 安装
+
+**Windows 源码编译：** 参见 [BUILD_WINDOWS.zh.md](./docs/build_windows/BUILD_WINDOWS.zh.md)
 
 **macOS（Homebrew）：**
 
@@ -389,6 +395,7 @@ OpenPencil 是 **[ZSeven-W](https://github.com/ZSeven-W)** 出品的一系列纯
 
 | 项目 | 简介 |
 | ---- | ---- |
+| **[DSH OpenPencil](https://github.com/ZSeven-W/dsh-openpencil)** | OpenPencil 的 DeepSeek Harness 插件 — 在对话中提供精确的多画板 `.op` 预览、可交互画布，以及带智能体原生设计工具的托管编辑器。 |
 | **[Zode](https://github.com/ZSeven-W/zode)** | 面向终端的开源、AI 原生编程助手 — 一个快速的 Rust TUI（`ratatui`），可读取你的代码、运行命令、搜索文件并管理 git。通过 MCP 驱动 OpenPencil。 |
 | **[agent-rs](https://github.com/ZSeven-W/agent-rs)** | 用于交付 LLM 智能体的纯 Rust 异步运行时 — 多提供商、端到端工具能力、结构化权限、真正的 MCP、零 `unsafe`。为 OpenPencil 内置的智能体运行时（`vendor/agent`）和 Zode 提供动力。 |
 | **[jian](https://github.com/ZSeven-W/jian)** | 纯 Rust、GPU-Skia UI 框架 — 组件、布局、事件和热重载集于一栈。将声明式的 `.op` 文档变为原生、AI 可控的应用，无需 JS 运行时、无 DOM、无 Electron。OpenPencil 的 UI 框架（`vendor/jian`）。 |

@@ -106,7 +106,7 @@ fn canvaskit_mount_applies_host_locale_after_browser_settings() {
         .find("let credential_load = crate::web_settings::load_into")
         .expect("browser settings load");
     let locale = source[load..]
-        .find("Locale::from_query(&search)")
+        .find("host_locale_from_query(&search)")
         .map(|idx| load + idx)
         .expect("host locale override");
     let fingerprint = source[locale..]
@@ -115,6 +115,35 @@ fn canvaskit_mount_applies_host_locale_after_browser_settings() {
         .expect("settings fingerprint");
 
     assert!(load < locale && locale < fingerprint);
+}
+
+#[test]
+fn canvaskit_mount_overlaps_the_stored_locale_with_backend_init_and_awaits_before_paint() {
+    let source = canvaskit_source();
+    let host = source.find("WidgetHost::new()").expect("host construction");
+    let load = source[host..]
+        .find("web_settings::load_into")
+        .map(|idx| host + idx)
+        .expect("stored locale load");
+    let prefetch = source[load..]
+        .find("prefetch_initial_catalog")
+        .map(|idx| load + idx)
+        .expect("locale prefetch");
+    let backend = source[prefetch..]
+        .find("init_backend(&canvas_id")
+        .map(|idx| prefetch + idx)
+        .expect("CanvasKit init");
+    let await_catalog = source[backend..]
+        .find("catalog.await")
+        .map(|idx| backend + idx)
+        .expect("catalog await");
+    let first_repaint = source[await_catalog..]
+        .find("repaint();")
+        .map(|idx| await_catalog + idx)
+        .expect("first repaint");
+
+    assert!(load < prefetch && prefetch < backend);
+    assert!(backend < await_catalog && await_catalog < first_repaint);
 }
 
 #[test]
@@ -221,6 +250,11 @@ fn bridge_handle_init_recovers_ready_without_emitting_it_directly() {
     assert!(
         handle_init.contains("LATE_INIT_HOOK") && handle_init.contains(".take()"),
         "handle_init must take() the one-shot late-init hook so a post-timeout init still reaches ready"
+    );
+    assert!(
+        handle_init.contains("token_changed")
+            && handle_init.contains("web_auth_sync::refresh_status(inner)"),
+        "a newly installed managed token must immediately refresh auth status so the account button does not wait for the 30 s health tick"
     );
 }
 

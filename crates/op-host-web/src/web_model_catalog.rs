@@ -13,6 +13,7 @@ use wasm_bindgen::JsCast;
 use crate::repaint_ctx::RepaintContext;
 
 const DAEMON_BUILTIN_PREFIX: &str = "daemon-builtin:";
+const DAEMON_BROWSER_BUILTIN_PREFIX: &str = "web-credential:builtin:";
 
 /// Fetch the daemon catalog once and populate the browser model picker.
 pub(crate) fn fetch_models<C: RepaintContext + 'static>(inner: &Rc<RefCell<C>>) {
@@ -73,7 +74,18 @@ fn parse_model_entry(value: &serde_json::Value) -> Option<ModelEntry> {
         .and_then(serde_json::Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())?;
-    parse_builtin_model_key(value)?;
+    let explicit_builtin_id = object
+        .get("builtinProviderId")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|id| !id.is_empty());
+    let builtin_id = if let Some(id) = explicit_builtin_id {
+        let structured = value.strip_prefix("builtin:")?;
+        let model = structured.strip_prefix(id)?.strip_prefix(':')?;
+        (!model.trim().is_empty()).then_some(id)?
+    } else {
+        parse_builtin_model_key(value)?.0
+    };
     let display_name = object
         .get("displayName")
         .and_then(serde_json::Value::as_str)
@@ -86,48 +98,15 @@ fn parse_model_entry(value: &serde_json::Value) -> Option<ModelEntry> {
         .map(str::trim)
         .filter(|label| !label.is_empty())
         .unwrap_or("Server API Key");
-    let provider_group = object
-        .get("providerGroup")
-        .and_then(serde_json::Value::as_str)
-        .map(str::trim)
-        .filter(|group| !group.is_empty())
-        .map(normalize_provider_group)
-        .filter(|group| !group.is_empty())
-        .unwrap_or_else(|| normalize_provider_group(provider_name));
-    // The daemon value already carries the exact credential/model identity.
-    // Keep the picker identity at provider-section granularity so every
-    // managed model painted under the same heading remains one group even in
-    // hosts that still compare built-in ids when laying out model rows.
+    // Transport identity must remain exact. The picker groups managed rows
+    // by provider display label without conflating credentials or accounts.
     Some(ModelEntry::builtin_with_display_name(
         provider,
-        format!("{DAEMON_BUILTIN_PREFIX}group:{provider_group}"),
+        format!("{DAEMON_BUILTIN_PREFIX}{builtin_id}"),
         provider_name,
         value,
         display_name,
     ))
-}
-
-fn normalize_provider_group(value: &str) -> String {
-    value
-        .trim()
-        .chars()
-        .filter_map(|ch| {
-            if ch.is_ascii_alphanumeric() {
-                Some(ch.to_ascii_lowercase())
-            } else if ch.is_whitespace() || matches!(ch, '-' | '_' | '·') {
-                Some('-')
-            } else {
-                None
-            }
-        })
-        .fold(String::new(), |mut out, ch| {
-            if ch != '-' || !out.ends_with('-') {
-                out.push(ch);
-            }
-            out
-        })
-        .trim_matches('-')
-        .to_owned()
 }
 
 fn parse_builtin_model_key(value: &str) -> Option<(&str, &str)> {
@@ -138,6 +117,22 @@ fn parse_builtin_model_key(value: &str) -> Option<(&str, &str)> {
     let id = parts.next()?.trim();
     let model = parts.next()?.trim();
     (!id.is_empty() && !model.is_empty()).then_some((id, model))
+}
+
+fn daemon_builtin_id(entry: &ModelEntry) -> Option<&str> {
+    entry
+        .builtin_provider_id
+        .as_deref()?
+        .strip_prefix(DAEMON_BUILTIN_PREFIX)
+}
+
+fn daemon_model_id(entry: &ModelEntry) -> Option<&str> {
+    let builtin_id = daemon_builtin_id(entry)?;
+    let structured = entry.value.trim().strip_prefix("builtin:")?;
+    structured
+        .strip_prefix(builtin_id)?
+        .strip_prefix(':')
+        .filter(|model| !model.trim().is_empty())
 }
 
 /// Heuristic provider tag for a legacy daemon built-in model id.
@@ -230,34 +225,53 @@ pub(crate) fn reconcile_models(state: &mut EditorState) {
         .collect::<Vec<_>>();
     let local_model_ids = local_agents
         .iter()
-        .map(|agent| agent.model.trim())
+        .flat_map(|agent| agent.models.iter().map(|model| model.trim()))
         .collect::<std::collections::HashSet<_>>();
     let mut available_models = state
         .chat
         .discovered_models
         .iter()
         .filter(|entry| {
-            entry
-                .builtin_provider_id
-                .as_deref()
-                .is_some_and(|id| id.starts_with(DAEMON_BUILTIN_PREFIX))
-                && !local_model_ids.contains(
-                    parse_builtin_model_key(&entry.value)
-                        .map(|(_, model)| model)
-                        .unwrap_or_else(|| entry.value.trim()),
-                )
+            let Some(daemon_id) = daemon_builtin_id(entry) else {
+                return false;
+            };
+            // Browser-owned daemon rows are persistence mirrors of the local
+            // credential store. The local row is authoritative; keeping a
+            // cached mirror would resurrect disabled/deleted models until a
+            // later catalog fetch.
+            if daemon_id.starts_with(DAEMON_BROWSER_BUILTIN_PREFIX) {
+                return false;
+            }
+            if daemon_model_id(entry).is_some() {
+                return true;
+            }
+            // Older daemons exposed bare ids without provider identity. Keep
+            // their historical model-name dedupe while structured rows use
+            // the exact browser-owned mirror identity above.
+            !local_model_ids.contains(
+                parse_builtin_model_key(&entry.value)
+                    .map(|(_, model)| model)
+                    .unwrap_or_else(|| entry.value.trim()),
+            )
         })
         .cloned()
         .collect::<Vec<_>>();
-    available_models.extend(local_agents.into_iter().map(|agent| {
-        ModelEntry::builtin_with_display_name(
-            agent.kind.model_provider(),
-            agent.id.clone(),
-            agent.display_name.clone(),
-            format!("builtin:{}:{}", agent.id, agent.model),
-            agent.model.clone(),
-        )
-    }));
+    for agent in local_agents {
+        let mut seen = std::collections::HashSet::new();
+        for model in &agent.models {
+            let model = model.trim();
+            if model.is_empty() || !seen.insert(model) {
+                continue;
+            }
+            available_models.push(ModelEntry::builtin_with_display_name(
+                agent.kind.model_provider(),
+                agent.id.clone(),
+                agent.display_name.clone(),
+                format!("builtin:{}:{model}", agent.id),
+                model,
+            ));
+        }
+    }
     if state.chat.available_models == available_models {
         return;
     }

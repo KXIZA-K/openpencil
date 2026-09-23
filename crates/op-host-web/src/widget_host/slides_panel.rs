@@ -94,18 +94,12 @@ impl WidgetHost {
         slides: &SlidesFrame,
     ) {
         use op_editor_ui::widgets::PaintCx;
-        let (layers_label, slides_label) = flow::tab_labels(&self.editor_state);
+        let desc = flow::tab_row_desc(&self.editor_state);
         let actions = flow::action_labels(
             &self.editor_state,
             flow::selected_slide_count(&self.editor_state, &slides.chips),
         );
-        let widget = flow::widget(
-            slides.active,
-            &self.editor_state,
-            layers_label,
-            slides_label,
-            actions.labels(),
-        );
+        let widget = flow::widget(slides.active, &self.editor_state, &desc, actions.labels());
         let mut cx = PaintCx { backend };
         widget.paint(&mut cx, &slides.layout, &self.theme);
         // No blit comes between the two here — the browser has no board
@@ -122,14 +116,13 @@ impl WidgetHost {
         tabs: &SlidesPanelTabs,
     ) {
         use op_editor_ui::widgets::PaintCx;
-        let (layers_label, slides_label) = flow::tab_labels(&self.editor_state);
+        let desc = flow::tab_row_desc(&self.editor_state);
         let mut cx = PaintCx { backend };
         tabs.paint(
             &mut cx,
             &self.theme,
             self.editor_state.editor_ui.slides_panel.hover,
-            layers_label,
-            slides_label,
+            &desc,
         );
     }
 
@@ -268,10 +261,17 @@ impl WidgetHost {
                 true
             }
             flow::SlidesRelease::Present => {
-                // The same path the TopBar's Play button takes on this
-                // host — the browser has no slideshow session of its
-                // own, so entering Preview is the whole of it.
-                self.editor_state.editor_ui.enter_preview();
+                #[cfg(feature = "canvaskit")]
+                {
+                    let op_ck = self.op_ck.clone();
+                    let _ = self.enter_preview_from_browser(viewport_w, viewport_h, op_ck.as_ref());
+                }
+                #[cfg(not(feature = "canvaskit"))]
+                {
+                    self.editor_state.editor_ui.preview.mode = false;
+                    self.editor_state.editor_ui.preview.warnings =
+                        vec!["preview: not available in this build".to_string()];
+                }
                 self.mark_dirty();
                 true
             }

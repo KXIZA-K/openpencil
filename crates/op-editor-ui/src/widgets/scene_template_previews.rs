@@ -15,6 +15,14 @@
 /// two catalogues can never collide in that shared cache.
 const CACHE_ID_BASE: u64 = 10_000;
 
+/// Cache-id namespace for the user's SAVED templates' previews (`UTPL`).
+///
+/// [`super::asset_center_template_cards`] assigns a monotonic process-local
+/// offset to each immutable registry allocation. A high mnemonic namespace
+/// keeps those ids disjoint from the shipped cards' small integer range and
+/// from the other fixed UI image namespaces.
+pub(crate) const USER_PREVIEW_CACHE_ID_BASE: u64 = 0x5554_504c_0000_0000;
+
 // Test-only: `concat!` cannot interpolate a const, so the route literals in
 // the macro below spell the directory out. This is the value the route
 // tests rebuild the expected path from, which is what keeps the spelled-out
@@ -135,6 +143,22 @@ pub(crate) fn scene_template_preview(template_id: &str) -> Option<TemplatePrevie
         "gridpaper-graphite-deck" => preview!(62, "gridpaper-graphite-deck"),
         "dossier-linen-deck" => preview!(63, "dossier-linen-deck"),
         "ledger-tick-deck" => preview!(64, "ledger-tick-deck"),
+        "brand-concept-sheet" => preview!(65, "brand-concept-sheet"),
+        "logo-qa-board" => preview!(66, "logo-qa-board"),
+        "event-invitation-card" => preview!(67, "event-invitation-card"),
+        "livestream-teaser-card" => preview!(68, "livestream-teaser-card"),
+        "hiring-poster-card" => preview!(69, "hiring-poster-card"),
+        "course-enroll-card" => preview!(70, "course-enroll-card"),
+        "conference-agenda-card" => preview!(71, "conference-agenda-card"),
+        "product-launch-card" => preview!(72, "product-launch-card"),
+        "annual-report-card" => preview!(73, "annual-report-card"),
+        "music-fest-poster-card" => preview!(74, "music-fest-poster-card"),
+        "book-club-invite-card" => preview!(75, "book-club-invite-card"),
+        "ai-support-pitch-deck" => preview!(76, "ai-support-pitch-deck"),
+        "quarterly-review-deck" => preview!(77, "quarterly-review-deck"),
+        "quicksort-lecture-deck" => preview!(78, "quicksort-lecture-deck"),
+        "compound-effect-card" => preview!(79, "compound-effect-card"),
+        "analytics-metric-card" => preview!(80, "analytics-metric-card"),
         _ => None,
     }
 }
@@ -161,6 +185,21 @@ mod tests {
             );
         }
         assert!(scene_template_preview("no-such-template").is_none());
+    }
+
+    #[test]
+    fn saved_preview_ids_never_overlap_the_shipped_range() {
+        // The renderer keys its decoded-raster cache on the id, so an overlap
+        // would serve a saved template's bytes under a shipped template's id
+        // (or vice versa). The assertion derives the shipped range from the
+        // catalogue, so it stays valid as either side grows.
+        let shipped_first = CACHE_ID_BASE;
+        let shipped_last = CACHE_ID_BASE + scene_template_catalogue().len() as u64 + 1; // the preview! offsets start at 1
+        assert!(
+            USER_PREVIEW_CACHE_ID_BASE > shipped_last,
+            "saved range {USER_PREVIEW_CACHE_ID_BASE} must sit above shipped range \
+             {shipped_first}..{shipped_last}"
+        );
     }
 
     #[test]

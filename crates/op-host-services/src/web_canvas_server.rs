@@ -12,7 +12,7 @@
 //! `openpencil-desktop --serve-web <port> [doc] [--host <addr>]`).
 //! Layered on top: an SSE endpoint that streams `version` bumps to connected
 //! shells, static serving of the host page + WASM bundle (`crate::web_static`
-//! — `GET /` and `GET /pkg/*`), and a token-authed `openpencil/shutdown`
+//! — `GET /` and `GET /pkg/*`), and a token-authenticated `openpencil/shutdown`
 //! (same contract as `--mcp-http`) so `op stop` works against this daemon.
 
 use std::io::{Read, Write};
@@ -90,9 +90,11 @@ pub struct WebCanvasState {
     /// The bound port, reported by `GET /api/mcp/server` (TS `server.get.ts`
     /// parity).
     pub(crate) port: u16,
-    /// Managed-mode per-instance auth token (see `ServeWebOptions::managed`
-    /// / `run_web_canvas`). `None` outside managed mode. Read by `serve_one`
-    /// (via `RequestAuth`) to gate every privileged request.
+    /// Managed-mode per-instance lifecycle token (see
+    /// `ServeWebOptions::managed` / `run_web_canvas`). `None` outside managed
+    /// mode. Ordinary requests are tokenless; `serve_one` consults this only
+    /// for the optional body-authenticated graceful-shutdown compatibility
+    /// path.
     pub(crate) managed_token: Option<String>,
     /// Managed-mode `--allow-origin` allowlist. Empty outside managed mode.
     /// Read by `serve_one` (via `cors_origin_for`) to decide which `Origin`
@@ -157,8 +159,12 @@ impl WebCanvasState {
             let _ = crate::web_credentials::remove_browser_owned_credentials(&mut editor);
         }
         let mut generation_bytes = [0u8; 16];
-        getrandom::fill(&mut generation_bytes).expect("OS randomness is required for document generation fencing");
-        let generation = generation_bytes.iter().map(|byte| format!("{byte:02x}")).collect();
+        getrandom::fill(&mut generation_bytes)
+            .expect("OS randomness is required for document generation fencing");
+        let generation = generation_bytes
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
         Self {
             editor,
             credential_persistence,
@@ -267,7 +273,11 @@ impl WebCanvasState {
     /// was taken. What remains is the part that genuinely needs exclusivity:
     /// re-checking `baseVersion` against the live counter, and installing.
     ///
-    pub(crate) fn matches_write_authority(&self, generation: Option<&str>, version: Option<u64>) -> bool {
+    pub(crate) fn matches_write_authority(
+        &self,
+        generation: Option<&str>,
+        version: Option<u64>,
+    ) -> bool {
         if self.managed_token.is_some() && (generation.is_none() || version.is_none()) {
             return false;
         }
@@ -285,7 +295,10 @@ impl WebCanvasState {
     ) -> Result<PushOutcome> {
         let base_version = base_version_override.or(push.base_version);
         if !self.matches_write_authority(push.base_generation.as_deref(), base_version) {
-            return Ok(PushOutcome { applied: false, current_version: self.version });
+            return Ok(PushOutcome {
+                applied: false,
+                current_version: self.version,
+            });
         }
         // The gateway runs BEFORE the document is taken out of `push`, so a
         // refusal leaves `push` still owning it — and its `Drop` releases the
@@ -492,11 +505,18 @@ pub fn handle_web_canvas_request(
             Ok(doc_json) => WebReply {
                 status: "200 OK",
                 body: format!(
-                    r#"{{"document":{doc_json},"version":{},"generation":"{}","activePageIndex":{},"preserveAuthoredGeometry":{}}}"#,
+                    r#"{{"document":{doc_json},"version":{},"generation":"{}","activePageIndex":{},"preserveAuthoredGeometry":{},"scenario":{}}}"#,
                     state.version,
                     state.generation,
                     state.editor.ui.active_page_index,
-                    state.editor.editor_ui.preserve_authored_geometry
+                    state.editor.editor_ui.preserve_authored_geometry,
+                    // The scene tag rides the same wire as the rest of the
+                    // editor meta: a Slides deck must reach the browser as a
+                    // deck or web preview cannot enter its presentation.
+                    match state.editor.editor_ui.scenario {
+                        Some(scene) => format!("\"{}\"", scene.as_str()),
+                        None => "null".to_string(),
+                    }
                 ),
             },
             Err(e) => WebReply {
@@ -722,12 +742,6 @@ fn not_found_reply() -> WebReply {
             .to_string(),
     }
 }
-
-/// Whether `path` belongs to the daemon-hosted device-login proxy.
-fn is_device_login_route(path: &str) -> bool {
-    path.starts_with(op_editor_core::auth_routes::API_PREFIX)
-}
-
 mod collab_driver;
 mod document_push;
 #[cfg(test)]
@@ -756,7 +770,6 @@ pub mod tenant;
 pub mod tenant_auth;
 pub mod tenant_store;
 mod tool_scopes;
-
 pub use collab_state::{DaemonMutationRefusal, IngestOutcome};
 pub use connect_routes::*;
 use connection::*;
@@ -774,20 +787,11 @@ pub use tenant_auth::{
     IdentityVerifier, OnlineAuthError, PresentedCredentials, ResolvedIdentity, StaticVerifier,
 };
 pub use tenant_store::{TenantStore, TenantStoreError};
-
-/// Serialises the tests that mutate `jian_ops_schema::image_thumbs`.
-///
-/// The registry is process-global and both `restore_snapshot` and
-/// `clear_registry` replace the whole table, so two such tests running in
-/// parallel wipe each other's entries — a failure with nothing to do with what
-/// either test asserts. Unique ids are not enough; the replacement is
-/// wholesale.
 #[cfg(test)]
-pub(crate) fn lock_image_thumb_registry() -> std::sync::MutexGuard<'static, ()> {
-    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    LOCK.lock().unwrap_or_else(|poison| poison.into_inner())
-}
-
+#[path = "web_canvas_server_test_support.rs"]
+mod test_support;
+#[cfg(test)]
+pub(crate) use test_support::lock_image_thumb_registry;
 #[cfg(test)]
 #[path = "web_canvas_server_tests.rs"]
 mod tests;

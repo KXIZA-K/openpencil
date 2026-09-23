@@ -8,7 +8,7 @@ OUT=$R/templates/step0/previews
 TMP=$(mktemp -d)
 mkdir -p "$OUT"
 
-for t in screenshot-tutorial knowledge-carousel before-after slide-deck \
+DEFAULT_TEMPLATES=(screenshot-tutorial knowledge-carousel before-after slide-deck \
          knowledge-card-vertical knowledge-card-square \
          pitch-deck-dark lecture-deck-light \
          minimal-keynote gradient-tech \
@@ -55,7 +55,22 @@ for t in screenshot-tutorial knowledge-carousel before-after slide-deck \
          gridpaper-graphite-deck \
          dossier-linen-deck \
          ledger-tick-deck \
-         event-poster-deck; do
+         event-poster-deck \
+         brand-concept-sheet \
+         logo-qa-board \
+         event-invitation-card livestream-teaser-card hiring-poster-card \
+         course-enroll-card conference-agenda-card product-launch-card \
+         annual-report-card music-fest-poster-card book-club-invite-card \
+         ai-support-pitch-deck quarterly-review-deck quicksort-lecture-deck \
+         compound-effect-card analytics-metric-card)
+
+if [ "$#" -gt 0 ]; then
+  templates=("$@")
+else
+  templates=("${DEFAULT_TEMPLATES[@]}")
+fi
+
+for t in "${templates[@]}"; do
   # The documents themselves are shipped assets (embedded by the scene
   # template catalogue); this directory keeps only the generators and the
   # full-resolution renders they produce.

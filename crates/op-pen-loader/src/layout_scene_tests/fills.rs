@@ -215,15 +215,23 @@ fn image_fill_mode_threads_into_scene_node() {
 }
 
 #[test]
-fn css_repeat_is_distinct_from_centered_tile_in_scene_and_wire() {
-    let src = r#"{"version":"1.0.0","children":[{"type":"rectangle","id":"r","width":390,"height":340,"fill":[{"type":"image","url":"data:image/png;base64,AA==","mode":"css_repeat"}]}]}"#;
-    let parsed: jian_ops_schema::document::PenDocument = serde_json::from_str(src).unwrap();
-    let wire = serde_json::to_string(&parsed).unwrap();
-    assert!(wire.contains("css_repeat"));
-    let scene = editor_state_to_layout_scene(&state_from(&wire));
-    let node = &scene.pages[0].children[0];
-    assert_eq!(node.image_fit, SceneImageFit::CssRepeat);
-    assert_eq!(format!("{:?}", node.image_fit.to_draw_mode()), "CssRepeat");
+fn image_video_metadata_threads_into_scene_node() {
+    let src = r#"{
+      "version":"1.0.0","pages":[{"id":"p","name":"P","children":[{
+        "type":"image","id":"hero","width":360,"height":240,
+        "src":"data:image/png;base64,AA==",
+        "video":{"src":"https://cdn.example.com/hero.mp4","autoplay":true,
+          "loop":true,"muted":true,"holdLastFrame":true,"clickToReplay":true}
+      }]}],"children":[]
+    }"#;
+    let scene = editor_state_to_layout_scene(&state_from(src));
+    let video = scene.pages[0].children[0]
+        .video
+        .as_ref()
+        .expect("video metadata reaches the scene");
+    assert_eq!(video.src.as_ref(), "https://cdn.example.com/hero.mp4");
+    assert!(video.autoplay && video.r#loop && video.muted);
+    assert!(video.hold_last_frame && video.click_to_replay);
 }
 
 #[test]
@@ -266,4 +274,16 @@ fn image_fill_adjustments_thread_into_scene_node() {
     assert_eq!(a.tint, -25.0);
     assert_eq!(a.highlights, 75.0);
     assert_eq!(a.shadows, -75.0);
+}
+
+#[test]
+fn css_repeat_is_distinct_from_centered_tile_in_scene_and_wire() {
+    let src = r#"{"version":"1.0.0","children":[{"type":"rectangle","id":"r","width":390,"height":340,"fill":[{"type":"image","url":"data:image/png;base64,AA==","mode":"css_repeat"}]}]}"#;
+    let parsed: jian_ops_schema::document::PenDocument = serde_json::from_str(src).unwrap();
+    let wire = serde_json::to_string(&parsed).unwrap();
+    assert!(wire.contains("css_repeat"));
+    let scene = editor_state_to_layout_scene(&state_from(&wire));
+    let node = &scene.pages[0].children[0];
+    assert_eq!(node.image_fit, SceneImageFit::CssRepeat);
+    assert_eq!(format!("{:?}", node.image_fit.to_draw_mode()), "CssRepeat");
 }

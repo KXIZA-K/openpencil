@@ -1,6 +1,5 @@
 use super::*;
 use op_ai::chat_provider::{EffortLevel, ThinkingMode};
-
 struct CaptureProvider {
     seen: Arc<Mutex<Option<ChatRequest>>>,
 }
@@ -227,6 +226,7 @@ fn stream_chat_route_passes_history_and_attachments_to_provider() {
     let req = WebStandardTurnRequest {
         ai: AiStreamRequest {
             provider: None,
+            builtin_provider_id: None,
             model: "claude-sonnet".into(),
             skills: Vec::new(),
             user: "current request".into(),
@@ -777,8 +777,7 @@ fn a_closed_write_barrier_leaves_the_active_page_where_the_flush_found_it() {
 
 #[test]
 fn an_open_write_barrier_still_switches_the_active_page() {
-    // The counterpart, so the guard above is proven to be what stops it rather
-    // than the fixture simply being unable to switch pages at all.
+    // The open barrier must permit the same page switch the closed one rejects.
     use crate::web_canvas_server::WriteBarrier;
 
     let barrier = WriteBarrier::default();

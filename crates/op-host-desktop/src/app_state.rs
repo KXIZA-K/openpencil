@@ -15,6 +15,13 @@ use op_host_native::WidgetHostNative;
 use std::path::PathBuf;
 use std::time::Instant;
 
+pub(crate) fn should_show_home(
+    initial_file: bool,
+    entry_surface: op_editor_core::EntrySurface,
+) -> bool {
+    !initial_file && entry_surface == op_editor_core::EntrySurface::Home
+}
+
 impl DesktopApp {
     pub(crate) fn new(initial_file: Option<PathBuf>) -> Self {
         // (The brand-logo catalog is registered once in `main` before any render
@@ -29,6 +36,12 @@ impl DesktopApp {
         let fit_blank_frame = initial_file.is_none();
         // Best-effort prefs restore onto the host's `EditorState`.
         op_host_services::settings_io::load(host.editor_state_mut());
+        let entry_surface = host.editor_state().editor_ui.entry_surface;
+        // Keep unit-test fixtures deterministic and canvas-first; production
+        // startup alone applies the persisted Home preference, while the
+        // pure `should_show_home` tests cover the routing matrix.
+        host.editor_state_mut().editor_ui.home.visible =
+            !cfg!(test) && should_show_home(initial_file.is_some(), entry_surface);
         prompt_center_store::install_user_prompts(&mut host);
         // Zode is a desktop-local integration. Keep it out of the shared
         // settings loader so `--serve-web` never exposes machine-local Zode
@@ -56,6 +69,12 @@ impl DesktopApp {
         host.editor_state_mut()
             .editor_ui
             .batch_frame_export_supported = true;
+        // Desktop owns the user-template registry + durable store, so its
+        // in-canvas File menu can expose the same action as the native menu.
+        host.editor_state_mut()
+            .editor_ui
+            .scene_template_center
+            .save_current_supported = true;
         // And for the deck-slideshow row: same save picker + offscreen
         // exporter. The row still only appears on a deck document.
         host.editor_state_mut().editor_ui.deck_html_export_supported = true;
@@ -77,6 +96,10 @@ impl DesktopApp {
         // catalogue they merge into is memory-only, so it has to be refilled
         // from disk at every launch.
         crate::user_style_store::load_user_style_guides_once();
+        // Saved scene templates live in ~/.openpencil/templates; the runtime
+        // registry they merge into is memory-only, so it has to be refilled
+        // from disk at every launch, exactly like the style guides above.
+        crate::user_template_store::load_user_scene_templates_once();
         // Account gate + session restore. The bridge links the proprietary
         // auth library when a prebuilt exists for this target; stub builds
         // keep every account entry point hidden unless the dev fake-login
@@ -129,6 +152,7 @@ impl DesktopApp {
             pending_cursor_move: None,
             redraw_pending: false,
             redraw_dirty: false,
+            window_shown_once: false,
             last_painted_page: None,
             clock_start: Instant::now(),
             rotate_cursor: None,
@@ -153,7 +177,7 @@ impl DesktopApp {
             pending_figma_paste: None,
             pending_html_paste: None,
             model_probe,
-            model_catalog_refresh: Default::default(),
+            builtin_model_refresh: Default::default(),
             image_search: image_search_session::ImageSearchSession::new(),
             image_panel: image_panel_host::ImagePanelJobs::new(),
             remote_images: remote_image_host::RemoteImageSession::new(),
@@ -166,7 +190,7 @@ impl DesktopApp {
             kit_browser_open_persisted,
             provider_connect_job: None,
             provider_reconnect_queue: Vec::new(),
-            remembered_connections: [false; 6],
+            remembered_connections: [false; 7],
             last_seen_provider_phase: Default::default(),
             hovered_image_drop: false,
             drop_cursor: None,
@@ -568,5 +592,26 @@ impl DesktopApp {
             Some(crate::message_dialog::Choice::No) => true,
             Some(crate::message_dialog::Choice::Cancel) => false,
         }
+    }
+}
+
+#[cfg(test)]
+mod home_routing_tests {
+    use super::should_show_home;
+    use op_editor_core::EntrySurface;
+
+    #[test]
+    fn no_file_and_home_preference_show_the_drafting_table() {
+        assert!(should_show_home(false, EntrySurface::Home));
+    }
+
+    #[test]
+    fn a_file_argument_always_routes_to_canvas() {
+        assert!(!should_show_home(true, EntrySurface::Home));
+    }
+
+    #[test]
+    fn canvas_preference_routes_to_canvas_without_a_file() {
+        assert!(!should_show_home(false, EntrySurface::Canvas));
     }
 }

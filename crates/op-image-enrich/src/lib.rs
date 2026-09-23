@@ -1,0 +1,40 @@
+//! Shared image-slot enrichment primitives.
+//!
+//! Two consumers need the exact same slot-detection and write-back semantics:
+//!
+//! - the desktop host's background `ImageSearchSession` (which resolves slots
+//!   on the live canvas as searches complete), and
+//! - the headless MCP `enrich_images` tool in `op-host-services` (the
+//!   in-process version of `openpencil-desktop --enrich-images`).
+//!
+//! Both were originally born in `op-host-desktop/src/image_search_session`;
+//! they moved here as pure code motion so the dependency direction stays
+//! legal (`op-host-services` must never depend on `op-host-desktop`). The
+//! desktop session keeps its own provider fetches, memoization, and job
+//! bookkeeping and re-exports these primitives under their original paths.
+//!
+//! `targets` owns the predicate vocabulary: which nodes want an image, what
+//! query describes them, and whether the slot's acquisition mode is stock
+//! search or AI generation. `apply` owns the write-back: how a resolved url
+//! lands on an image node, a placeholder frame, or an empty image-fill
+//! container, gated by the collaboration external-assets rule.
+
+mod apply;
+mod fallback_policy;
+#[cfg(feature = "net")]
+pub mod net;
+mod targets;
+
+pub use apply::{apply_result, collaboration_image_result_gate};
+pub use fallback_policy::{
+    apply_image_fallback_policy_to_node, fallback_request_mode, fallback_search_query_for_host,
+    icon_name_for_query, image_fallback_policy, image_fallback_policy_with_widths,
+    is_failed_image_slot_for_host, is_image_fallback, restore_image_fallback_node,
+    ImageFallbackBranch, ImageFallbackPatch, IMAGE_FALLBACK_NAME_SUFFIX,
+    SEARCH_FAILED_PLACEHOLDER_SRC,
+};
+pub use targets::{
+    collect_targets, collect_targets_with_scene, has_empty_image_fill, image_request_mode,
+    is_frame_placeholder_still_unfilled, is_image_area_rectangle_by_heuristic, ImageAspectRatio,
+    ImageRequestMode, ImageSearchTarget,
+};
