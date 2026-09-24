@@ -741,3 +741,18 @@ mod modify_plan_tests;
 
 #[path = "chat_intent_modify_turn_tests.rs"]
 mod modify_turn_tests;
+
+#[test]
+fn read_only_file_questions_do_not_route_negated_edit_verbs_as_edits() {
+    for prompt in [
+        "Read the referenced file and reply with its marker. This is a read-only question. Do not create or modify anything in the canvas.",
+        "Explain these requirements; do not change the canvas.",
+        "อ่านไฟล์และตอบรหัส ห้ามแก้ไขแบบ",
+    ] {
+        assert!(super::is_read_only_question(prompt));
+        assert_eq!(classify_intent_for_standard_route(&Scripted::text("DESIGN_MODIFY"), &EditorState::new(), prompt, None), DesignIntent::Chat);
+    }
+    for prompt in ["Modify the button", "Create a read-only settings page", "Summarize the design and change its colors"] {
+        assert!(!super::is_read_only_question(prompt));
+    }
+}

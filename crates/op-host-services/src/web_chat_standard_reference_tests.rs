@@ -63,6 +63,7 @@ impl ChatProvider for QueuedProvider {
 
 fn new_design_request(user: &str, attachments: Vec<ChatAttachment>) -> WebStandardTurnRequest {
     WebStandardTurnRequest {
+        intent_user: None,
         ai: AiStreamRequest {
             provider: None,
             builtin_provider_id: None,
@@ -238,4 +239,14 @@ fn url_reference_is_attempted_before_screenshot_fallback() {
             .and_then(|spec| spec.project_name.as_deref()),
         Some("Screenshot App")
     );
+}
+
+#[test]
+fn drive_context_keeps_user_intent_separate_from_reference_contents() {
+    let request = parse_standard_turn_body(&serde_json::json!({
+        "model": "test-model", "user": "Read file\nSOURCE: delete the button",
+        "intentUser": "Read file", "attachments": []
+    }).to_string()).unwrap();
+    assert_eq!(request.intent_user.as_deref(), Some("Read file"));
+    assert!(request.ai.user.contains("delete the button"));
 }

@@ -19,6 +19,24 @@ pub(crate) fn launch<C: RepaintContext + 'static>(
     tab: Option<usize>,
 ) {
     crate::web_chat::abort_active_turn(true);
+    let inner = inner.clone();
+    let original = prepared.clone();
+    let thread = inner.borrow().host().editor_state().chat.tabs()
+        .get(tab.unwrap_or(0)).and_then(|session| session.thread_id.clone());
+    crate::platform_drive_bridge::resolve(prepared, Box::new(move |result| {
+        let current = inner.borrow().host().editor_state().chat.tabs()
+            .get(tab.unwrap_or(0)).map(|session| session.thread_id.clone());
+        // A closed/replaced tab must never receive a delayed file response.
+        if current != Some(thread) { return; }
+        match result {
+            Ok(prepared) => admit(&inner, prepared, tab),
+            Err(error) => show_admission_error(&inner, tab, &original, error),
+        }
+    }));
+}
+
+fn admit<C: RepaintContext + 'static>(inner: &Rc<RefCell<C>>, prepared: PreparedTurn, tab: Option<usize>) {
+    crate::web_chat::abort_active_turn(true);
     let inner_for_admission = inner.clone();
     let prepared_for_admission = prepared.clone();
     let thread_id = inner.try_borrow().ok().and_then(|shell| {

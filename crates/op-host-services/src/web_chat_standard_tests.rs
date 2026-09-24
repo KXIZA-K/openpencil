@@ -3,7 +3,6 @@ use op_ai::chat_provider::{EffortLevel, ThinkingMode};
 struct CaptureProvider {
     seen: Arc<Mutex<Option<ChatRequest>>>,
 }
-
 impl ChatProvider for CaptureProvider {
     fn provider_label(&self) -> &str {
         "capture"
@@ -224,6 +223,7 @@ fn stream_chat_route_passes_history_and_attachments_to_provider() {
         data: vec![1, 2, 3],
     }];
     let req = WebStandardTurnRequest {
+        intent_user: None,
         ai: AiStreamRequest {
             provider: None,
             builtin_provider_id: None,

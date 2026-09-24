@@ -211,6 +211,18 @@ pub fn is_non_request_text(text: &str) -> bool {
     !text.chars().any(char::is_alphanumeric)
 }
 
+/// Informational requests with an explicit no-write constraint must not be
+/// interpreted as edits just because the constraint contains an edit verb.
+pub fn is_read_only_question(text: &str) -> bool {
+    let lower = text.trim_start().to_lowercase();
+    let informational = ["read ", "please read ", "summarize ", "explain ", "tell me ",
+        "what ", "how ", "why ", "อ่าน", "สรุป", "อธิบาย"]
+        .iter().any(|prefix| lower.starts_with(prefix));
+    informational && ["read-only", "read only", "do not modify", "don't modify",
+        "do not change", "don't change", "do not create", "ห้ามแก้ไข", "ไม่ต้องแก้ไข", "อ่านอย่างเดียว"]
+        .iter().any(|constraint| lower.contains(constraint))
+}
+
 /// TS `classifyByKeywords` — verbatim rule order.
 pub fn classify_by_keywords(text: &str) -> DesignIntent {
     let lower = text.to_lowercase();
@@ -264,7 +276,7 @@ fn classify_intent_for_standard_route_inner(
     model: Option<String>,
     external_cancel: Option<Arc<AtomicBool>>,
 ) -> DesignIntent {
-    if is_non_request_text(text) {
+    if is_non_request_text(text) || is_read_only_question(text) {
         return DesignIntent::Chat;
     }
     // A whole-screen *draw* (creation verb + page noun, e.g. "重新画一个

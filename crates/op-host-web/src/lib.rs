@@ -119,6 +119,8 @@ mod collab_avatar_fetch;
 #[cfg(feature = "canvaskit")]
 mod platform_chat_bridge;
 #[cfg(feature = "canvaskit")]
+mod platform_drive_bridge;
+#[cfg(feature = "canvaskit")]
 mod platform_chat_turn;
 #[cfg(feature = "canvaskit")]
 mod web_chat;

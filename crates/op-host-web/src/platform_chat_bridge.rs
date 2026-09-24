@@ -113,6 +113,7 @@ pub(crate) fn open_team_collaboration() -> bool {
 }
 
 pub(crate) fn install<C: RepaintContext + 'static>(inner: &Rc<RefCell<C>>) {
+    crate::platform_drive_bridge::install(inner);
     if !studio_managed() {
         return;
     }

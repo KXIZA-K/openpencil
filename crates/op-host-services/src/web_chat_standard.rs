@@ -52,6 +52,7 @@ const STANDARD_MODIFY_STEP: &str =
 
 pub struct WebStandardTurnRequest {
     pub ai: AiStreamRequest,
+    intent_user: Option<String>,
     document_json: Option<String>,
     editor_meta: Option<op_pen_loader::EditorMeta>,
     selected_ids: Vec<String>,
@@ -97,8 +98,10 @@ pub fn parse_standard_turn_body(body: &str) -> Option<WebStandardTurnRequest> {
         None | Some(Value::Null) => None,
         Some(value) => Some(crate::web_credentials::parse_transient_builtin(value)?),
     };
+    let intent_user = obj.get("intentUser").and_then(Value::as_str).filter(|s| s.len() <= 128 * 1024).map(str::to_owned);
     Some(WebStandardTurnRequest {
         ai,
+        intent_user,
         document_json,
         editor_meta,
         selected_ids,
@@ -219,8 +222,9 @@ pub fn stream_standard_turn<W: Write>(
     };
 
     let model = selected_model_id(&req.ai, &snapshot);
-    if matches!(
-        op_orchestrator::classify_intent(&req.ai.user),
+    let intent_text = req.intent_user.as_deref().unwrap_or(&req.ai.user);
+    if !crate::chat_intent::is_read_only_question(intent_text) && matches!(
+        op_orchestrator::classify_intent(intent_text),
         op_orchestrator::Intent::Design
     ) && clear_fresh_starter_frame_for_design(&mut snapshot)
     {
@@ -283,7 +287,7 @@ pub fn stream_standard_turn<W: Write>(
     let classified = crate::chat_intent::classify_intent_for_standard_route(
         classify_provider.as_ref(),
         &snapshot,
-        &req.ai.user,
+        intent_text,
         model.clone(),
     );
     let modify_plan = crate::chat_intent::build_modify_plan(&snapshot, &req.ai.user);
@@ -599,7 +603,7 @@ fn stream_new_design_route<W: Write>(
     model: Option<String>,
     target: CanvasWriteTarget<'_>,
 ) -> std::io::Result<()> {
-    let append_context = crate::chat_intent::detect_append_intent(&snapshot, &req.ai.user);
+    let append_context = crate::chat_intent::detect_append_intent(&snapshot, req.intent_user.as_deref().unwrap_or(&req.ai.user));
     let prompt = req.ai.user.clone();
     let mut request = DesignRequest {
         prompt: req.ai.user,

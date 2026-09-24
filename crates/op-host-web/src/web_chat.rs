@@ -63,6 +63,7 @@ thread_local! {
 /// change (generation mismatch) on its next frame and stops. Also clears the
 /// run's tab binding — the aborted turn no longer targets any tab.
 pub(crate) fn abort_active_turn(notify_platform: bool) {
+    crate::platform_drive_bridge::cancel();
     crate::platform_chat_bridge::cancel_pending_turns();
     let turn = ACTIVE_TURN.with(|slot| slot.borrow_mut().take());
     RUNNING_TAB.with(|t| t.set(None));
@@ -85,6 +86,7 @@ fn running_tab() -> Option<usize> {
 /// (abort the worker so stale deltas can't repopulate the transcript), then
 /// launch a pending send.
 pub(crate) fn drain_chat_flags<C: RepaintContext + 'static>(inner: &Rc<RefCell<C>>) {
+    crate::platform_drive_bridge::poll(inner);
     if let Ok(mut shell) = inner.try_borrow_mut() {
         let chat = &mut shell.host_mut().editor_state_mut().chat;
         if std::mem::take(&mut chat.pending_history) {
